@@ -1,7 +1,7 @@
 # Chess Review MCP
 
-Analyze a chess game (PGN) with **Stockfish**, find where you went wrong, and — unlike a bare
-engine — get the mistakes **explained in words**, grounded in real engine lines. It runs two ways:
+Analyze a chess game (PGN) with **Stockfish**, find where you went wrong, and, unlike a bare
+engine, get the mistakes **explained in words**, grounded in real engine lines. It runs two ways:
 from the **Claude Code terminal** (as an MCP server) and as an **interactive web board** (a
 Lichess-style review UI) that share one engine and one analysis, so they never disagree.
 
@@ -18,15 +18,15 @@ Lichess-style review UI) that share one engine and one analysis, so they never d
 
 - **Full-game review** → an ordered list of your inaccuracies / mistakes / blunders with per-side
   accuracy, using Lichess-style win%-drop thresholds (5 / 10 / 15).
-- **Explanations in words** — every flagged move gets a concrete, engine-grounded comment (the
-  better move, its line, and how your move gets punished). No guessing — it's built from the engine
+- **Explanations in words.** Every flagged move gets a concrete, engine-grounded comment (the
+  better move, its line, and how your move gets punished). No guessing: it's built from the engine
   sweep.
 - **Interactive board** (chessground): replay each mistake, try your own moves, free-explore down
   any line.
 - **Eval bar + Lichess-style win graph** that orient to the side you're reviewing (black-on-bottom
   when you played black). Click the graph or use ← / → to scrub the whole game.
 - **Move arrows:** gray = the move you played, green = engine best moves (live **multi-PV** with
-  **progressive deepening** — thicker arrow = better move), red = the refutation of a move you try.
+  **progressive deepening**, thicker arrow = better move), red = the refutation of a move you try.
 - **In-browser "why? / what now?" chat** powered by headless `claude -p` (your Claude
   subscription), fed pre-computed engine facts so answers are grounded, not estimated.
 
@@ -59,13 +59,13 @@ the full design and `CLAUDE.md` for contributor notes.
 ### Prerequisites
 
 - **Python 3.11+**
-- **Stockfish** engine (any recent version; v16+ recommended). Installed separately — it is not a
-  pip package.
+- **Stockfish** engine (any recent version; v16+ recommended). Install it separately, since it is
+  not a pip package.
   - macOS: `brew install stockfish`
   - Debian/Ubuntu: `sudo apt install stockfish`
   - Or download from <https://stockfishchess.org/download/> and note the binary path.
 - **Internet connection** for the web board's first load (chessground / chess.js are pulled from a
-  CDN — there is no Node/npm build step).
+  CDN, so there's no Node/npm build step).
 - *(Optional, only for the in-browser chat)* the **`claude` CLI** (Claude Code) installed and logged
   in (`claude login`). The terminal workflow needs Claude Code too.
 
@@ -113,7 +113,7 @@ headers.
 
 ## Usage
 
-### Option A — the web board (no Claude Code required)
+### Option A: the web board (no Claude Code required)
 
 The quickest way to review a game. Pass a PGN file and which color you played:
 
@@ -122,7 +122,7 @@ STOCKFISH_PATH=/usr/local/bin/stockfish \
   python scripts/run_web.py example_pgns/game1.pgn white
 ```
 
-It analyzes the game (~20–45s depending on length), opens your browser to
+It analyzes the game (~20 to 45s depending on length), opens your browser to
 `http://127.0.0.1:8765`, and you can:
 
 1. Click a mistake in the sidebar → the board jumps to that position (gray arrow = the move you
@@ -138,7 +138,7 @@ It analyzes the game (~20–45s depending on length), opens your browser to
 The third argument is your color: `white`, `black`, or `auto` (infer from the PGN headers).
 
 <!-- TODO: screenshot of the best-move arrows.
-     Toggle "Show best move" on a quiet middlegame position so two green arrows show — one bold
+     Toggle "Show best move" on a quiet middlegame position so two green arrows show, one bold
      (best) and one thin (a slightly worse alternative). Save as docs/screenshots/best-move-arrows.png -->
 <!-- ![Best-move arrows](docs/screenshots/best-move-arrows.png) -->
 
@@ -148,7 +148,7 @@ The third argument is your color: `white`, `black`, or `auto` (infer from the PG
      docs/screenshots/win-graph.png -->
 <!-- ![Win graph](docs/screenshots/win-graph.png) -->
 
-### Option B — from the Claude Code terminal (MCP)
+### Option B: from the Claude Code terminal (MCP)
 
 With the server registered in `.mcp.json`, open Claude Code in this directory (reload so it picks
 up the `chess` server), then:
@@ -164,10 +164,10 @@ Tools exposed: `mcp__chess__analyze_game`, `mcp__chess__get_engine_line`, `mcp__
 
 > **You:** *(paste PGN)* analyze this as white
 >
-> **Claude:** Your accuracy: 92.7% — a clean game. 3 flagged moments…
-> 1. **Move 4: Nf3** — the big one. After 3…Nd4?? the crushing reply was **4. c3!**, kicking the
+> **Claude:** Your accuracy: 92.7%, a clean game. 3 flagged moments…
+> 1. **Move 4: Nf3** was the big one. After 3…Nd4?? the crushing reply was **4. c3!**, kicking the
 >    knight with nowhere to go (~+3.7). Instead 4. Nf3 invited 4…Nxf3+ and dropped to roughly equal.
-> 2. **Move 10: Qf3** (mistake, but you were already winning)…
+> 2. **Move 10: Qf3** (a mistake, but you were already winning)…
 >
 > 📊 Open the interactive board: http://127.0.0.1:8765
 
@@ -184,8 +184,8 @@ Follow-up questions remember the conversation.
 <!-- ![Ask why chat](docs/screenshots/chat.png) -->
 
 > **Note on billing:** in-browser chat uses your subscription's separate **Agent SDK credit** (not
-> per-token API billing). If it's exhausted, you'll get a friendly message — just ask in the Claude
-> Code terminal instead, which uses your normal interactive limits.
+> per-token API billing). If it's exhausted, you'll get a friendly message, so just ask in the
+> Claude Code terminal instead, which uses your normal interactive limits.
 
 ---
 
@@ -235,9 +235,9 @@ tests/               # pytest suite
 
 ## Limitations / notes
 
-- The web board pulls chessground & chess.js from a CDN at runtime (no build step) — it needs
+- The web board pulls chessground & chess.js from a CDN at runtime (no build step), so it needs
   internet on first load.
 - In-browser chat requires the `claude` CLI installed and logged in, and draws from your Agent SDK
   credit; the terminal path is the zero-extra-cost fallback.
-- Engine analysis is fixed-depth and cached for reproducibility — evals can differ slightly from
-  Lichess near classification boundaries; that's expected.
+- Engine analysis is fixed-depth and cached for reproducibility, so evals can differ slightly from
+  Lichess near classification boundaries. That's expected.

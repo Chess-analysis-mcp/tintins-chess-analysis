@@ -43,3 +43,4 @@ stockfish/
 # Logs / scratch
 *.log
 /tmp/
+chess_mcp_implementation_plan.md
