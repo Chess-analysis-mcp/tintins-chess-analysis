@@ -22,8 +22,9 @@ SWEEP_DEPTH: int = int(os.environ.get("CHESS_SWEEP_DEPTH", "16"))
 
 DEFAULT_MULTIPV: int = int(os.environ.get("CHESS_DEFAULT_MULTIPV", "1"))
 
-# Engine process pool size. 1-2 is plenty for a single-user local tool.
-ENGINE_POOL_SIZE: int = int(os.environ.get("CHESS_ENGINE_POOL_SIZE", "1"))
+# Engine process pool size. 1-2 is plenty for a single-user local tool. Default 2 so the
+# web /evaluate route and a concurrent MCP call don't serialise behind one engine.
+ENGINE_POOL_SIZE: int = int(os.environ.get("CHESS_ENGINE_POOL_SIZE", "2"))
 
 # Per-engine UCI options.
 ENGINE_THREADS: int = int(os.environ.get("CHESS_ENGINE_THREADS", "2"))
@@ -34,3 +35,10 @@ MATE_SCORE_CP: int = 10000
 
 # Used by analyze_game(player="auto") to pick which side is "me" from PGN headers.
 USERNAME: str = os.environ.get("CHESS_USERNAME", "thedarktintin")
+
+# Web board (Phase 4). The FastAPI server runs in the same process as the MCP server,
+# sharing the one engine pool and ReviewSession. WEB_AUTOSTART=0 disables the autostart
+# (e.g. when driving the web server standalone via scripts/run_web.py).
+WEB_HOST: str = os.environ.get("CHESS_WEB_HOST", "127.0.0.1")
+WEB_PORT: int = int(os.environ.get("CHESS_WEB_PORT", "8765"))
+WEB_AUTOSTART: bool = os.environ.get("CHESS_WEB_AUTOSTART", "1") != "0"

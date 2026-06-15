@@ -151,6 +151,25 @@ def analyze_game(pgn: str, player: str = "auto", *, depth: int | None = None) ->
         best_line_san = _pv_to_san(before, eval_at.best_pv_uci)
         best_move_san = best_line_san[0] if best_line_san else before.san(move)
 
+        # Engine-grounded explanation for flagged moves. Uses only data already computed
+        # in the sweep (eval_next is the cached eval of the position after the played move),
+        # so this adds no engine calls and no LLM calls.
+        comment = ""
+        if classification in ("inaccuracy", "mistake", "blunder"):
+            after_board = before.copy(stack=False)
+            after_board.push(move)
+            followup_san = _pv_to_san(after_board, eval_next.best_pv_uci, max_plies=6)
+            comment = _mistake_comment(
+                before.san(move),
+                classification,
+                round(win_before, 1),
+                round(win_after, 1),
+                round(win_before - win_after, 1),
+                best_move_san,
+                best_line_san,
+                followup_san,
+            )
+
         review = MoveReview(
             ply=i + 1,
             move_number=before.fullmove_number,
@@ -169,12 +188,15 @@ def analyze_game(pgn: str, player: str = "auto", *, depth: int | None = None) ->
             best_line_uci=eval_at.best_pv_uci[:12],
             best_line_san=best_line_san,
             accuracy=round(acc, 1),
+            comment=comment,
         )
         all_my_moves.append(review)
 
     mistakes = [
         m for m in all_my_moves if m.classification in ("inaccuracy", "mistake", "blunder")
     ]
+
+    timeline = _build_timeline(steps, pos_evals, final_board, all_my_moves, mistakes, my_turn)
 
     session = ReviewSession(
         pgn=pgn,
@@ -186,8 +208,84 @@ def analyze_game(pgn: str, player: str = "auto", *, depth: int | None = None) ->
         all_moves=all_my_moves,
         mistakes=mistakes,
         current_index=0,
+        timeline=timeline,
     )
     return session
+
+
+def _win_white(pe: "_PosEval", turn: chess.Color) -> float:
+    """Win% from White's perspective, given whose move it is at that position."""
+    return pe.win_stm if turn == chess.WHITE else 100.0 - pe.win_stm
+
+
+def _build_timeline(
+    steps: list[tuple[chess.Board, chess.Move]],
+    pos_evals: list["_PosEval"],
+    final_board: chess.Board,
+    all_my_moves: list[MoveReview],
+    mistakes: list[MoveReview],
+    my_turn: chess.Color,
+) -> list[dict]:
+    """One entry per position (node 0..N). Each non-final node carries its OUTGOING move,
+    the engine's best move there, and (for the player's moves) the classification."""
+    cls_by_ply = {m.ply: m.classification for m in all_my_moves}
+    mistake_index_by_ply = {m.ply: i for i, m in enumerate(mistakes)}
+
+    nodes: list[dict] = []
+    for k in range(len(steps) + 1):
+        is_final = k == len(steps)
+        board = final_board if is_final else steps[k][0]
+        turn = board.turn
+        node: dict = {
+            "node": k,
+            "fen": board.fen(),
+            "win_white": round(_win_white(pos_evals[k], turn), 1),
+            "color": "white" if turn == chess.WHITE else "black",
+            "move_number": board.fullmove_number,
+        }
+        if not is_final:
+            before, move = steps[k]
+            eval_at = pos_evals[k]
+            best_uci = eval_at.best_pv_uci[0] if eval_at.best_pv_uci else None
+            ply = k + 1
+            node.update(
+                {
+                    "ply": ply,
+                    "move_san": before.san(move),
+                    "move_uci": move.uci(),
+                    "best_uci": best_uci,
+                    "best_san": before.san(chess.Move.from_uci(best_uci)) if best_uci else None,
+                    "is_my_move": before.turn == my_turn,
+                    "classification": cls_by_ply.get(ply),
+                    "mistake_index": mistake_index_by_ply.get(ply),
+                }
+            )
+        nodes.append(node)
+    return nodes
+
+
+def _mistake_comment(
+    move_san: str,
+    classification: str,
+    win_before: float,
+    win_after: float,
+    swing: float,
+    best_move_san: str,
+    best_line_san: list[str],
+    followup_san: list[str],
+) -> str:
+    """Concrete written explanation of a mistake, stitched from engine data we already have."""
+    article = "an" if classification == "inaccuracy" else "a"
+    parts = [
+        f"{move_san} is {article} {classification}: your win chance falls from "
+        f"{win_before}% to {win_after}% (−{swing})."
+    ]
+    if best_move_san:
+        line = " ".join(best_line_san[:5])
+        parts.append(f"Stronger was {best_move_san}" + (f" — {line}." if line else "."))
+    if followup_san:
+        parts.append(f"After {move_san}, the engine line runs {' '.join(followup_san)}.")
+    return " ".join(parts)
 
 
 def _fen_after(before: chess.Board, move: chess.Move) -> str:

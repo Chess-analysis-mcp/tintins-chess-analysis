@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 470" width="100%" role="img"
+     aria-label="Architecture: Claude Code (terminal) and a browser board both connect into one Python process that holds an MCP server, a shared Stockfish engine + session core, and a FastAPI web server. The FastAPI backend shells out to headless claude -p for in-browser chat.">
+  <style>
+    text { font-family: -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .t { font-size: 15px; font-weight: 600; }
+    .s { font-size: 12px; }
+    .lbl { font-size: 12px; fill: #5f5e5a; }
+  </style>
+
+  <!-- white backdrop so the diagram is readable in GitHub light AND dark mode -->
+  <rect width="680" height="470" fill="#ffffff"/>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1 L8 5 L2 9" fill="none" stroke="#73726c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- two human-facing surfaces -->
+  <g>
+    <rect x="60" y="40" width="160" height="56" rx="10" fill="#f1efe8" stroke="#5f5e5a"/>
+    <text class="t" x="140" y="65" text-anchor="middle" fill="#3d3d3a">Claude Code</text>
+    <text class="s" x="140" y="83" text-anchor="middle" fill="#6a6964">terminal · you ask</text>
+  </g>
+  <g>
+    <rect x="460" y="40" width="160" height="56" rx="10" fill="#f1efe8" stroke="#5f5e5a"/>
+    <text class="t" x="540" y="65" text-anchor="middle" fill="#3d3d3a">Browser board</text>
+    <text class="s" x="540" y="83" text-anchor="middle" fill="#6a6964">you try moves</text>
+  </g>
+
+  <!-- one process -->
+  <rect x="40" y="150" width="600" height="180" rx="18" fill="none" stroke="#1f1e1d" stroke-opacity="0.3" stroke-dasharray="5 4"/>
+  <text class="t" x="340" y="175" text-anchor="middle" fill="#141413">One Python process</text>
+  <text class="s" x="340" y="192" text-anchor="middle" fill="#3d3d3a">shared engine + one session, started once</text>
+
+  <g>
+    <rect x="60" y="206" width="160" height="96" rx="12" fill="#e1f5ee" stroke="#0f6e56"/>
+    <text class="t" x="140" y="247" text-anchor="middle" fill="#085041">MCP server</text>
+    <text class="s" x="140" y="267" text-anchor="middle" fill="#0f6e56">tools for Claude</text>
+  </g>
+  <g>
+    <rect x="260" y="206" width="160" height="96" rx="12" fill="#eeedfe" stroke="#534ab7"/>
+    <text class="t" x="340" y="247" text-anchor="middle" fill="#3c3489">Shared core</text>
+    <text class="s" x="340" y="267" text-anchor="middle" fill="#534ab7">engine + session</text>
+  </g>
+  <g>
+    <rect x="460" y="206" width="160" height="96" rx="12" fill="#e1f5ee" stroke="#0f6e56"/>
+    <text class="t" x="540" y="247" text-anchor="middle" fill="#085041">FastAPI</text>
+    <text class="s" x="540" y="267" text-anchor="middle" fill="#0f6e56">serves board + API</text>
+  </g>
+
+  <!-- wiring -->
+  <line x1="140" y1="96" x2="140" y2="204" marker-start="url(#arr)" marker-end="url(#arr)" stroke="#73726c" stroke-width="1.5"/>
+  <line x1="540" y1="96" x2="540" y2="204" marker-start="url(#arr)" marker-end="url(#arr)" stroke="#73726c" stroke-width="1.5"/>
+  <line x1="222" y1="254" x2="258" y2="254" marker-start="url(#arr)" marker-end="url(#arr)" stroke="#73726c" stroke-width="1.5"/>
+  <line x1="422" y1="254" x2="458" y2="254" marker-start="url(#arr)" marker-end="url(#arr)" stroke="#73726c" stroke-width="1.5"/>
+
+  <!-- headless claude -p for in-browser chat -->
+  <line x1="540" y1="302" x2="540" y2="356" marker-end="url(#arr)" stroke="#73726c" stroke-width="1.5"/>
+  <text class="lbl" x="548" y="333">shells out</text>
+  <g>
+    <rect x="420" y="356" width="200" height="50" rx="10" fill="#faece0" stroke="#c2763a"/>
+    <text class="t" x="520" y="376" text-anchor="middle" fill="#7a4a1e">Headless claude -p</text>
+    <text class="s" x="520" y="394" text-anchor="middle" fill="#a05a23">in-browser chat · your subscription</text>
+  </g>
+
+  <!-- legend -->
+  <g>
+    <rect x="84" y="436" width="12" height="12" rx="3" fill="#cfcdc4"/>
+    <text class="lbl" x="102" y="446">you interact</text>
+    <rect x="214" y="436" width="12" height="12" rx="3" fill="#1d9e75"/>
+    <text class="lbl" x="232" y="446">interface</text>
+    <rect x="334" y="436" width="12" height="12" rx="3" fill="#7f77dd"/>
+    <text class="lbl" x="352" y="446">engine + state</text>
+    <rect x="486" y="436" width="12" height="12" rx="3" fill="#d99055"/>
+    <text class="lbl" x="504" y="446">headless chat</text>
+  </g>
+</svg>

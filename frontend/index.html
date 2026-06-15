@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chess Review</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.base.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.brown.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.cburnett.css" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Chess Review</h1>
+      <div id="game-meta" class="muted">Loading…</div>
+    </header>
+
+    <main>
+      <section class="board-col">
+        <div class="board-wrap">
+          <div id="evalbar"><div id="evalbar-fill"></div></div>
+          <div id="board" class="cg-wrap"></div>
+        </div>
+
+        <div id="graph-wrap">
+          <svg id="graph" preserveAspectRatio="none"></svg>
+        </div>
+
+        <div class="controls">
+          <div class="ctrl-group">
+            <button id="back" title="Back one move (←)">◀ Back</button>
+            <button id="fwd" title="Forward one move (→)">Forward ▶</button>
+          </div>
+          <div class="ctrl-group">
+            <button id="prev-mistake" title="Previous mistake">‹ Mistake</button>
+            <button id="next-mistake" title="Next mistake">Mistake ›</button>
+            <button id="reset">↩ Review move</button>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="best-toggle" /> Show best move
+          </label>
+        </div>
+
+        <div id="status" class="status"></div>
+        <div id="comment" class="comment"></div>
+        <div id="verdict" class="verdict"></div>
+      </section>
+
+      <aside class="side-col">
+        <h2>Mistakes</h2>
+        <ol id="mistakes" class="mistakes"></ol>
+        <div class="chat-panel">
+          <h2>Ask “why?”</h2>
+          <p class="muted chat-hint">
+            Asks Claude about the current board position (uses your Claude subscription).
+          </p>
+          <div id="chat-messages" class="chat-messages"></div>
+          <form id="chat-form" class="chat-form">
+            <input id="chat-input" type="text" autocomplete="off"
+              placeholder="e.g. why is this bad? · what should I do here?" />
+            <button type="submit" id="chat-send">Send</button>
+          </form>
+        </div>
+      </aside>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

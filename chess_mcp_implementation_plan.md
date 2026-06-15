@@ -13,9 +13,13 @@ This document is the build spec. Work through it phase by phase. Each phase has 
 
 ## STATUS (updated 2026-06-15)
 
-**Phases 0–3 are complete and verified.** The tool is fully drivable from the Claude Code
-terminal: paste a PGN → `analyze_game` → ask "why was move N bad?" → `get_engine_line`.
-Phases 4–7 (web server, board, browser chat, board annotations) are **not started**.
+**All phases (0–7) are complete and verified.** The tool is drivable from the Claude Code
+terminal (paste a PGN → `analyze_game` → "why was move N bad?" → `get_engine_line`) AND from an
+interactive web board that autostarts in the same process: chessground board, eval bar (oriented
+to the reviewed side), Lichess-style win graph, arrow-key navigation, engine-grounded per-mistake
+comments, played-move + best-move + refutation arrows, and an in-browser "why?" chat backed by
+headless `claude -p` (subscription). See `server/web/`, `server/claude_bridge.py`, `frontend/`,
+and `scripts/run_web.py`. Run the board standalone with `scripts/run_web.py <pgn> <color>`.
 
 ### What changed vs. this spec during implementation
 

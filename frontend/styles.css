@@ -1,0 +1,249 @@
+:root {
+  --bg: #161512;
+  --panel: #262421;
+  --panel2: #322f2b;
+  --text: #e8e6e3;
+  --muted: #9c9890;
+  --accent: #629924;
+  --inaccuracy: #e0a800;
+  --mistake: #e08000;
+  --blunder: #d33;
+  --best: #629924;
+  /* Board scales with viewport height but caps out; bigger than before. */
+  --board-size: min(74vh, 720px);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  padding: 12px 20px;
+  border-bottom: 1px solid #000;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+header h1 { font-size: 18px; margin: 0; }
+.muted { color: var(--muted); font-size: 13px; }
+
+main {
+  display: flex;
+  gap: 24px;
+  padding: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.board-col { display: flex; flex-direction: column; gap: 10px; }
+
+.board-wrap { display: flex; gap: 8px; }
+
+.cg-wrap {
+  width: var(--board-size);
+  height: var(--board-size);
+}
+
+#evalbar {
+  width: 20px;
+  height: var(--board-size);
+  background: #3b3a37;
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+/* fill grows from the bottom = White's share of the win% */
+#evalbar-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: #f0f0f0;
+  transition: height 0.25s ease;
+}
+
+/* --- win graph --- */
+#graph-wrap {
+  width: var(--board-size);
+  height: 90px;
+  background: #14130f;
+  border-radius: 5px;
+  overflow: hidden;
+}
+#graph { width: 100%; height: 100%; display: block; cursor: pointer; }
+
+/* --- controls --- */
+.controls {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: var(--board-size);
+}
+.ctrl-group { display: flex; gap: 6px; }
+.controls button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid #000;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.controls button:hover { background: var(--panel2); }
+.controls button:disabled { opacity: 0.4; cursor: default; }
+.toggle { font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+.toggle input { vertical-align: middle; }
+
+.status {
+  font-size: 14px;
+  min-height: 18px;
+  max-width: var(--board-size);
+  padding: 6px 0;
+}
+.status.away {
+  background: #3a2f12;
+  border-left: 3px solid var(--inaccuracy);
+  padding: 8px 10px;
+  border-radius: 4px;
+}
+.status.away button {
+  margin-left: 8px;
+  background: var(--inaccuracy);
+  color: #161512;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.comment {
+  max-width: var(--board-size);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text);
+  background: #1d2a14;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 9px 11px;
+}
+.comment:empty { display: none; }
+
+.verdict {
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 10px 12px;
+  min-height: 20px;
+  font-size: 14px;
+  max-width: var(--board-size);
+}
+.verdict .tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #161512;
+  margin-right: 6px;
+}
+.tag.best, .tag.good { background: var(--best); color: #fff; }
+.tag.inaccuracy { background: var(--inaccuracy); }
+.tag.mistake { background: var(--mistake); }
+.tag.blunder { background: var(--blunder); color: #fff; }
+.verdict .line { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+.side-col { width: 320px; }
+.side-col h2 { font-size: 15px; margin: 0 0 8px; }
+
+.mistakes { list-style: none; margin: 0 0 24px; padding: 0; }
+.mistakes li {
+  background: var(--panel);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+.mistakes li:hover { background: var(--panel2); }
+.mistakes li.active { outline: 2px solid var(--accent); }
+.mistakes li .move { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.mistakes li .dot {
+  width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+}
+.dot.inaccuracy { background: var(--inaccuracy); }
+.dot.mistake { background: var(--mistake); }
+.dot.blunder { background: var(--blunder); }
+/* small chess-piece glyph next to each mistake */
+.piece-glyph { font-size: 15px; line-height: 1; color: #d9c8a0; }
+
+.chat-panel { border-top: 1px solid #000; padding-top: 12px; }
+.chat-panel h2 { color: var(--text); }
+.chat-hint { margin: 0 0 8px; }
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.chat-msg {
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.chat-msg.user { background: var(--panel2); align-self: flex-end; max-width: 90%; }
+.chat-msg.bot { background: var(--panel); align-self: flex-start; }
+.chat-msg.err { background: #3a1d1d; border-left: 3px solid var(--blunder); }
+.chat-msg.pending { color: var(--muted); font-style: italic; }
+
+/* rendered markdown inside bot answers */
+.chat-msg.bot p { margin: 0 0 8px; }
+.chat-msg.bot p:last-child { margin-bottom: 0; }
+.chat-msg.bot ul { margin: 4px 0 8px; padding-left: 20px; }
+.chat-msg.bot li { margin: 2px 0; }
+.chat-msg.bot strong { color: #fff; font-weight: 600; }
+.chat-msg.bot em { font-style: italic; color: #d9c8a0; }
+.chat-msg.bot code {
+  background: #000;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12.5px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.chat-form { display: flex; gap: 6px; }
+.chat-form input {
+  flex: 1;
+  background: #14130f;
+  border: 1px solid #000;
+  border-radius: 4px;
+  color: var(--text);
+  padding: 7px 9px;
+  font-size: 13.5px;
+}
+.chat-form button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.chat-form button:disabled { opacity: 0.5; cursor: default; }

@@ -1,0 +1,19 @@
+# Python dependencies for Chess Review MCP.
+# Install into a Python 3.11+ environment:
+#     pip install -r requirements.txt
+#
+# You ALSO need the Stockfish engine installed separately (it is not a pip package).
+# See the README "Installation" section.
+#
+# Lower bounds below match pyproject.toml; the versions this project was last verified
+# against are noted in comments.
+
+python-chess>=1.999        # verified: 1.999 (imports as `chess`)
+mcp[cli]>=1.27             # verified: 1.27.2  — only needed for the MCP server / Claude Code
+fastapi>=0.137             # verified: 0.137.1
+uvicorn>=0.49              # verified: 0.49.0
+pydantic>=2.0              # verified: 2.13.4
+pydantic-settings>=2.0     # verified: 2.14.1
+
+# For running the test suite (optional at runtime):
+pytest>=8                  # verified: 9.1.0
