@@ -41,7 +41,7 @@
   <g>
     <rect x="260" y="206" width="160" height="96" rx="12" fill="#eeedfe" stroke="#534ab7"/>
     <text class="t" x="340" y="247" text-anchor="middle" fill="#3c3489">Shared core</text>
-    <text class="s" x="340" y="267" text-anchor="middle" fill="#534ab7">engine + session</text>
+    <text class="s" x="340" y="267" text-anchor="middle" fill="#534ab7">engine · session · history</text>
   </g>
   <g>
     <rect x="460" y="206" width="160" height="96" rx="12" fill="#e1f5ee" stroke="#0f6e56"/>

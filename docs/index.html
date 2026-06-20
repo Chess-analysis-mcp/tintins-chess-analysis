@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tintin's AI Chess Analysis: your mistakes, explained in words</title>
+  <meta name="description" content="Analyze a chess game with Stockfish, find where you went wrong, and, unlike a bare engine, get every mistake explained in plain words by Snowie, your AI coach, grounded in real engine lines." />
+  <!-- Favicon reuses the app's icon (one level up from docs/). -->
+  <link rel="icon" type="image/png" href="../frontend/favicon-32.png" />
+  <link rel="icon" type="image/svg+xml" href="../frontend/favicon.svg" />
+  <!-- Social share preview uses the hero screenshot. -->
+  <meta property="og:title" content="Tintin's AI Chess Analysis: your mistakes, explained in words" />
+  <meta property="og:description" content="Stockfish finds where you went wrong; this tool tells you why, in plain English." />
+  <meta property="og:image" content="screenshots/chess_new_pipeline.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===================== HERO ===================== -->
+  <header class="hero">
+    <div class="wrap">
+      <div class="brand">Tintin's AI Chess Analysis</div>
+      <span class="eyebrow">Stockfish + plain English</span>
+      <h1>Stop guessing <span class="accent">why</span> you lost.</h1>
+      <p class="tagline">
+        Tintin's AI Chess Analysis reviews your game with Stockfish and finds exactly where you went
+        wrong. Then, unlike a bare engine, <strong>Snowie</strong>, your AI coach, explains each
+        mistake <strong>in words</strong>, grounded in the real lines the engine saw.
+      </p>
+      <div class="buttons">
+        <a class="btn primary" href="#start">Get started</a>
+        <a class="btn secondary" href="https://github.com/DimaPdemler/Chess_analysis_mcp">View on GitHub</a>
+      </div>
+
+      <p class="local-note">
+        Runs locally on your machine, and the AI coach uses your <strong>existing Claude
+        subscription</strong>. No API keys, no per-token bills.
+      </p>
+
+      <!-- HERO SCREENSHOT: docs/screenshots/chess_new_pipeline.png
+           A single shot of the whole app: the board with a mistake selected (gray "played" arrow +
+           green best-move arrows + red refutation arrow), the eval bar, the win graph underneath,
+           the mistake list, the Snowie AI-coach chat, and the Games panel. -->
+      <figure>
+        <img class="shot" src="screenshots/chess_new_pipeline.png"
+             alt="The review board: a chess position with played, best, and refutation arrows, an eval bar, a win graph, a mistake list, the Snowie AI coach answering a question, and the Games panel." />
+        <figcaption>The whole app at a glance: a Lichess-style board, the eval bar and win graph, your mistake list, and Snowie, your AI coach, all in one view.</figcaption>
+      </figure>
+    </div>
+  </header>
+
+  <!-- ===================== THE IDEA ===================== -->
+  <section id="idea">
+    <div class="wrap">
+      <h2>An engine tells you what. This tells you why.</h2>
+      <p class="lead">
+        A raw engine spits out a number and a best move. That's great if you already understand the
+        position, and useless if you don't. Snowie, the built-in AI coach, turns that number into a sentence.
+      </p>
+      <div class="contrast">
+        <div class="card before">
+          <div class="label">A bare engine</div>
+          <div class="eval">−3.7</div>
+          <p>Best move: c3. …and you're left to figure out the rest yourself.</p>
+        </div>
+        <div class="card after">
+          <div class="label">Snowie, your AI coach</div>
+          <p class="quote">
+            “<b>Nf3 was a blunder</b>. Your win chance fell from 81% to 57%. The crushing reply was
+            <b>c3!</b>, kicking the knight with nowhere safe to go. Instead, Nf3 invited …Nxf3+ and
+            handed back the whole advantage.”
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== WHAT IT DOES ===================== -->
+  <section id="features">
+    <div class="wrap">
+      <h2>What you get</h2>
+      <p class="lead">Everything is built from one Stockfish sweep of your game: no guessing, no estimates.</p>
+      <div class="features">
+        <div class="feature">
+          <span class="icon">💬</span>
+          <h3>Explained in words</h3>
+          <p>Every inaccuracy, mistake, and blunder gets a concrete comment: the better move, its line, and how your move gets punished.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">♟️</span>
+          <h3>Interactive board</h3>
+          <p>Replay each mistake, drag a piece to try your own idea, and free-explore any variation with instant engine feedback.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">📈</span>
+          <h3>Eval bar + win graph</h3>
+          <p>A Lichess-style win graph across the whole game, oriented to the side you played. Click or arrow-key to scrub.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">🧭</span>
+          <h3>Move arrows</h3>
+          <p>See the move you played, the engine's best moves (live multi-PV), and the refutation of any move you try.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">🗣️</span>
+          <h3>AI coach (Snowie)</h3>
+          <p>Ask Snowie “why is this bad?” or “what should I do here?” and it answers from pre-computed engine facts, so it stays grounded.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">🎯</span>
+          <h3>Coaching profile</h3>
+          <p>Every game is saved locally and tagged for recurring weaknesses (hung pieces, missed forks, time trouble) that build into your profile.</p>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span class="chip"><span class="dot played"></span> the move you played</span>
+        <span class="chip"><span class="dot best"></span> the engine's best move</span>
+        <span class="chip"><span class="dot refute"></span> the refutation of a bad try</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== BRING IN YOUR GAMES ===================== -->
+  <section id="screenshots">
+    <div class="wrap">
+      <h2>Bring in your games</h2>
+      <p class="lead">Pull games straight from Lichess, paste a PGN from anywhere, or bulk-upload a
+        Chess.com export, then walk through them move by move.</p>
+    </div>
+  </section>
+
+  <!-- ===================== HOW IT WORKS ===================== -->
+  <section id="how">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="lead">
+        One process holds one Stockfish engine and one analysis. A Claude Code terminal (via MCP) and
+        an interactive browser board both read from it, so they never disagree.
+      </p>
+      <div class="arch">
+        <img src="chess_mcp_architecture.svg"
+             alt="Architecture: Claude Code in the terminal and a browser board both connect into one Python process holding an MCP server, a shared Stockfish engine and session, and a FastAPI web server." />
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== GET STARTED ===================== -->
+  <section id="start">
+    <div class="wrap">
+      <h2>Get started</h2>
+      <p class="lead">It runs locally on your machine. The installer handles Stockfish, Python, and the rest.</p>
+      <div class="start-steps">
+        <div class="opt">
+          <h3>Easiest: double-click</h3>
+          <p>
+            Double-click <strong>Tintins AI Chess Analysis.command</strong> (macOS / Linux) or
+            <strong>Tintins AI Chess Analysis.bat</strong> (Windows). The first launch installs everything, then
+            opens the board with your most recent Lichess game already loaded.
+          </p>
+        </div>
+        <div class="opt">
+          <h3>From a terminal</h3>
+          <p>
+            Run <code>./install.sh</code> (or <code>install.ps1</code> on Windows), then
+            <code>uv run python scripts/run_web.py example_pgns/game1.pgn white</code> to review a game.
+          </p>
+        </div>
+        <div class="opt">
+          <h3>Inside Claude Code</h3>
+          <p>
+            The project ships as an MCP server. Paste a PGN and say “analyze this game,” and Claude
+            narrates your mistakes and hands you the board link.
+          </p>
+        </div>
+      </div>
+      <p class="lead" style="margin-top: 28px;">
+        Full setup, configuration, and options are in the
+        <a href="https://github.com/DimaPdemler/Chess_analysis_mcp#readme">README on GitHub</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer>
+    <div class="wrap">
+      <a href="https://github.com/DimaPdemler/Chess_analysis_mcp">github.com/DimaPdemler/Chess_analysis_mcp</a>
+      <div class="made">Built with Stockfish · MCP · Claude · © DimaPdemler</div>
+    </div>
+  </footer>
+
+</body>
+</html>

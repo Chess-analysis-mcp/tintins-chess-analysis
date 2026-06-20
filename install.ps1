@@ -78,7 +78,7 @@ uv run python -m server.doctor
 
 Write-Host ""
 Write-Host "Done." -ForegroundColor White
-Write-Host "Easiest: double-click `"Chess Review.bat`" to open the board with your latest Lichess game."
+Write-Host "Easiest: double-click `"Tintins AI Chess Analysis.bat`" to open the board with your latest Lichess game."
 Write-Host "Or try a review from the terminal:"
 Write-Host "    uv run python scripts/run_web.py example_pgns/game1.pgn white"
 Write-Host "Or open Claude Code in this folder and ask it to analyze a game."

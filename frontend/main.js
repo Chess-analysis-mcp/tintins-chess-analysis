@@ -745,7 +745,7 @@ function setCoachAI(state, text) {
     el.hidden = false;
     el.className = "coach-ai";
     // Render bold / italics / lists / paragraphs (same safe markdown as the chat answers).
-    el.innerHTML = `<span class="coach-ai-tag">AI coach</span>${renderMarkdown(text)}`;
+    el.innerHTML = `<span class="coach-ai-tag">AI coach (Snowie)</span>${renderMarkdown(text)}`;
   }
 }
 

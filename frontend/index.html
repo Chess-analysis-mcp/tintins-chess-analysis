@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Chess Review</title>
-    <!-- Chess Review favicon -->
+    <title>Tintin's AI Chess Analysis</title>
+    <!-- Tintin's AI Chess Analysis favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
@@ -19,7 +19,7 @@
   <body>
     <header>
       <h1>
-        Chess Review
+        Tintin's AI Chess Analysis
         <span class="help" tabindex="0" aria-label="Keyboard shortcuts">?
           <span class="help-tip" role="tooltip">
             <b>Keyboard shortcuts</b>
@@ -75,8 +75,8 @@
         <div id="verdict" class="verdict"></div>
         <div class="coach-ai-wrap">
           <button id="coach-ai-btn" class="coach-ai-btn" hidden
-            title="Have Claude write a fuller coaching summary of this game (uses your Claude subscription)">
-            ✨ Generate AI coach summary
+            title="Have Snowie write a fuller coaching summary of this game (uses your Claude subscription)">
+            ✨ Generate AI coach (Snowie) summary
           </button>
           <div id="coach-ai" class="coach-ai" hidden></div>
         </div>
@@ -94,9 +94,9 @@
         <h2>Mistakes</h2>
         <ol id="mistakes" class="mistakes"></ol>
         <div class="chat-panel">
-          <h2>Ask “why?”</h2>
+          <h2>Ask your AI coach (Snowie)</h2>
           <p class="muted chat-hint">
-            Asks Claude about the current board position (uses your Claude subscription).
+            Ask Snowie about the current board position (uses your Claude subscription).
           </p>
           <label class="toggle chat-profile-toggle"
             title="Include your cross-game history so Claude coaches you on recurring patterns. Turn off to send fewer tokens.">
@@ -157,7 +157,7 @@
     <!-- First-run prompt (app mode only): shown when there's no configured/saved Lichess account. -->
     <div id="firstrun" class="firstrun-overlay" hidden>
       <form id="firstrun-form" class="firstrun-card">
-        <h2>Welcome to Chess Review</h2>
+        <h2>Welcome to Tintin's AI Chess Analysis</h2>
         <p class="muted">Enter your Lichess username to open your most recent game.</p>
         <input id="firstrun-user" type="text" autocomplete="off" placeholder="lichess username" />
         <label class="toggle">
@@ -194,9 +194,9 @@
         <label class="set-field set-check">
           <span class="set-check-row">
             <input id="set-coach-ai-auto" type="checkbox" />
-            <span class="set-label">Auto-generate AI coach summary <span class="set-opt">(uses your Claude subscription)</span></span>
+            <span class="set-label">Auto-generate AI coach (Snowie) summary <span class="set-opt">(uses your Claude subscription)</span></span>
           </span>
-          <span class="set-hint">A button under the board lets you have Claude write a fuller coaching
+          <span class="set-hint">A button under the board lets you have Snowie write a fuller coaching
             summary for any game. Turn this on to generate it automatically for every game you open
             instead of pressing the button. The quick free summary in the side panel always shows.</span>
         </label>

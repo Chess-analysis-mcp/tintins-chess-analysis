@@ -5,12 +5,7 @@ engine, get the mistakes **explained in words**, grounded in real engine lines. 
 from the **Claude Code terminal** (as an MCP server) and as an **interactive web board** (a
 Lichess-style review UI) that share one engine and one analysis, so they never disagree.
 
-<!-- TODO: hero screenshot.
-     Capture the full web board for a reviewed game: board on the left with a mistake selected
-     (gray "played" arrow + green best-move arrows + red refutation arrow), the eval bar, the
-     win graph underneath, and the right sidebar showing the mistake list + the "Ask why?" chat
-     with one answered question. Save as docs/screenshots/hero.png -->
-![Chess Review board](docs/screenshots/hero.png)
+![Chess Review board: the board with played, best, and refutation arrows, an eval bar, a win graph, the mistake list, the Snowie AI coach, and the Games panel](docs/screenshots/chess_new_pipeline.png)
 
 ---
 
@@ -27,8 +22,8 @@ Lichess-style review UI) that share one engine and one analysis, so they never d
   when you played black). Click the graph or use ← / → to scrub the whole game.
 - **Move arrows:** gray = the move you played, green = engine best moves (live **multi-PV** with
   **progressive deepening**, thicker arrow = better move), red = the refutation of a move you try.
-- **In-browser "why? / what now?" chat** powered by headless `claude -p` (your Claude
-  subscription), fed pre-computed engine facts so answers are grounded, not estimated.
+- **In-browser AI coach (Snowie).** A "why? / what now?" chat powered by headless `claude -p`
+  (your Claude subscription), fed pre-computed engine facts so answers are grounded, not estimated.
 - **Cross-game history + coaching profile.** Every reviewed game is saved locally, tagged with
   recurring mistake motifs (hung pieces, missed forks, back-rank, time trouble…), and rolled up
   into a per-player profile. Toggle **"Personalize with my history"** in the chat and Claude can
@@ -86,12 +81,12 @@ That's it — skip to [Usage](#usage). The MCP server is already registered in `
 editing needed: it runs via `uv`, which is machine-independent); the only thing worth setting is
 your username, which the installer prompts for.
 
-### Just want to review your Lichess games? Double-click **Chess Review**
+### Just want to review your Lichess games? Double-click **Tintins AI Chess Analysis**
 
 If you don't want to touch a terminal at all, use the double-click launcher:
 
-- **macOS / Linux:** double-click **`Chess Review.command`**
-- **Windows:** double-click **`Chess Review.bat`**
+- **macOS / Linux:** double-click **`Tintins AI Chess Analysis.command`**
+- **Windows:** double-click **`Tintins AI Chess Analysis.bat`**
 
 The **first launch** installs everything for you (uv + Stockfish + the project env — it just runs
 the installer above), then opens the board in your browser with your **most recent Lichess game**
@@ -229,12 +224,12 @@ Tools exposed: `mcp__chess__analyze_game`, `mcp__chess__get_engine_line`, `mcp__
 >
 > 📊 Open the interactive board: http://127.0.0.1:8765
 
-### In-browser chat
+### Snowie — the in-browser AI coach
 
-The chat panel answers position-aware questions using your Claude subscription. Each question is
-handed the **current board** (for *"what should I do here?"*) and the **move in question** (for
-*"why is this bad?"*), each with pre-computed Stockfish facts, so Claude reasons from real lines.
-Follow-up questions remember the conversation.
+**Snowie** is the chat panel: it answers position-aware questions using your Claude subscription.
+Each question is handed the **current board** (for *"what should I do here?"*) and the **move in
+question** (for *"why is this bad?"*), each with pre-computed Stockfish facts, so Snowie reasons
+from real lines. Follow-up questions remember the conversation.
 
 <!-- TODO: screenshot of the chat panel with a Q&A.
      Show "Why is Nd4 bad here?" and Claude's grounded answer rendered with bold/lists. Save as

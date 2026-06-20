@@ -187,7 +187,7 @@ WEB_AUTOSTART: bool = os.environ.get("CHESS_WEB_AUTOSTART", "1") != "0"
 # Auto-open the board in the default browser the first time a game is analysed, so a
 # first-time user never has to be told the URL. Set CHESS_WEB_OPEN=0 to disable.
 WEB_OPEN: bool = os.environ.get("CHESS_WEB_OPEN", "1") != "0"
-# "App mode": set by the double-click launcher (Chess Review.command / .bat) when serving the
+# "App mode": set by the double-click launcher (Tintins AI Chess Analysis.command / .bat) when serving the
 # board standalone for users who never touch a terminal. The frontend reads it via
 # /api/app-config and, when on, auto-loads the user's most recent Lichess game on open. Left off
 # (0) for the MCP-driven board and dev `run_web.py <pgn>` runs, so neither gets a surprise autoload.

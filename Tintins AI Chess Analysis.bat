@@ -1,5 +1,5 @@
 @echo off
-REM Chess Review - double-click launcher (Windows).
+REM Tintin's AI Chess Analysis - double-click launcher (Windows).
 REM
 REM First run: installs everything (uv + Stockfish + deps) via install.ps1.
 REM Every run: starts the board and opens your most recent Lichess game in the browser.
@@ -20,7 +20,7 @@ set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 REM Already running? Just open the browser and stop.
 powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 '%URL%/api/app-config' | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
 if %errorlevel%==0 (
-  echo Chess Review is already running - opening %URL%
+  echo Tintin's AI Chess Analysis is already running - opening %URL%
   start "" "%URL%"
   exit /b 0
 )
@@ -32,11 +32,11 @@ if not exist ".venv" goto install
 goto launch
 
 :install
-echo First-time setup - installing Chess Review (this happens only once)...
+echo First-time setup - installing Tintin's AI Chess Analysis (this happens only once)...
 powershell -ExecutionPolicy Bypass -File install.ps1
 set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 
 :launch
-echo Starting Chess Review... keep this window open; close it to quit.
+echo Starting Tintin's AI Chess Analysis... keep this window open; close it to quit.
 set "CHESS_APP_MODE=1"
 uv run python scripts\run_web.py --serve

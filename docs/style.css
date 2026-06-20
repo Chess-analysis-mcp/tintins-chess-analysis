@@ -1,0 +1,270 @@
+/* Chess Review landing page styles.
+   Theme mirrors the app (frontend/styles.css) so the site and the tool feel like one product. */
+
+:root {
+  --bg: #161512;
+  --panel: #262421;
+  --panel2: #322f2b;
+  --border: #34322e;
+  --text: #e8e6e3;
+  --muted: #9c9890;
+  --accent: #629924;
+  --accent-bright: #7cb342;
+  --inaccuracy: #e0a800;
+  --mistake: #e08000;
+  --blunder: #d33;
+  --max: 880px;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent-bright); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ---- Hero ---- */
+.hero {
+  text-align: center;
+  padding: 72px 0 40px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hero .brand {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent-bright);
+  margin-bottom: 18px;
+}
+
+.hero .eyebrow {
+  display: inline-block;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 14px;
+  margin-bottom: 22px;
+}
+
+.hero h1 {
+  font-size: clamp(34px, 6vw, 52px);
+  line-height: 1.1;
+  margin: 0 0 16px;
+  font-weight: 700;
+}
+
+.hero h1 .accent { color: var(--accent-bright); }
+
+.hero .tagline {
+  font-size: clamp(17px, 2.4vw, 21px);
+  color: var(--muted);
+  max-width: 620px;
+  margin: 0 auto 30px;
+}
+
+.buttons {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 40px;
+}
+
+.btn {
+  display: inline-block;
+  padding: 12px 26px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn:hover { text-decoration: none; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-bright); }
+.btn.secondary { background: transparent; color: var(--text); border-color: var(--border); }
+.btn.secondary:hover { background: var(--panel); }
+
+.local-note {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 10px 22px;
+  margin: 0 auto 40px;
+  max-width: 540px;
+}
+.local-note strong { color: var(--accent-bright); font-weight: 600; }
+
+/* ---- Screenshots ---- */
+figure { margin: 0; }
+
+.shot {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.hero .shot {
+  max-width: 760px;
+  margin: 0 auto;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+figcaption {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13.5px;
+  margin-top: 10px;
+}
+
+/* ---- Sections ---- */
+section { padding: 56px 0; border-bottom: 1px solid var(--border); }
+section h2 {
+  font-size: clamp(24px, 3.4vw, 30px);
+  margin: 0 0 14px;
+  text-align: center;
+}
+section .lead {
+  color: var(--muted);
+  text-align: center;
+  max-width: 640px;
+  margin: 0 auto 36px;
+  font-size: 16px;
+}
+
+/* The idea: before/after contrast */
+.contrast {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px 24px;
+}
+.card .label {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.card.before .eval {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 30px;
+  color: var(--muted);
+  font-weight: 700;
+}
+.card.before p { color: var(--muted); margin: 8px 0 0; font-size: 14px; }
+.card.after { border-color: #3a5a1e; }
+.card.after .quote { font-size: 15.5px; }
+.card.after .quote b { color: var(--accent-bright); }
+
+/* Feature grid */
+.features {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.feature {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px;
+}
+.feature .icon { font-size: 22px; margin-bottom: 10px; display: block; }
+.feature h3 { margin: 0 0 6px; font-size: 16px; }
+.feature p { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* Arrow legend chips */
+.legend {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 28px;
+}
+.chip { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.dot.played { background: #888; }
+.dot.best { background: var(--accent); }
+.dot.refute { background: var(--blunder); }
+
+/* How it works */
+.arch {
+  background: #f4f4f0;
+  border-radius: 10px;
+  padding: 22px;
+  max-width: 720px;
+  margin: 0 auto 6px;
+}
+.arch img { width: 100%; height: auto; display: block; }
+
+/* Get started */
+.start-steps {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.start-steps .opt {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 22px;
+  margin-bottom: 14px;
+}
+.start-steps h3 { margin: 0 0 8px; font-size: 16px; }
+.start-steps p { margin: 0; color: var(--muted); font-size: 14.5px; }
+code {
+  font-family: ui-monospace, Menlo, monospace;
+  background: var(--panel2);
+  color: #e7e3da;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 13.5px;
+}
+
+/* Footer */
+footer {
+  text-align: center;
+  padding: 36px 0 56px;
+  color: var(--muted);
+  font-size: 14px;
+}
+footer a { color: var(--muted); }
+footer .made { margin-top: 8px; font-size: 13px; }
+
+/* ---- Responsive ---- */
+@media (max-width: 720px) {
+  .features { grid-template-columns: 1fr; }
+  .contrast { grid-template-columns: 1fr; }
+}

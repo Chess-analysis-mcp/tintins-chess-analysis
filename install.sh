@@ -83,7 +83,7 @@ uv run python -m server.doctor || true
 
 echo
 bold "Done."
-echo "Easiest: double-click \"Chess Review.command\" to open the board with your latest Lichess game."
+echo "Easiest: double-click \"Tintins AI Chess Analysis.command\" to open the board with your latest Lichess game."
 echo "Or try a review from the terminal:"
 echo "    uv run python scripts/run_web.py example_pgns/game1.pgn white"
 echo "Or open Claude Code in this folder and ask it to analyze a game (the 'chess' MCP server is registered)."
