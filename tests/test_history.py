@@ -239,6 +239,66 @@ def test_record_fields(tmp_path):
     assert rec["game_id"] and len(rec["game_id"]) == 16
     assert rec["mistakes"][0]["phase"] == "endgame"
     assert "hung_piece" in rec["mistakes"][0]["motifs"]
+    assert rec["speed"] == "rapid"  # TimeControl 600+0
+    assert rec["pgn"] == _session().pgn  # raw PGN stored so the board can reopen the game
+
+
+def test_history_rows_filters_and_marks_pgn(tmp_path):
+    d = str(tmp_path)
+    mine = history.build_game_record(_session(), data_dir=d)
+    history.append_record(mine, data_dir=d)
+    # A game with no stored pgn (pre-migration record) and a different player.
+    other = {**mine, "game_id": "other1", "player_id": "someone_else", "pgn": None}
+    history.append_record(other, data_dir=d)
+
+    rows = history.history_rows(player_id="thedarktintin", data_dir=d)
+    assert len(rows) == 1  # filtered to my player_id
+    row = rows[0]
+    assert row["has_pgn"] is True and row["pgn"] == _session().pgn
+    assert row["reviewed_side"] == "white" and row["speed"] == "rapid"
+
+    # Unfiltered includes both; the pgn-less one is flagged has_pgn=False.
+    all_rows = history.history_rows(data_dir=d)
+    assert {r["has_pgn"] for r in all_rows} == {True, False}
+
+
+def _speed_rec(game_id, speed, blunders, when):
+    """Minimal hand-built record carrying a speed, for the per-mode aggregation test."""
+    return {
+        "schema_version": 1,
+        "game_id": game_id,
+        "reviewed_side": "white",
+        "analyzed_at": when,
+        "player_id": "p",
+        "platform": "lichess",
+        "player_name": "p",
+        "player_result": "loss",
+        "accuracy": 70.0,
+        "speed": speed,
+        "opening": "Test",
+        "counts": {"inaccuracy": 0, "mistake": 0, "blunder": blunders},
+        "phase_loss": {"opening": 0.0, "middlegame": 0.0, "endgame": 0.0},
+        "mistakes": [],
+    }
+
+
+def test_speed_breakdown_in_profile(tmp_path):
+    d = str(tmp_path)
+    # Two blitz games (one blunder each) and one rapid game, distinct game_ids so none dedupe.
+    for r in (
+        _speed_rec("g1", "blitz", 1, "2026-06-15T00:00:01Z"),
+        _speed_rec("g2", "blitz", 1, "2026-06-15T00:00:02Z"),
+        _speed_rec("g3", "rapid", 0, "2026-06-15T00:00:03Z"),
+    ):
+        history.append_record(r, data_dir=d)
+    profile = history.build_profile("p", data_dir=d)
+    by_speed = {s["speed"]: s for s in profile["recent"]["by_speed"]}
+    assert by_speed["blitz"]["games"] == 2
+    assert by_speed["rapid"]["games"] == 1
+    assert by_speed["blitz"]["blunders_per_game"] == 1.0  # one blunder per game
+    # The prompt block names the modes when more than one was played.
+    block = history.format_profile_for_prompt(profile)
+    assert "By mode:" in block and "blitz" in block and "rapid" in block
 
 
 # --- identity resolution ---------------------------------------------------------------
@@ -293,6 +353,31 @@ def test_identity_env_aliases(tmp_path, monkeypatch):
         {"White": "dpdemler", "Site": "https://lichess.org/w"}, "white", data_dir=str(tmp_path)
     )
     assert pid4 == "dpdemler"  # unmapped -> raw handle
+
+
+def test_ensure_self_alias_folds_uploaded_handle(tmp_path, monkeypatch):
+    """Uploading your own Chess.com games should make them show up under "my" player_id."""
+    d = str(tmp_path)
+    monkeypatch.setattr(history.config, "USERNAME", "thedarktintin")
+    monkeypatch.setattr(history.config, "USERNAME_ALIASES", [])
+
+    # Before: a chess.com handle that differs from CHESS_USERNAME is its own (unmapped) id.
+    headers = {"Black": "thedarktintin2", "Site": "https://chess.com/x"}
+    pid_before, _, _ = history.resolve_identity(headers, "black", data_dir=d)
+    assert pid_before == "thedarktintin2" != history.my_player_id(data_dir=d)
+
+    canonical = history.ensure_self_alias("thedarktintin2", platform="Chess.com", data_dir=d)
+    assert canonical == history.my_player_id(data_dir=d) == "thedarktintin"
+
+    # After: the same chess.com game now resolves to "me".
+    pid_after, _, _ = history.resolve_identity(headers, "black", data_dir=d)
+    assert pid_after == "thedarktintin"
+
+    # Idempotent: a second call doesn't add a duplicate alias, and an already-mapped handle is a no-op.
+    history.ensure_self_alias("thedarktintin2", platform="Chess.com", data_dir=d)
+    history.ensure_self_alias("thedarktintin", data_dir=d)  # == CHESS_USERNAME, already me
+    ids = json.loads((tmp_path / "identities.json").read_text())
+    assert len(ids["thedarktintin"]["aliases"]) == 1
 
 
 # --- storage: append + dedupe ----------------------------------------------------------

@@ -93,6 +93,35 @@ def thresholds_for_elo(elo: float | None) -> tuple[float, float, float]:
     return tuple(round(t * factor, 1) for t in DEFAULT_THRESHOLDS)  # type: ignore[return-value]
 
 
+# Per-mode multiplier applied on top of the Elo-scaled cutoffs. Blitz is the anchor (1.0):
+# the default 5/10/15 cutoffs were tuned against blitz play and felt right there. Slower modes
+# get LOWER thresholds (more sensitive — with time on the clock, smaller errors are real and
+# worth flagging); faster modes get HIGHER thresholds (more forgiving). "unknown" leaves the
+# cutoffs unchanged so games without a known time control behave exactly as before.
+SPEED_THRESHOLD_FACTORS: dict[str, float] = {
+    "bullet": 1.15,
+    "blitz": 1.0,
+    "rapid": 0.9,
+    "classical": 0.8,
+    "correspondence": 0.75,
+    "unknown": 1.0,
+}
+
+
+def thresholds_for_speed(
+    thresholds: tuple[float, float, float], speed: str | None
+) -> tuple[float, float, float]:
+    """Scale already-computed (inaccuracy, mistake, blunder) cutoffs by the game's mode.
+
+    Multiplies on top of `thresholds_for_elo`, so the final cutoffs reflect both skill and mode.
+    See SPEED_THRESHOLD_FACTORS for the gradient (blitz = unchanged anchor).
+    """
+    factor = SPEED_THRESHOLD_FACTORS.get(speed or "unknown", 1.0)
+    if factor == 1.0:
+        return thresholds
+    return tuple(round(t * factor, 1) for t in thresholds)  # type: ignore[return-value]
+
+
 def move_accuracy(win_before: float, win_after: float) -> float:
     """Per-move accuracy% in [0, 100] from the win% drop (Lichess-style)."""
     drop = max(0.0, win_before - win_after)
@@ -109,3 +138,62 @@ def aggregate_accuracy(accuracies: list[float]) -> float:
     if not accuracies:
         return 100.0
     return sum(accuracies) / len(accuracies)
+
+
+# --------------------------------------------------------------------------------------
+# Game speed (time-format) classification
+# --------------------------------------------------------------------------------------
+# Bucket a game into Lichess-style speed categories from its estimated duration,
+# base + 40*increment seconds (40 = Lichess's assumed game length). Tagging each game's
+# mode lets coaching apply mode-appropriate expectations — a blunder in bullet is far more
+# forgivable than in a classical game — and surface how a player's patterns differ by mode.
+Speed = Literal["bullet", "blitz", "rapid", "classical", "correspondence", "unknown"]
+
+_SPEED_KEYWORDS = ("bullet", "blitz", "rapid", "classical", "correspondence")
+
+
+def time_control_clock(time_control: str | None) -> tuple[float, float] | None:
+    """(base_seconds, increment_seconds) from a PGN TimeControl, or None when it isn't a
+    sudden-death clock ("-", "?", empty, or a correspondence "days" spec like "1/259200")."""
+    tc = (time_control or "").strip()
+    if not tc or tc in ("-", "?"):
+        return None
+    head, _, inc = tc.partition("+")
+    if "/" in head:  # "1/259200" = correspondence (days), not a sudden-death clock
+        return None
+    try:
+        base = float(head)
+        increment = float(inc) if inc else 0.0
+    except ValueError:
+        return None
+    return (base, increment) if base > 0 else None
+
+
+def classify_speed(time_control: str | None, event: str | None = None) -> Speed:
+    """Bucket a game into bullet/blitz/rapid/classical/correspondence from its TimeControl.
+
+    Uses the estimated duration base + 40*increment (matching Lichess's buckets). Falls back to
+    a keyword in the Event header ("Rated Blitz game") when the TimeControl is absent/unclear, and
+    returns "unknown" when neither is informative.
+    """
+    tc = (time_control or "").strip()
+    if tc and "/" in tc.split("+", 1)[0]:
+        return "correspondence"
+    clock = time_control_clock(tc)
+    if clock is not None:
+        base, increment = clock
+        estimated = base + 40.0 * increment
+        if estimated < 180:
+            return "bullet"
+        if estimated < 480:
+            return "blitz"
+        if estimated < 1500:
+            return "rapid"
+        return "classical"
+    if tc == "-":  # lichess uses "-" for correspondence / unlimited
+        return "correspondence"
+    blob = (event or "").lower()
+    for kw in _SPEED_KEYWORDS:
+        if kw in blob:
+            return kw  # type: ignore[return-value]
+    return "unknown"

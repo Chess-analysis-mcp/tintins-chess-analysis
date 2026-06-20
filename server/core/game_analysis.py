@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
+from typing import Callable
 
 import chess
 import chess.pgn
@@ -21,8 +22,10 @@ from server.core import engine
 from server.core.evaluation import (
     aggregate_accuracy,
     classify,
+    classify_speed,
     move_accuracy,
     thresholds_for_elo,
+    thresholds_for_speed,
     win_percent_from_score,
 )
 from server.core.session import MoveReview, ReviewSession
@@ -151,12 +154,17 @@ def analyze_game(
     depth: int | None = None,
     elo: int | None = None,
     sensitivity: str | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> ReviewSession:
     """Analyse a PGN and build a ReviewSession for `player`'s mistakes.
 
     Mistake thresholds adapt to skill: pass `elo` (normalized scale) or a named `sensitivity`
     ("casual"/"default"/"strong"/"master"), else the reviewed side's Elo is read from the PGN
     (normalized for the detected platform). Stronger -> smaller win%-drop cutoffs + deeper sweep.
+
+    `on_progress(done, total)` is called after each position is evaluated (the slow, ~linear part
+    of the sweep), so a caller can drive a progress bar. Best-effort: exceptions in the callback
+    are swallowed so a misbehaving reporter can never break a review.
     """
     game = chess.pgn.read_game(io.StringIO(pgn))
     if game is None:
@@ -167,7 +175,10 @@ def analyze_game(
     my_turn = chess.WHITE if me == "white" else chess.BLACK
 
     review_elo, elo_source = _resolve_review_elo(headers, me, elo, sensitivity)
-    thresholds = thresholds_for_elo(review_elo)
+    speed = classify_speed(headers.get("TimeControl"), headers.get("Event"))
+    # Cutoffs adapt to BOTH skill (Elo) and mode: faster time controls are more forgiving,
+    # slower ones stricter, with blitz as the unchanged anchor.
+    thresholds = thresholds_for_speed(thresholds_for_elo(review_elo), speed)
     depth = depth or _depth_for_elo(review_elo)
 
     # Replay the mainline, collecting (board_before, move) pairs plus each move's remaining
@@ -184,11 +195,25 @@ def analyze_game(
         board.push(node.move)
     final_board = board
 
-    # Evaluate every position once: the position before each move, plus the final one.
+    # Evaluate every position once: the position before each move, plus the final one. This is
+    # the slow part of the sweep (one fixed-depth engine call per ply ⇒ roughly linear time), so
+    # we report progress here for the web board's progress bar.
     pos_evals: list[_PosEval] = []
+    total_positions = len(steps) + 1
+
+    def _report(done: int) -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(done, total_positions)
+        except Exception:  # pragma: no cover - a broken reporter must never break a review
+            pass
+
     for before, _move in steps:
         pos_evals.append(_evaluate_position(before, depth=depth))
+        _report(len(pos_evals))
     pos_evals.append(_evaluate_position(final_board, depth=depth))
+    _report(len(pos_evals))
 
     all_my_moves: list[MoveReview] = []
     white_accs: list[float] = []
@@ -275,6 +300,7 @@ def analyze_game(
         player=me,
         headers=headers,
         result=headers.get("Result", "*"),
+        speed=speed,
         accuracy_white=round(aggregate_accuracy(white_accs), 1),
         accuracy_black=round(aggregate_accuracy(black_accs), 1),
         all_moves=all_my_moves,

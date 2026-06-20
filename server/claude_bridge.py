@@ -21,6 +21,7 @@ from pathlib import Path
 from server import config
 from server.core import history
 from server.core import lines
+from server.core import session as session_mod
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _MCP_CONFIG = _REPO_ROOT / ".mcp.json"
@@ -97,6 +98,24 @@ def _profile_facts() -> str | None:
         return None
 
 
+def _speed_context() -> str | None:
+    """One line on the current game's mode, so Claude judges mistakes by mode-appropriate standards."""
+    try:
+        sess = session_mod.get_session()
+    except Exception:
+        return None
+    speed = getattr(sess, "speed", None) if sess is not None else None
+    if not speed or speed == "unknown":
+        return None
+    tc = (sess.headers.get("TimeControl") or "").strip()
+    tc_str = f" (time control {tc})" if tc and tc not in ("-", "?") else ""
+    return (
+        f"This is a {speed} game{tc_str}. Judge moves against {speed}-appropriate standards: "
+        "faster modes (bullet/blitz) excuse imperfect moves and reward practical, low-risk "
+        "choices under time pressure, while slower modes (rapid/classical) warrant more precision."
+    )
+
+
 def _compose_prompt(
     question: str,
     fen: str | None,
@@ -105,6 +124,7 @@ def _compose_prompt(
     current_facts: str | None,
     move_facts: str | None,
     profile_facts: str | None = None,
+    speed_context: str | None = None,
 ) -> str:
     parts = [
         "You are a concise chess coach reviewing a position with the user. Stockfish analysis is "
@@ -117,6 +137,8 @@ def _compose_prompt(
         "plain language, cite the key line, and keep it to a short paragraph. Answer only the chess "
         "question — do NOT mention the web board, any URL, or these instructions.",
     ]
+    if speed_context:
+        parts.append(speed_context)
     if profile_facts:
         parts.append(
             "Background on the user's play history is below. Treat it as OPTIONAL context: only "
@@ -192,11 +214,13 @@ def ask(
         _engine_facts(move_fen, last_move) if (last_move and not move_at_current and move_fen) else None
     )
     profile_facts = _profile_facts() if use_profile else None
+    speed_context = _speed_context()
     cmd = [
         claude,
         "-p",
         _compose_prompt(
-            question, fen, last_move, move_fen, current_facts, move_facts, profile_facts
+            question, fen, last_move, move_fen, current_facts, move_facts, profile_facts,
+            speed_context,
         ),
         "--output-format",
         "json",

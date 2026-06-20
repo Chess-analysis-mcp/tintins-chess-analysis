@@ -18,10 +18,12 @@ from mcp.server.fastmcp import FastMCP
 from server import config
 from server.core import engine
 from server.core import history
+from server.core import lichess
 from server.core import lifecycle
 from server.core import lines
 from server.core.game_analysis import analyze_game as _analyze_game
 from server.core import session as session_mod
+from server.core import settings
 from server.web import runner as web_runner
 
 mcp = FastMCP("chess")
@@ -76,13 +78,69 @@ def analyze_game(
         )
     else:
         sens = " Using default sensitivity (5/10/15% drops); no Elo found in the PGN."
+    speed = summary.get("speed")
+    mode = (
+        f" This was a {speed} game — weigh the mistakes against {speed}-appropriate expectations "
+        "(faster modes are more forgiving)."
+        if speed and speed != "unknown"
+        else ""
+    )
     summary["note"] = (
         f"The interactive board has been opened in the browser at {board_url} — always "
         f"show this clickable link to the user on its own line so they can reopen it. "
         f"Replay each mistake and try alternatives there, or ask 'why was move N bad?' "
-        f"here and I'll use get_engine_line.{sens}"
+        f"here and I'll use get_engine_line.{sens}{mode}"
     )
     return summary
+
+
+@mcp.tool()
+def fetch_games(
+    username: str = "me",
+    max: int = config.LICHESS_DEFAULT_MAX,
+    rated: Optional[bool] = None,
+    perf: Optional[str] = None,
+    color: Optional[str] = None,
+    since_days: Optional[int] = None,
+) -> dict:
+    """Fetch a Lichess user's recent games (newest first) so the user doesn't paste PGNs.
+
+    Returns a list of games with `game_id`, players, ratings, `result`, `speed`, `opening`,
+    `date`, and the full `pgn`. Show the user the list and let them pick one, then call
+    `analyze_game` with the chosen game's `pgn`. Public games need no auth; heavy users can set
+    LICHESS_TOKEN to avoid IP rate limits.
+
+    Args:
+        username: Lichess handle. Defaults to "me" / empty -> the configured CHESS_USERNAME,
+            so "analyze my recent games" works without typing a name.
+        max: How many recent games to fetch (default 3).
+        rated: True = rated only, False = casual only, None = both.
+        perf: Comma-separated speed filter, e.g. "blitz,rapid" (bullet/blitz/rapid/classical).
+        color: "white" or "black" to only return games the user played that color.
+        since_days: Only games from the last N days.
+    """
+    lifecycle.touch()
+    try:
+        games = lichess.fetch_user_games(
+            username, max=max, rated=rated, perf=perf, color=color, since_days=since_days
+        )
+    except lichess.LichessError as exc:
+        return {"error": str(exc)}
+    return {"count": len(games), "games": [g.to_dict() for g in games]}
+
+
+@mcp.tool()
+def fetch_game(game_id: str) -> dict:
+    """Fetch one Lichess game by its id or URL; returns its `pgn` (+ metadata) for analyze_game.
+
+    Accepts a bare game id ("abcd1234") or a full URL (e.g. https://lichess.org/abcd1234/black).
+    Hand the returned `pgn` to `analyze_game` to review it.
+    """
+    lifecycle.touch()
+    try:
+        return lichess.fetch_game(game_id).to_dict()
+    except lichess.LichessError as exc:
+        return {"error": str(exc)}
 
 
 @mcp.tool()
@@ -141,6 +199,7 @@ def get_player_profile(player_id: Optional[str] = None) -> dict:
 
 
 def main() -> None:
+    settings.apply_saved()  # settings.json (set via the app's Settings panel) overrides env config
     lifecycle.start_watchdog()  # self-terminate after CHESS_SESSION_TTL of inactivity
     if config.WEB_AUTOSTART:
         web_runner.start_in_thread()

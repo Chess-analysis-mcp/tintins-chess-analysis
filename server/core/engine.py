@@ -61,7 +61,10 @@ class _EnginePool:
             if self._started:
                 return
             for _ in range(max(1, config.ENGINE_POOL_SIZE)):
-                eng = chess.engine.SimpleEngine.popen_uci(config.STOCKFISH_PATH)
+                try:
+                    eng = chess.engine.SimpleEngine.popen_uci(config.STOCKFISH_PATH)
+                except FileNotFoundError as exc:
+                    raise RuntimeError(config.stockfish_install_hint()) from exc
                 eng.configure(
                     {"Threads": config.ENGINE_THREADS, "Hash": config.ENGINE_HASH_MB}
                 )
@@ -131,4 +134,12 @@ def analyse(fen: str, *, depth: int = config.DEFAULT_DEPTH, multipv: int = 1) ->
 
 def shutdown() -> None:
     """Quit all engine processes. Call on server shutdown."""
+    _POOL.shutdown()
+
+
+def restart() -> None:
+    """Quit engines and drop cached evals so the next analyse() respawns with the current
+    config.STOCKFISH_PATH. Used when the engine path is changed at runtime via Settings."""
+    with _POOL._lock:
+        _POOL._cache.clear()
     _POOL.shutdown()

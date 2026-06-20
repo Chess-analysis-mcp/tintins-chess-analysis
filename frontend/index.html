@@ -33,6 +33,10 @@
         </span>
       </h1>
       <div id="game-meta" class="muted">Loading…</div>
+      <button id="settings-toggle" class="hist-toggle" title="Settings"
+        aria-label="Settings">⚙ Settings</button>
+      <button id="history-toggle" class="hist-toggle" title="Show / hide the games panel"
+        aria-label="Toggle games panel">☰ Games</button>
     </header>
 
     <main>
@@ -44,6 +48,10 @@
 
         <div id="graph-wrap">
           <svg id="graph" preserveAspectRatio="none"></svg>
+          <div id="analysis-progress" hidden>
+            <div id="analysis-progress-label">Analyzing…</div>
+            <div id="analysis-progress-track"><div id="analysis-progress-fill"></div></div>
+          </div>
         </div>
 
         <div class="controls">
@@ -86,7 +94,111 @@
           </form>
         </div>
       </aside>
+
+      <aside class="history-col" id="history-col">
+        <div class="hist-head">
+          <h2>Games</h2>
+          <button id="history-collapse" class="hist-x" title="Hide panel" aria-label="Hide panel">×</button>
+        </div>
+        <div class="seg" role="tablist">
+          <button id="mode-normal" class="active" type="button">My games</button>
+          <button id="mode-lichess" type="button">Lichess</button>
+          <button id="mode-paste" type="button">Paste PGN</button>
+        </div>
+        <form id="lichess-form" class="lichess-form" style="display:none">
+          <div class="lichess-row">
+            <input id="lichess-user" type="text" autocomplete="off" placeholder="lichess username" />
+            <button type="submit">Load</button>
+          </div>
+          <button type="button" id="set-as-me" class="set-as-me"
+            title="Make this your account: used for 'My games', your profile, and auto-open on launch">
+            Set as my account
+          </button>
+        </form>
+        <form id="paste-form" class="paste-form" style="display:none">
+          <textarea id="paste-pgn" rows="8" autocomplete="off" spellcheck="false"
+            placeholder="Paste a PGN here (one or many games — e.g. Chess.com → Download games), or use Upload .pgn"></textarea>
+          <input id="paste-file" type="file" accept=".pgn,.txt" hidden />
+          <div class="paste-row">
+            <button type="button" id="paste-upload" title="Load a .pgn file (one or many games)">Upload .pgn</button>
+            <label class="paste-side">You played
+              <select id="paste-side">
+                <option value="auto">auto</option>
+                <option value="white">White</option>
+                <option value="black">Black</option>
+              </select>
+            </label>
+            <button type="submit">Analyze</button>
+          </div>
+          <input id="paste-username" type="text" autocomplete="off"
+            placeholder="your username (optional — for multi-game files)" />
+        </form>
+        <div id="history-status" class="hist-status"></div>
+        <ol id="history-list" class="history"></ol>
+      </aside>
     </main>
+
+    <!-- First-run prompt (app mode only): shown when there's no configured/saved Lichess account. -->
+    <div id="firstrun" class="firstrun-overlay" hidden>
+      <form id="firstrun-form" class="firstrun-card">
+        <h2>Welcome to Chess Review</h2>
+        <p class="muted">Enter your Lichess username to open your most recent game.</p>
+        <input id="firstrun-user" type="text" autocomplete="off" placeholder="lichess username" />
+        <label class="toggle">
+          <input type="checkbox" id="firstrun-remember" checked /> Save as my account
+        </label>
+        <button type="submit">Open my latest game</button>
+        <button type="button" id="firstrun-paste" class="linklike">
+          No Lichess account? Paste a PGN instead
+        </button>
+      </form>
+    </div>
+
+    <!-- Settings: edit what used to live in .mcp.json, so the app is standalone. -->
+    <div id="settings" class="firstrun-overlay" hidden>
+      <form id="settings-form" class="firstrun-card settings-card">
+        <h2>Settings</h2>
+        <label class="set-field">
+          <span class="set-label">Your username</span>
+          <input id="set-username" type="text" autocomplete="off" placeholder="your Lichess / Chess.com handle" />
+          <span class="set-hint">Decides which side is “you”, your <b>My games</b>, and your coaching profile.</span>
+        </label>
+
+        <label class="set-field">
+          <span class="set-label">Other accounts <span class="set-opt">(optional)</span></span>
+          <input id="set-aliases" type="text" autocomplete="off" placeholder="chesscom:myhandle, my_other_lichess" />
+          <span class="set-hint">Comma-separated handles that are also you — they fold into one profile.</span>
+        </label>
+
+        <label class="set-field">
+          <span class="set-label">Lichess token <span class="set-opt">(optional)</span></span>
+          <input id="set-token" type="password" autocomplete="off" placeholder="for higher rate limits" />
+        </label>
+
+        <details class="set-adv">
+          <summary>Advanced</summary>
+          <label class="set-field">
+            <span class="set-label">Recent-form window <span class="set-opt">(games)</span></span>
+            <input id="set-recent" type="text" autocomplete="off" inputmode="numeric" />
+          </label>
+          <label class="set-field">
+            <span class="set-label">Lifetime window <span class="set-opt">(all, 0, or a number)</span></span>
+            <input id="set-lifetime" type="text" autocomplete="off" />
+          </label>
+          <label class="set-field">
+            <span class="set-label">Stockfish path</span>
+            <input id="set-stockfish" type="text" autocomplete="off" />
+            <span id="set-sf-status" class="set-hint"></span>
+          </label>
+        </details>
+
+        <div class="set-actions">
+          <button type="button" id="settings-cancel" class="linklike">Cancel</button>
+          <button type="submit">Save</button>
+        </div>
+        <p id="settings-status" class="muted set-hint"></p>
+      </form>
+    </div>
 
     <script type="module" src="/main.js"></script>
   </body>

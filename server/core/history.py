@@ -28,6 +28,7 @@ import chess
 
 from server import config
 from server.core import session as session_mod
+from server.core.evaluation import classify_speed
 from server.core.session import ReviewSession
 
 SCHEMA_VERSION = 1
@@ -140,6 +141,56 @@ def resolve_identity(
 def _display_name(player_id: str, data_dir: Optional[str] = None) -> str:
     info = load_identities(data_dir).get(player_id) or {}
     return info.get("display_name") or player_id
+
+
+def _resolves_to_me(handle: str, platform: Optional[str], data_dir: Optional[str]) -> bool:
+    """True if `handle` already resolves to the canonical "me" (env or identities.json)."""
+    handle_lc = (handle or "").strip().lower()
+    if not handle_lc:
+        return False
+    if config.USERNAME and handle_lc == config.USERNAME.lower():
+        return True
+    plat = _norm_platform(platform) if platform else None
+    for a_plat, a_name in config.USERNAME_ALIASES:
+        if a_name == handle_lc and (a_plat is None or _norm_platform(a_plat) == plat):
+            return True
+    me = my_player_id(data_dir)
+    for alias in (load_identities(data_dir).get(me) or {}).get("aliases", []):
+        if str(alias.get("name", "")).strip().lower() == handle_lc:
+            a_plat = alias.get("platform")
+            if a_plat is None or plat is None or _norm_platform(str(a_plat)) == plat:
+                return True
+    return False
+
+
+def ensure_self_alias(
+    handle: str, platform: Optional[str] = None, data_dir: Optional[str] = None
+) -> str:
+    """Fold `handle` into the canonical "me" so uploaded games show up in "My games".
+
+    When you upload your own (e.g. Chess.com) games, your handle there may differ from
+    CHESS_USERNAME. This persists `handle` as an alias of `my_player_id()` in identities.json so
+    `resolve_identity` maps those games — and any future ones from that account — to you. Idempotent
+    and best-effort; returns the canonical player_id the handle now resolves to.
+    """
+    canonical = my_player_id(data_dir)
+    handle = (handle or "").strip()
+    if not handle or _resolves_to_me(handle, platform, data_dir):
+        return canonical
+
+    ids = load_identities(data_dir)
+    entry = ids.get(canonical) or {}
+    aliases = list(entry.get("aliases") or [])
+    aliases.append({"name": handle, "platform": _norm_platform(platform) if platform else None})
+    entry["aliases"] = aliases
+    entry.setdefault("display_name", canonical)
+    ids[canonical] = entry
+
+    path = _identities_path(data_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(ids, fh, ensure_ascii=False, indent=2)
+    return canonical
 
 
 # --------------------------------------------------------------------------------------
@@ -409,6 +460,20 @@ def format_profile_for_prompt(profile: dict) -> Optional[str]:
     scope = f"last {window} games" if window else f"all {recent['games']} games"
     out.append(f"- Recent form ({scope}): {_view_summary(recent)}.")
 
+    # Per-mode breakdown — only worth stating when the player has played more than one mode,
+    # so coaching can weigh the CURRENT game's mode and note where patterns diverge by speed.
+    by_speed = [s for s in recent.get("by_speed", []) if s.get("speed") != "unknown"]
+    if len(by_speed) >= 2:
+        parts = []
+        for s in by_speed:
+            acc = f"{s['avg_accuracy']}% acc" if s.get("avg_accuracy") is not None else "acc n/a"
+            parts.append(f"{s['speed']} ×{s['games']} ({acc}, {s['blunders_per_game']} blunders/game)")
+        out.append(
+            "- By mode: " + "; ".join(parts) + ". Mistake tolerance differs by mode — judge the "
+            "current game against its own mode (faster time controls warrant more lenient "
+            "expectations)."
+        )
+
     lifetime = profile.get("lifetime") or {}
     # Only show lifetime if it covers a different (larger) set than the recent window.
     if lifetime.get("games") and lifetime["games"] != recent["games"]:
@@ -540,9 +605,13 @@ def build_game_record(sess: ReviewSession, data_dir: Optional[str] = None) -> di
         "eco": headers.get("ECO") or None,
         "opening": headers.get("Opening") or None,
         "time_control": headers.get("TimeControl") or None,
+        "speed": classify_speed(headers.get("TimeControl"), headers.get("Event")),
         "player_elo": _int_or_none(headers.get("WhiteElo" if side == "white" else "BlackElo", "")),
         "opponent_elo": _int_or_none(headers.get("BlackElo" if side == "white" else "WhiteElo", "")),
         "game_url": _game_url(headers),
+        # Raw PGN so the web board can REOPEN a past game (re-analyse on click). Small
+        # (~1-3 KB); records written before this field simply lack it (rows mark has_pgn=False).
+        "pgn": sess.pgn,
         "sweep_depth": sess.sweep_depth,
         "review_elo": sess.review_elo,
         "thresholds": sess.thresholds,
@@ -599,6 +668,57 @@ def list_players(data_dir: Optional[str] = None) -> list[str]:
     return sorted({r.get("player_id") for r in load_records(data_dir=data_dir) if r.get("player_id")})
 
 
+def my_player_id(data_dir: Optional[str] = None) -> str:
+    """Canonical player_id for the configured user (CHESS_USERNAME, remapped via identities.json).
+
+    The env path in `resolve_identity` folds CHESS_USERNAME + aliases onto config.USERNAME, so that
+    is the join key for "my games". If identities.json maps that handle to another canonical id,
+    honour it. Lowercased to match how handles are stored. Used to filter the web history list.
+    """
+    handle = (config.USERNAME or "").strip()
+    handle_lc = handle.lower()
+    for pid, info in load_identities(data_dir).items():
+        for alias in (info or {}).get("aliases", []):
+            if str(alias.get("name", "")).strip().lower() == handle_lc:
+                return pid
+    return handle_lc or "me"
+
+
+def history_rows(player_id: Optional[str] = None, data_dir: Optional[str] = None) -> list[dict]:
+    """Compact, newest-first list of analysed games for the web history panel.
+
+    Filtered to `player_id` when given (the panel passes `my_player_id()` for "just my games").
+    Each row reuses fields already on the record — no recompute — plus `has_pgn` so the frontend
+    knows whether the game can be reopened (records written before PGNs were stored can't be).
+    """
+    records = sorted(
+        load_records(player_id=player_id, data_dir=data_dir),
+        key=lambda r: r.get("analyzed_at", ""),
+        reverse=True,
+    )
+    rows = []
+    for r in records:
+        pgn = r.get("pgn")
+        rows.append(
+            {
+                "game_id": r.get("game_id"),
+                "reviewed_side": r.get("reviewed_side"),
+                "white": r.get("white"),
+                "black": r.get("black"),
+                "player_result": r.get("player_result"),
+                "accuracy": r.get("accuracy"),
+                "speed": r.get("speed") or "unknown",
+                "opening": r.get("opening") or r.get("eco"),
+                "date": r.get("date"),
+                "counts": r.get("counts") or {},
+                "game_url": r.get("game_url"),
+                "has_pgn": bool(pgn),
+                "pgn": pgn,
+            }
+        )
+    return rows
+
+
 # --------------------------------------------------------------------------------------
 # Derived profile (rebuildable cache)
 # --------------------------------------------------------------------------------------
@@ -614,6 +734,7 @@ def _aggregate(records: list[dict]) -> dict:
     motifs: Counter = Counter()
     phase_loss = {"opening": 0.0, "middlegame": 0.0, "endgame": 0.0}
     openings: dict[str, dict] = {}
+    by_speed: dict[str, dict] = {}
 
     for r in records:
         for k, v in (r.get("counts") or {}).items():
@@ -627,6 +748,15 @@ def _aggregate(records: list[dict]) -> dict:
         st["games"] += 1
         if r.get("accuracy") is not None:
             st["acc_sum"] += r["accuracy"]
+        # Per-mode (bullet/blitz/rapid/...) breakdown, so coaching can apply mode-appropriate
+        # expectations and call out where a player's patterns differ by speed.
+        sp = r.get("speed") or "unknown"
+        sps = by_speed.setdefault(sp, {"games": 0, "acc_sum": 0.0, "acc_n": 0, "blunders": 0})
+        sps["games"] += 1
+        if r.get("accuracy") is not None:
+            sps["acc_sum"] += r["accuracy"]
+            sps["acc_n"] += 1
+        sps["blunders"] += (r.get("counts") or {}).get("blunder", 0)
 
     games = len(records)
     agg.update(
@@ -640,6 +770,15 @@ def _aggregate(records: list[dict]) -> dict:
             "top_motifs": [{"motif": k, "count": v} for k, v in motifs.most_common(8)],
             "phase_loss_total": {k: round(v, 1) for k, v in phase_loss.items()},
             "weakest_phase": max(phase_loss, key=phase_loss.get) if any(phase_loss.values()) else None,
+            "by_speed": [
+                {
+                    "speed": k,
+                    "games": v["games"],
+                    "avg_accuracy": round(v["acc_sum"] / v["acc_n"], 1) if v["acc_n"] else None,
+                    "blunders_per_game": round(v["blunders"] / v["games"], 2) if v["games"] else None,
+                }
+                for k, v in sorted(by_speed.items(), key=lambda kv: -kv[1]["games"])
+            ],
             "openings": sorted(
                 (
                     {

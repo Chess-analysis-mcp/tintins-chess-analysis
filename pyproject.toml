@@ -15,10 +15,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
-# NOTE: This repo uses the existing conda env, NOT uv.
-#   interpreter: /opt/miniconda3/envs/chess-review/bin/python
-#   install (only if deps are missing):
-#     /opt/miniconda3/envs/chess-review/bin/pip install -e ".[dev]"
+# Recommended setup for users is uv (see ./install.sh): `uv sync` builds the env and
+# downloads a compatible Python automatically; `uv run python -m server.mcp_server`
+# runs the server. Add test deps with `uv sync --extra dev`.
+#
+# This developer machine also has a conda env at
+#   /opt/miniconda3/envs/chess-review/bin/python
+# which still works; either interpreter is fine.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

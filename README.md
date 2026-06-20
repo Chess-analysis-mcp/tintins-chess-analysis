@@ -59,58 +59,96 @@ shells out to headless `claude -p` (your subscription).
 
 ## Installation
 
-### Prerequisites
+### Quick install (recommended)
 
-- **Python 3.11+**
-- **Stockfish** engine (any recent version; v16+ recommended). Install it separately, since it is
-  not a pip package.
-  - macOS: `brew install stockfish`
-  - Debian/Ubuntu: `sudo apt install stockfish`
-  - Or download from <https://stockfishchess.org/download/> and note the binary path.
-- **Internet connection** for the web board's first load (chessground / chess.js are pulled from a
-  CDN, so there's no Node/npm build step).
-- *(Optional, only for the in-browser chat)* the **`claude` CLI** (Claude Code) installed and logged
-  in (`claude login`). The terminal workflow needs Claude Code too.
-
-### Set up the Python environment
+One command sets up everything — it installs [uv](https://docs.astral.sh/uv/) (which downloads a
+compatible Python for you, so your own Python version doesn't matter), installs Stockfish, builds
+the environment, and saves your username. **You do not need Python or any prior setup.**
 
 ```bash
-# from the repo root
-python3.11 -m venv .venv && source .venv/bin/activate     # or use conda
+# macOS / Linux — from the repo root
+./install.sh
+```
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The script is safe to re-run (each step is skipped if already done) and finishes with a self-check.
+You can run that check any time:
+
+```bash
+uv run python -m server.doctor
+```
+
+That's it — skip to [Usage](#usage). The MCP server is already registered in `.mcp.json` (no path
+editing needed: it runs via `uv`, which is machine-independent); the only thing worth setting is
+your username, which the installer prompts for.
+
+### Just want to review your Lichess games? Double-click **Chess Review**
+
+If you don't want to touch a terminal at all, use the double-click launcher:
+
+- **macOS / Linux:** double-click **`Chess Review.command`**
+- **Windows:** double-click **`Chess Review.bat`**
+
+The **first launch** installs everything for you (uv + Stockfish + the project env — it just runs
+the installer above), then opens the board in your browser with your **most recent Lichess game**
+already loaded. Every launch after that skips straight to opening the board.
+
+- **First time only:** macOS may block a double-clicked script — **right-click → Open**, then
+  **Open** again. On Windows, if SmartScreen warns, click **More info → Run anyway**.
+- **Which account?** It defaults to your configured username (**⚙ Settings → Your username**, or the
+  `CHESS_USERNAME` saved at install time). In the board's **Lichess** panel you can look up any handle
+  and click **"Set as my account"**; if no username is configured, the app asks for one on first open.
+  The choice is saved server-side (in `settings.json`), so it's the same account everywhere.
+- **No Lichess account (e.g. Chess.com)?** Use the **Paste PGN** tab in the Games panel — paste any
+  PGN, or **Upload .pgn** a Chess.com export of one *or many* games, and click **Analyze**; all the
+  games are reviewed into **My games**. The first-run prompt also has a "Paste a PGN instead" shortcut.
+- **To quit:** just close the browser tab — the server stops a few seconds later and its terminal
+  window closes itself. (You can also close that window directly, or press Ctrl-C in it.)
+
+### Prerequisites (what the installer handles for you)
+
+- **Stockfish** engine (the installer adds it via `brew` / `apt` / `winget`). The tool auto-detects
+  a normal install, so no path configuration is needed. To use a custom build, set `STOCKFISH_PATH`.
+- **Internet connection** for the web board's first load (chessground / chess.js come from a CDN, so
+  there's no Node/npm build step).
+- *(Optional, only for the in-browser chat and the Claude Code terminal workflow)* the **`claude`
+  CLI** (Claude Code), installed and logged in (`claude login`). The web board's game review works
+  without it.
+
+### Manual setup (if you'd rather not use the script)
+
+You still want **uv** — it removes the Python-version headaches. [Install
+uv](https://docs.astral.sh/uv/getting-started/installation/), then:
+
+```bash
+uv sync                 # builds the env + fetches a compatible Python
+# install Stockfish yourself: macOS `brew install stockfish`,
+#   Debian/Ubuntu `sudo apt install stockfish`, or https://stockfishchess.org/download/
+uv run python -m server.doctor   # confirm Python + Stockfish are good
+```
+
+Then open `.mcp.json` and set `CHESS_USERNAME` to your handle (it's what lets
+`analyze_game(player="auto")` figure out which side is "you" from the PGN headers). You shouldn't
+need to touch `command`/`args` — they invoke the project through `uv`.
+
+<details>
+<summary>Prefer a plain venv / conda instead of uv?</summary>
+
+The project is a standard `pyproject.toml`, so it works in any Python 3.11+ environment:
+
+```bash
+python3.11 -m venv .venv && source .venv/bin/activate   # or conda
 pip install -r requirements.txt
 ```
 
-### Point the tool at your Stockfish
-
-The code reads `STOCKFISH_PATH` (default: `stockfish` on your `PATH`). Find your binary with
-`which stockfish` and export it, e.g.:
-
-```bash
-export STOCKFISH_PATH=/usr/local/bin/stockfish
-```
-
-### (For the Claude Code / MCP workflow) edit `.mcp.json`
-
-`.mcp.json` registers the server as **`chess`**. Update the `command` to **your** Python
-interpreter and set the env for your machine:
-
-```json
-{
-  "mcpServers": {
-    "chess": {
-      "command": "/absolute/path/to/.venv/bin/python",
-      "args": ["-m", "server.mcp_server"],
-      "env": {
-        "STOCKFISH_PATH": "/usr/local/bin/stockfish",
-        "CHESS_USERNAME": "your-lichess-or-chesscom-username"
-      }
-    }
-  }
-}
-```
-
-`CHESS_USERNAME` lets `analyze_game(player="auto")` figure out which side is "you" from the PGN
-headers.
+Then in `.mcp.json` set `"command"` to that interpreter's absolute path (e.g.
+`/abs/path/.venv/bin/python`) and `"args"` to `["-m", "server.mcp_server"]`, and run scripts with
+that interpreter instead of `uv run python`.
+</details>
 
 ---
 
@@ -121,8 +159,7 @@ headers.
 The quickest way to review a game. Pass a PGN file and which color you played:
 
 ```bash
-STOCKFISH_PATH=/usr/local/bin/stockfish \
-  python scripts/run_web.py example_pgns/game1.pgn white
+uv run python scripts/run_web.py example_pgns/game1.pgn white
 ```
 
 It analyzes the game (~20 to 45s depending on length), opens your browser to
@@ -139,6 +176,23 @@ It analyzes the game (~20 to 45s depending on length), opens your browser to
 5. Ask **"why is this bad?"** or **"what should I do here?"** in the chat panel.
 
 The third argument is your color: `white`, `black`, or `auto` (infer from the PGN headers).
+
+**Browse & reopen past games (the Games panel).** A collapsible third column (toggle with the **☰
+Games** button) lists games you can open in the board. The panel has three tabs: **My games**
+(your previously-analyzed local games), **Lichess** (your recent Lichess games, with a lookup box
+for any handle), and **Paste PGN** — paste a PGN from anywhere (e.g. **Chess.com → Share → PGN**),
+pick which color you played (or leave it on *auto*), and click **Analyze**. Click any game (or
+submit a paste) and the board opens **immediately** — you can step through the moves with ← / →
+while the engine analysis runs in the background; the eval bar, win graph, mistake list, comments,
+and best-move arrows fill in as soon as it finishes.
+
+**Bulk-analyze a Chess.com export (multiple games at once).** Chess.com lets you download many
+games as a single PGN file. In the **Paste PGN** tab, hit **Upload .pgn** (or paste the file's
+contents) — the app detects all the games, analyzes them one-by-one in the background (showing
+"Game *k* of *N*"), and files every one under **My games**. It figures out which handle is *you*
+(the player present in all the games) automatically; if it can't, type your username in the
+optional box. Once a handle is recognized this way it's remembered, so future games from that
+account (Chess.com *or* Lichess) fold into the same history and coaching profile.
 
 <!-- TODO: screenshot of the best-move arrows.
      Toggle "Show best move" on a quiet middlegame position so two green arrows show, one bold
@@ -208,6 +262,13 @@ opt in).
   buckets: things you *did* (e.g. `hung_piece`, `pawn_grab`), things you *missed* (`missed_fork`,
   `missed_mate`, `missed_capture`), and things you *allowed* (`allowed_fork`, `allowed_mate`,
   `back_rank`), plus `time_trouble` when your clock was low (read from `[%clk]` PGN comments).
+- **Game mode awareness.** Each game is tagged with its time-format — **bullet / blitz / rapid /
+  classical / correspondence** (derived from the `TimeControl` header) — because what counts as a
+  mistake differs by mode: a blunder in a 1-minute bullet game is far more forgivable than in a
+  long classical one. The flagging thresholds **scale by mode** (blitz is the baseline; faster
+  modes are more lenient, slower modes stricter — on top of the per-skill scaling), the coaching
+  profile breaks your stats down **by mode**, and both the chat and terminal review judge a game
+  against its own mode's expectations.
 - **Coaching profile.** Records roll up into a **hybrid** profile: a `recent` sliding window (so
   weaknesses you've fixed fade out) plus a `lifetime` view, with an "improving / slipping" trend.
   Get it from the terminal with `mcp__chess__get_player_profile`, or let the board's chat use it.
@@ -230,11 +291,27 @@ To turn history off entirely, set `CHESS_HISTORY=0`.
 
 ## Configuration
 
-All via environment variables (sensible defaults shown):
+### In-app Settings panel (no file editing)
+
+Click **⚙ Settings** in the board header to change the common options without touching any files —
+your **username**, **other accounts** (aliases that fold into one profile), an optional **Lichess
+token**, and, under *Advanced*, the profile windows and the **Stockfish path**. Saving writes
+`<DATA_DIR>/settings.json` and applies immediately.
+
+**Precedence: `settings.json` (the panel) overrides the environment (`.mcp.json`), which overrides
+the built-in defaults.** Both the standalone app *and* the MCP server read `settings.json` at
+startup, so a change you make in the app also takes effect for the Claude Code workflow — your
+username is unified across both. (You can still set everything via environment variables below;
+the panel is just the no-files path. The auto-detected aliases from a bulk Chess.com import live in
+`identities.json` and are merged on top.)
+
+### Environment variables
+
+All settable via environment variables too (sensible defaults shown); `settings.json` wins where set:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `STOCKFISH_PATH` | `stockfish` | Path to the Stockfish binary. |
+| `STOCKFISH_PATH` | *(auto-detected)* | Path to the Stockfish binary. Auto-detected from your `PATH` and common install locations; only set this for a custom build or an unusual location. |
 | `CHESS_USERNAME` | `JohnDoe` | Used by `player="auto"` to pick your side from PGN headers. |
 | `CHESS_DEFAULT_DEPTH` | `18` | Depth for on-demand single-position analysis. |
 | `CHESS_SWEEP_DEPTH` | `16` | Depth for the full-game sweep (keeps long games fast). |
@@ -244,7 +321,7 @@ All via environment variables (sensible defaults shown):
 | `CHESS_ALIASES` | *(empty)* | Your other handles (comma-separated) that fold into `CHESS_USERNAME` for history + auto side-detection. |
 | `CHESS_HISTORY` | `1` | Set `0` to disable saving game history & the coaching profile. |
 | `CHESS_DATA_DIR` | `<repo>/.chess-review` | Where history (`games.jsonl`, profile, `identities.json`) is stored. |
-| `CHESS_PROFILE_RECENT` | `25` | Games in the profile's `recent` sliding window. |
+| `CHESS_PROFILE_RECENT` | `100` | Games in the profile's `recent` sliding window. |
 | `CHESS_PROFILE_LIFETIME` | `all` | Lifetime view span; positive N = last N games, `0` = omit it (pure sliding window). |
 | `CHESS_SESSION_TTL` | `86400` | Seconds of inactivity before the server self-terminates (`0` disables the watchdog). |
 
@@ -253,7 +330,8 @@ All via environment variables (sensible defaults shown):
 ## Running the tests
 
 ```bash
-STOCKFISH_PATH=/usr/local/bin/stockfish python -m pytest
+uv sync --extra dev          # pulls in pytest (one time)
+uv run python -m pytest
 ```
 
 Pure-math tests are instant; engine tests use a low depth (~1s total). The chat test is mocked, so

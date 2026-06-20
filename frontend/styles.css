@@ -124,6 +124,7 @@ main {
 
 /* --- win graph --- */
 #graph-wrap {
+  position: relative;
   width: var(--board-size);
   height: 90px;
   background: #14130f;
@@ -131,6 +132,49 @@ main {
   overflow: hidden;
 }
 #graph { width: 100%; height: 100%; display: block; cursor: pointer; }
+
+/* progress bar shown over the (still empty) win graph while the engine sweep runs */
+#analysis-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  background: rgba(20, 19, 15, 0.82);
+}
+#analysis-progress[hidden] { display: none; }
+#analysis-progress-label {
+  color: #d8d4c8;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+#analysis-progress-track {
+  width: 100%;
+  max-width: 320px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+#analysis-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+/* indeterminate state (no ETA yet): a sliding shimmer instead of a measured fill */
+#analysis-progress-fill.indeterminate {
+  width: 35% !important;
+  animation: progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
 
 /* --- controls --- */
 .controls {
@@ -214,7 +258,7 @@ main {
 .tag.blunder { background: var(--blunder); color: #fff; }
 .verdict .line { color: var(--muted); font-size: 13px; margin-top: 4px; }
 
-.side-col { width: 320px; }
+.side-col { width: 380px; }
 .side-col h2 { font-size: 15px; margin: 0 0 8px; }
 
 .mistakes { list-style: none; margin: 0 0 24px; padding: 0; }
@@ -325,3 +369,162 @@ main {
   justify-content: center;
 }
 .chat-form button:disabled { opacity: 0.5; cursor: default; }
+
+/* --- games / history panel (third column) --- */
+/* Pushed to the right of the header; toggles the panel. There's plenty of horizontal room,
+   so the panel lives in the empty space — the board/sidebar keep their sizes. */
+.hist-toggle {
+  margin-left: auto;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid #000;
+  border-radius: 4px;
+  padding: 5px 11px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.hist-toggle:hover { background: var(--panel2); }
+
+.history-col { width: 280px; }
+body.history-hidden .history-col { display: none; }
+
+.hist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.hist-head h2 { font-size: 15px; margin: 0; }
+.hist-x {
+  background: none; border: none; color: var(--muted);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.hist-x:hover { color: var(--text); }
+
+/* segmented My games | Lichess control */
+.seg { display: flex; gap: 0; margin-bottom: 10px; border: 1px solid #000; border-radius: 6px; overflow: hidden; }
+.seg button {
+  flex: 1; background: var(--panel); color: var(--muted); border: none;
+  padding: 6px 10px; cursor: pointer; font-size: 13px;
+}
+.seg button + button { border-left: 1px solid #000; }
+.seg button.active { background: var(--accent); color: #fff; }
+.seg button:not(.active):hover { background: var(--panel2); }
+
+.lichess-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.lichess-row { display: flex; gap: 6px; }
+.lichess-form input[type="text"] {
+  flex: 1; background: #1d1b16; border: 1px solid #4a4636; border-radius: 6px;
+  color: var(--text); padding: 6px 9px; font-size: 13px;
+}
+.lichess-form input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.lichess-form button {
+  background: var(--panel2); color: var(--text); border: 1px solid #000;
+  border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 13px;
+}
+.auto-open-toggle { font-size: 12px; }
+
+/* Paste-PGN mode (so Chess.com users can analyze without the Lichess fetch). */
+.paste-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.paste-form textarea {
+  width: 100%; resize: vertical; background: #1d1b16; border: 1px solid #4a4636;
+  border-radius: 6px; color: var(--text); padding: 8px 9px; font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.4;
+}
+.paste-form textarea:focus { outline: none; border-color: var(--accent); }
+.paste-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.paste-side { font-size: 12.5px; color: var(--muted); }
+.paste-side select {
+  background: var(--panel2); color: var(--text); border: 1px solid #000;
+  border-radius: 6px; padding: 4px 6px; font-size: 12.5px; margin-left: 4px;
+}
+#paste-upload {
+  background: var(--panel2); color: var(--text); border: 1px solid #000;
+  border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 12.5px;
+}
+#paste-username {
+  width: 100%; background: #1d1b16; border: 1px solid #4a4636; border-radius: 6px;
+  color: var(--text); padding: 6px 9px; font-size: 12.5px;
+}
+#paste-username:focus { outline: none; border-color: var(--accent); }
+.paste-form button[type="submit"] {
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 6px 14px; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+
+/* First-run prompt (app mode): centred card over a dimmed backdrop. */
+.firstrun-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.firstrun-overlay[hidden] { display: none; }
+.firstrun-card {
+  background: var(--panel); border: 1px solid #000; border-radius: 10px;
+  padding: 24px 26px; width: min(380px, 90vw);
+  display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.firstrun-card h2 { margin: 0; font-size: 18px; }
+.firstrun-card p { margin: 0; font-size: 13px; }
+.firstrun-card input[type="text"] {
+  background: #1d1b16; border: 1px solid #4a4636; border-radius: 6px;
+  color: var(--text); padding: 9px 11px; font-size: 14px;
+}
+.firstrun-card input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.firstrun-card button[type="submit"] {
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 9px 12px; cursor: pointer; font-size: 14px; font-weight: 600;
+}
+.linklike {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 12.5px; padding: 2px; text-decoration: underline;
+}
+.linklike:hover { color: var(--text); }
+
+.set-as-me {
+  background: var(--panel2); color: var(--text); border: 1px solid #000;
+  border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 12.5px; align-self: flex-start;
+}
+.set-as-me:disabled { opacity: 0.6; cursor: default; }
+
+/* Settings panel (reuses the .firstrun-overlay backdrop + .firstrun-card shell). */
+.settings-card { width: min(440px, 92vw); max-height: 88vh; overflow-y: auto; gap: 14px; }
+.set-field { display: flex; flex-direction: column; gap: 5px; }
+.set-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.set-opt { font-weight: 400; color: var(--muted); font-size: 12px; }
+.set-field input {
+  background: #1d1b16; border: 1px solid #4a4636; border-radius: 6px;
+  color: var(--text); padding: 8px 10px; font-size: 13px; width: 100%;
+}
+.set-field input:focus { outline: none; border-color: var(--accent); }
+.set-hint { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+.set-adv { margin: 2px 0; border-top: 1px solid #3a372f; padding-top: 12px; }
+.set-adv summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: revert; }
+.set-adv[open] summary { color: var(--text); margin-bottom: 12px; }
+.set-adv .set-field + .set-field { margin-top: 12px; }
+.set-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 4px; }
+.set-actions button[type="submit"] {
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 8px 16px; cursor: pointer; font-size: 14px; font-weight: 600;
+}
+#settings-status:empty { display: none; }
+
+.hist-status { color: var(--muted); font-size: 12.5px; min-height: 16px; margin-bottom: 8px; }
+
+.history { list-style: none; margin: 0; padding: 0; max-height: 78vh; overflow-y: auto; }
+.history li {
+  background: var(--panel); border-radius: 5px; padding: 8px 10px; margin-bottom: 6px;
+  cursor: pointer; font-size: 13px; border-left: 3px solid transparent;
+}
+.history li:hover { background: var(--panel2); }
+.history li.disabled { cursor: default; opacity: 0.5; }
+.history li.disabled:hover { background: var(--panel); }
+.history li.win { border-left-color: var(--accent); }
+.history li.loss { border-left-color: var(--blunder); }
+.history li.draw { border-left-color: var(--muted); }
+.history li .h-title { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.history li .h-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.history li .h-blunders { color: var(--blunder); font-weight: 600; font-size: 12px; white-space: nowrap; }
+.history li.ph, .mistakes li.ph { background: none; color: var(--muted); font-style: italic; cursor: default; padding: 6px 0; }
+.mistakes li.ph:hover { background: none; }
+.history li.load-more {
+  text-align: center; color: var(--accent); font-weight: 600; background: none;
+  border: 1px dashed #3c4a26; padding: 7px 10px;
+}
+.history li.load-more:hover { background: var(--panel); }

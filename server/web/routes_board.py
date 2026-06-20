@@ -12,10 +12,27 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server import config
+from server.core import app_liveness
 from server.core import lines
 from server.core import session as session_mod
 
 router = APIRouter()
+
+
+@router.post("/ping")
+def post_ping() -> dict:
+    """App-mode heartbeat (backstop): the open tab calls this periodically. A long silence means the
+    tab is gone; the app-liveness watchdog then shuts the standalone server down. No-op otherwise."""
+    app_liveness.beat()
+    return {"ok": True}
+
+
+@router.post("/closing")
+def post_closing() -> dict:
+    """App-mode close beacon: the tab fires this on `pagehide` (close/refresh). After a short grace
+    with no heartbeat (i.e. not a refresh) the server exits. Sent via navigator.sendBeacon."""
+    app_liveness.closing()
+    return {"ok": True}
 
 
 class FenBody(BaseModel):
@@ -31,6 +48,13 @@ class BestMovesBody(BaseModel):
     fen: str
     depth: int | None = None
     multipv: int = 3
+
+
+@router.get("/app-config")
+def get_app_config() -> dict:
+    """Frontend bootstrap: whether this is the standalone "app mode" launch (auto-load the user's
+    most recent Lichess game on open) and the default username to use for that (CHESS_USERNAME)."""
+    return {"app_mode": config.APP_MODE, "default_username": config.USERNAME or ""}
 
 
 @router.get("/session")

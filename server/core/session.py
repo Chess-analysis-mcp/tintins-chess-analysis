@@ -47,6 +47,9 @@ class ReviewSession(BaseModel):
     player: str  # "white" | "black" — whose mistakes we reviewed
     headers: dict[str, str] = Field(default_factory=dict)
     result: str = "*"
+    # Game speed bucket (bullet/blitz/rapid/classical/correspondence/unknown), from the
+    # TimeControl header. Lets coaching apply mode-appropriate expectations.
+    speed: str = "unknown"
     accuracy_white: float = 100.0
     accuracy_black: float = 100.0
     all_moves: list[MoveReview] = Field(default_factory=list)  # every move by `player`
@@ -115,6 +118,8 @@ def summarize_session(sess: ReviewSession) -> dict:
         "white": sess.headers.get("White", "?"),
         "black": sess.headers.get("Black", "?"),
         "opening": sess.headers.get("Opening", sess.headers.get("ECO", "")),
+        "speed": sess.speed,
+        "time_control": sess.headers.get("TimeControl") or None,
         "accuracy_white": sess.accuracy_white,
         "accuracy_black": sess.accuracy_black,
         "num_my_moves": len(sess.all_moves),
