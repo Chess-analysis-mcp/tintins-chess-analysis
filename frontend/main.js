@@ -801,6 +801,7 @@ async function loadAll() {
   } catch (_) {}
   if (appUsername) $("lichess-user").placeholder = appUsername;
   if (appMode) startHeartbeat(); // so closing this tab quits the standalone app
+  checkSetup(); // surface a banner if Stockfish / the claude CLI is missing (fire-and-forget)
 
   const session = await fetch("/api/session").then((r) => r.json());
   if (session.empty) {
@@ -816,6 +817,56 @@ async function loadAll() {
   if (mistakes.length) selectMistake(session.current_index ?? 0);
   else gotoNode(0);
   prepareCoachAI(); // timeline is set now → offer the button (or auto-generate)
+}
+
+// --- setup self-check banner ---------------------------------------------
+// Hits /api/doctor (mirrors `python -m server.doctor`). A missing Stockfish is a blocker (red,
+// always shown); a missing `claude` CLI only disables the AI chat + coach summary (amber, and
+// dismissible — remembered so we don't nag). Fire-and-forget; failures are silent.
+async function checkSetup() {
+  const banner = $("setup-banner");
+  if (!banner) return;
+  let checks;
+  try {
+    checks = (await fetch("/api/doctor").then((r) => r.json())).checks || {};
+  } catch (_) {
+    return;
+  }
+  const sf = checks.stockfish || { ok: true };
+  const cl = checks.claude || { ok: true };
+
+  if (!sf.ok) {
+    showSetupBanner(
+      banner,
+      true,
+      `<b>Stockfish engine not found.</b> ${escapeHtml(sf.hint || "Install Stockfish to analyze games.")}`,
+      null
+    );
+  } else if (!cl.ok && localStorage.getItem("hideClaudeSetupBanner") !== "1") {
+    showSetupBanner(
+      banner,
+      false,
+      "<b>AI chat &amp; AI coach summary are off</b> — the <code>claude</code> CLI isn't installed. " +
+        "Everything else works. Install it from " +
+        '<a href="https://claude.com/claude-code" target="_blank" rel="noopener">claude.com/claude-code</a>, ' +
+        "then run <code>claude login</code>.",
+      () => localStorage.setItem("hideClaudeSetupBanner", "1")
+    );
+  } else {
+    banner.hidden = true;
+  }
+}
+
+function showSetupBanner(banner, isErr, msgHtml, onDismiss) {
+  banner.classList.toggle("err", isErr);
+  banner.innerHTML =
+    `<span class="sb-msg">${msgHtml}</span>` +
+    `<button class="sb-x" type="button" aria-label="Dismiss" title="Dismiss">×</button>`;
+  banner.querySelector(".sb-x").addEventListener("click", () => {
+    banner.hidden = true;
+    if (onDismiss) onDismiss();
+  });
+  banner.hidden = false;
 }
 
 // --- app mode: auto-open the latest Lichess game -------------------------

@@ -91,6 +91,33 @@ header h1 { font-size: 18px; margin: 0; }
   text-align: center;
 }
 
+/* --- setup self-check banner (env dependency missing) ------------------- */
+.setup-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: #f0e3c0;
+  background: #3a2f12;            /* amber: optional dep (claude CLI) missing */
+  border-bottom: 1px solid #000;
+}
+.setup-banner[hidden] { display: none; }
+.setup-banner.err { background: #3a1d1d; color: #f3c9c9; } /* red: a blocker (Stockfish) */
+.setup-banner .sb-msg { flex: 1; }
+.setup-banner a { color: var(--accent); font-weight: 600; }
+.setup-banner.err a { color: #ffb4b4; }
+.setup-banner code {
+  background: rgba(0, 0, 0, 0.32); padding: 1px 5px; border-radius: 3px;
+  font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+}
+.setup-banner .sb-x {
+  background: none; border: none; color: inherit; cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 0 4px; opacity: 0.75;
+}
+.setup-banner .sb-x:hover { opacity: 1; }
+
 main {
   display: flex;
   gap: 24px;

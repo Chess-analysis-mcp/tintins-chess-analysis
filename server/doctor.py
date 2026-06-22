@@ -63,6 +63,39 @@ def _check_claude() -> bool:
     return True  # optional: never fails the overall check
 
 
+def status() -> dict:
+    """Structured self-check for the web UI (``GET /api/doctor``).
+
+    Lightweight on purpose — it resolves binaries on PATH rather than launching Stockfish, so it's
+    cheap to call on every page load. Never raises. ``claude`` is flagged ``optional`` because the
+    core review works without it (only the AI chat + AI coach summary need it).
+    """
+    v = sys.version_info
+    sf_path = config.STOCKFISH_PATH
+    sf_resolved = shutil.which(sf_path) or (sf_path if "/" in sf_path else None)
+    claude_path = shutil.which("claude")
+    return {
+        "python": {
+            "ok": (v.major, v.minor) >= (3, 11),
+            "detail": f"{v.major}.{v.minor}.{v.micro}",
+        },
+        "stockfish": {
+            "ok": bool(sf_resolved),
+            "path": sf_resolved or "",
+            "hint": "" if sf_resolved else config.stockfish_install_hint(),
+        },
+        "claude": {
+            "ok": bool(claude_path),
+            "optional": True,
+            "path": claude_path or "",
+            "hint": ""
+            if claude_path
+            else "Needed only for the in-browser AI chat and the AI coach summary. Install from "
+            "https://claude.com/claude-code, then run `claude login`.",
+        },
+    }
+
+
 def main() -> int:
     print("Chess Review MCP — setup check\n")
     py_ok = _check_python()

@@ -39,6 +39,11 @@
         aria-label="Toggle games panel">☰ Games</button>
     </header>
 
+    <!-- Setup self-check banner (filled by checkSetup() from /api/doctor): shown only when an
+         environment dependency is missing — red for a blocker (Stockfish), amber for the optional
+         claude CLI (AI chat / coach summary). Dismissible. -->
+    <div id="setup-banner" class="setup-banner" hidden></div>
+
     <main>
       <section class="board-col">
         <div id="scoreboard" class="scoreboard" hidden></div>

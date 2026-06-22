@@ -50,6 +50,18 @@ class BestMovesBody(BaseModel):
     multipv: int = 3
 
 
+@router.get("/doctor")
+def get_doctor() -> dict:
+    """Structured environment self-check for the UI setup banner (Python / Stockfish / claude CLI).
+    Mirrors `python -m server.doctor`; best-effort, never raises."""
+    from server import doctor
+
+    try:
+        return {"checks": doctor.status()}
+    except Exception:  # noqa: BLE001 - a self-check must never break the page
+        return {"checks": {}}
+
+
 @router.get("/app-config")
 def get_app_config() -> dict:
     """Frontend bootstrap: whether this is the standalone "app mode" launch (auto-load the user's
