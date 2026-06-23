@@ -10,6 +10,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from server import config
+from server.core import openings
 from server.core.evaluation import Classification
 
 
@@ -91,6 +92,19 @@ def clear_session() -> None:
     _SESSION = None
 
 
+def resolve_opening(sess: ReviewSession) -> str:
+    """Display opening name for a session: PGN `Opening` header if present, else a local
+    lookup over the timeline FENs (so Chess.com exports without opening tags still get named),
+    else the bare `ECO` header, else "". Header-first keeps Lichess's own labels authoritative;
+    the engine-free fallback (`openings.classify_from_fens`) mirrors what history records."""
+    name = (sess.headers.get("Opening") or "").strip()
+    if name:
+        return name
+    fens = [n.get("fen") for n in sess.timeline if n.get("fen")]
+    _, classified = openings.classify_from_fens(fens)
+    return classified or (sess.headers.get("ECO") or "").strip()
+
+
 def summarize_session(sess: ReviewSession) -> dict:
     """Compact, JSON-friendly summary of a session.
 
@@ -130,7 +144,7 @@ def summarize_session(sess: ReviewSession) -> dict:
         "player": sess.player,
         "white": sess.headers.get("White", "?"),
         "black": sess.headers.get("Black", "?"),
-        "opening": sess.headers.get("Opening", sess.headers.get("ECO", "")),
+        "opening": resolve_opening(sess),
         "speed": sess.speed,
         "time_control": sess.headers.get("TimeControl") or None,
         "accuracy_white": sess.accuracy_white,

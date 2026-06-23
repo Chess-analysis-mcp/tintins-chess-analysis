@@ -36,9 +36,36 @@ _ALT_WIN_GAP = 5.0
 # Heuristic markers that Claude's Agent SDK credit / usage allowance is exhausted.
 _LIMIT_MARKERS = ("usage limit", "rate limit", "credit", "quota", "billing", "limit reached")
 
+# Heuristic markers that the `claude` CLI couldn't authenticate (not logged in, or a bad/stale
+# ANTHROPIC_API_KEY). Distinct from the limit case: here the fix is to log in, not wait.
+_AUTH_MARKERS = (
+    "401",
+    "invalid authentication",
+    "failed to authenticate",
+    "authentication_error",
+    "unauthorized",
+    "invalid x-api-key",
+    "invalid api key",
+)
+
 
 class ChatError(Exception):
     """Raised with a user-facing message when the chat call can't complete."""
+
+
+def _child_env() -> dict:
+    """Environment for the spawned `claude` so it uses the user's subscription login.
+
+    Drops `CHESS_WEB_AUTOSTART` so the child doesn't rebind the board port, and strips
+    *empty* `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` values. An empty key is never
+    intentional but still makes the CLI attempt (and fail with a 401) API-key auth instead
+    of falling back to the subscription login — a common Windows footgun.
+    """
+    env = {**os.environ, "CHESS_WEB_AUTOSTART": "0"}
+    for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        if key in env and not env[key].strip():
+            env.pop(key)
+    return env
 
 
 def _engine_facts(fen: str | None, move: str | None) -> str | None:
@@ -170,6 +197,14 @@ def _compose_prompt(
 
 def _friendly_error(text: str) -> str:
     low = (text or "").lower()
+    if any(marker in low for marker in _AUTH_MARKERS):
+        return (
+            "Claude couldn't authenticate (HTTP 401). The in-browser AI chat signs in with YOUR "
+            "Claude CLI login, which isn't valid on this machine yet. To fix it, open a terminal "
+            "and run `claude login`, then sign in with your Claude subscription. (If you've set an "
+            "ANTHROPIC_API_KEY environment variable, make sure it's a valid key or unset it so the "
+            "subscription login is used instead.)"
+        )
     if any(marker in low for marker in _LIMIT_MARKERS):
         return (
             "Claude's Agent SDK credit / usage limit looks exhausted. Ask your 'why?' in the "
@@ -187,7 +222,7 @@ def _game_facts(sess) -> str:
     """
     side = "White" if sess.player == "white" else "Black"
     acc = sess.accuracy_white if sess.player == "white" else sess.accuracy_black
-    opening = sess.headers.get("Opening") or sess.headers.get("ECO") or "unknown opening"
+    opening = session_mod.resolve_opening(sess) or "unknown opening"
     out = [
         f"Game: {sess.headers.get('White', '?')} vs {sess.headers.get('Black', '?')} "
         f"({sess.result}); {opening}; {sess.speed} time control.",
@@ -240,7 +275,7 @@ def coach_summary_ai(sess, *, timeout: int = 120) -> str:
     prompt_parts.append("This game's facts:\n" + _game_facts(sess))
     cmd = [claude, "-p", "\n\n".join(prompt_parts), "--output-format", "json"]
 
-    env = {**os.environ, "CHESS_WEB_AUTOSTART": "0"}  # don't let the child rebind the board port
+    env = _child_env()
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, cwd=str(_REPO_ROOT), env=env
@@ -312,7 +347,7 @@ def ask(
     if session_id:
         cmd += ["--resume", session_id]
 
-    env = {**os.environ, "CHESS_WEB_AUTOSTART": "0"}  # don't let the child rebind the board port
+    env = _child_env()
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, cwd=str(_REPO_ROOT), env=env

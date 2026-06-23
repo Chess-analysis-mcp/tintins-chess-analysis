@@ -27,6 +27,7 @@ from typing import Optional
 import chess
 
 from server import config
+from server.core import openings
 from server.core import session as session_mod
 from server.core.evaluation import classify_speed
 from server.core.session import ReviewSession
@@ -675,6 +676,17 @@ def build_game_record(sess: ReviewSession, data_dir: Optional[str] = None) -> di
     plies = max(len(sess.timeline) - 1, 0) or len(sess.all_moves)
     accuracy = sess.accuracy_white if side == "white" else sess.accuracy_black
 
+    # Opening/ECO: trust the PGN headers (Lichess ships them) but fall back to a local lookup
+    # when absent (Chess.com bulk exports often omit them) so those games still get named.
+    # Engine-free; reuses the timeline FENs we already have.
+    eco = headers.get("ECO") or None
+    opening = headers.get("Opening") or None
+    if not opening:
+        fens = [n.get("fen") for n in sess.timeline if n.get("fen")]
+        eco2, name2 = openings.classify_from_fens(fens)
+        eco = eco or eco2
+        opening = name2
+
     return {
         "schema_version": SCHEMA_VERSION,
         "game_id": _game_id(sess),
@@ -688,8 +700,8 @@ def build_game_record(sess: ReviewSession, data_dir: Optional[str] = None) -> di
         "black": headers.get("Black", "?"),
         "result": sess.result,
         "player_result": _player_result(sess.result, side),
-        "eco": headers.get("ECO") or None,
-        "opening": headers.get("Opening") or None,
+        "eco": eco,
+        "opening": opening,
         "time_control": headers.get("TimeControl") or None,
         "speed": classify_speed(headers.get("TimeControl"), headers.get("Event")),
         "player_elo": _int_or_none(headers.get("WhiteElo" if side == "white" else "BlackElo", "")),

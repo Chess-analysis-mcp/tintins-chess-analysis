@@ -59,7 +59,7 @@ def _check_claude() -> bool:
         return True
     print(f"{WARN} claude CLI: not found (optional)")
     print("    Only needed for the in-browser 'why?' chat and the Claude Code terminal "
-          "workflow. Install from https://claude.com/claude-code and run `claude login`.")
+          "workflow. Install from https://code.claude.com/docs/en/quickstart and run `claude login`.")
     return True  # optional: never fails the overall check
 
 
@@ -91,7 +91,7 @@ def status() -> dict:
             "hint": ""
             if claude_path
             else "Needed only for the in-browser AI chat and the AI coach summary. Install from "
-            "https://claude.com/claude-code, then run `claude login`.",
+            "https://code.claude.com/docs/en/quickstart, then run `claude login`.",
         },
     }
 

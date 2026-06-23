@@ -666,7 +666,7 @@ async function sendChat(ev) {
   input.value = "";
   addChatMsg("user", q);
   $("chat-send").disabled = true;
-  const pending = addChatMsg("bot pending", "Claude is thinking… (a few seconds)");
+  const pending = addChatMsg("bot pending", "Snowie is thinking… (a few seconds)");
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
@@ -738,7 +738,7 @@ function setCoachAI(state, text) {
   } else if (state === "pending") {
     el.hidden = false;
     el.className = "coach-ai pending";
-    el.textContent = "Writing a fuller summary with Claude…";
+    el.textContent = "Snowie is barking up a full game summary…";
   } else if (state === "error") {
     el.hidden = false;
     el.className = "coach-ai err";
@@ -848,7 +848,7 @@ async function checkSetup() {
       false,
       "<b>AI chat &amp; AI coach summary are off</b> — the <code>claude</code> CLI isn't installed. " +
         "Everything else works. Install it from " +
-        '<a href="https://claude.com/claude-code" target="_blank" rel="noopener">claude.com/claude-code</a>, ' +
+        '<a href="https://code.claude.com/docs/en/quickstart" target="_blank" rel="noopener">code.claude.com/docs</a>, ' +
         "then run <code>claude login</code>.",
       () => localStorage.setItem("hideClaudeSetupBanner", "1")
     );
