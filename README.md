@@ -289,6 +289,37 @@ from real lines. Follow-up questions remember the conversation.
 > per-token API billing). If it's exhausted, you'll get a friendly message, so just ask in the
 > Claude Code terminal instead, which uses your normal interactive limits. -->
 
+### Run the AI on a local model (instead of Claude)
+
+The chat + AI coach can run on a model **on your own machine** instead of your Claude subscription —
+useful if you'd rather not use the cloud, or have no subscription. It works with **any local server
+that speaks the Anthropic API**: [Ollama](https://ollama.com), LM Studio, llama.cpp, a
+[LiteLLM](https://github.com/BerriAI/litellm) proxy, and others. **Ollama is the easiest**, so it
+gets a one-click setup; everything else is two fields.
+
+**With Ollama (one click):**
+
+1. Install Ollama and pull a model: `ollama pull qwen2.5-coder` (any model works; it just needs to
+   be running — `ollama serve`).
+2. In the board, open **⚙ Settings → Advanced → Local AI model** and click **Detect Ollama**. It
+   finds the URL and lists the models you've pulled — pick one and **Save**.
+
+That's it. The chat and AI coach now run locally; clear the field to switch back to Claude.
+
+**With anything else (two fields):** under the same setting, fill in:
+
+- **URL** — your server's Anthropic-API base URL (e.g. `http://localhost:1234` for LM Studio,
+  `http://localhost:4000` for a LiteLLM proxy).
+- **Model** — the model name that server should serve.
+
+Equivalently, set `CHESS_LOCAL_LLM_BASE_URL` and `CHESS_LOCAL_LLM_MODEL` (see the env-var table).
+
+> **Notes.** The `claude` CLI still needs to be installed (the app drives it), but **no Claude
+> subscription or login is required** in this mode — it's pointed at your local server instead.
+> Quality depends entirely on the local model: small models explain noticeably worse than Claude,
+> and an older/slower machine may be too slow to answer in time. The Stockfish analysis is always
+> local and unaffected by this setting.
+
 ---
 
 ## Game history & coaching profile
@@ -340,8 +371,9 @@ To turn history off entirely, set `CHESS_HISTORY=0`.
 
 Click **⚙ Settings** in the board header to change the common options without touching any files —
 your **username**, **other accounts** (aliases that fold into one profile), an optional **Lichess
-token**, and, under *Advanced*, the profile windows and the **Stockfish path**. Saving writes
-`<DATA_DIR>/settings.json` and applies immediately.
+token**, and, under *Advanced*, the profile windows, the **Stockfish path**, and an optional
+**local AI model** (run the chat + coach on your own machine — see [above](#run-the-ai-on-a-local-model-instead-of-claude)).
+Saving writes `<DATA_DIR>/settings.json` and applies immediately.
 
 **Precedence: `settings.json` (the panel) overrides the environment (`.mcp.json`), which overrides
 the built-in defaults.** Both the standalone app *and* the MCP server read `settings.json` at
@@ -369,6 +401,8 @@ All settable via environment variables too (sensible defaults shown); `settings.
 | `CHESS_PROFILE_RECENT` | `100` | Games in the profile's `recent` sliding window. |
 | `CHESS_PROFILE_LIFETIME` | `all` | Lifetime view span; positive N = last N games, `0` = omit it (pure sliding window). |
 | `CHESS_SESSION_TTL` | `86400` | Seconds of inactivity before the server self-terminates (`0` disables the watchdog). |
+| `CHESS_LOCAL_LLM_BASE_URL` | *(empty)* | Run the chat + AI coach on a local model instead of Claude: the Anthropic-API base URL of a local server (Ollama `http://localhost:11434`, LM Studio, llama.cpp, LiteLLM proxy…). Blank = use the Claude subscription. |
+| `CHESS_LOCAL_LLM_MODEL` | *(empty)* | The model name the local server should serve (e.g. `qwen2.5-coder`). Only used when the base URL above is set. |
 
 ---
 

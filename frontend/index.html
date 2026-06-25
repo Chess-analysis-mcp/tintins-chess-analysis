@@ -272,6 +272,30 @@
             <input id="set-stockfish" type="text" autocomplete="off" />
             <span id="set-sf-status" class="set-hint"></span>
           </label>
+          <div class="set-field">
+            <span class="set-label">Local AI model <span class="set-opt">(optional — run the AI locally instead of Claude)</span></span>
+            <span class="set-hint">Run the “why?” chat + AI coach on your own machine instead of your
+              Claude subscription. Works with any local server that speaks the Anthropic API —
+              Ollama, LM Studio, llama.cpp, a LiteLLM proxy, and more. <b>Ollama is easiest:</b> just
+              click <b>Detect Ollama</b> below. For anything else, fill in the URL (and model) by
+              hand. Leave blank to use Claude.</span>
+            <div class="set-llm-row">
+              <button type="button" id="set-ollama-detect" class="linklike">Detect Ollama</button>
+              <span id="set-ollama-status" class="set-hint"></span>
+            </div>
+            <label class="set-sub">
+              <span class="set-sub-label">URL</span>
+              <input id="set-local-llm-url" type="text" autocomplete="off" placeholder="http://localhost:11434" />
+            </label>
+            <label class="set-sub" id="set-ollama-pick-row" hidden>
+              <span class="set-sub-label">Detected</span>
+              <select id="set-ollama-model-select"></select>
+            </label>
+            <label class="set-sub">
+              <span class="set-sub-label">Model</span>
+              <input id="set-local-llm-model" type="text" autocomplete="off" placeholder="e.g. qwen2.5-coder" />
+            </label>
+          </div>
         </details>
 
         <div class="set-actions">

@@ -54,18 +54,38 @@ class ChatError(Exception):
 
 
 def _child_env() -> dict:
-    """Environment for the spawned `claude` so it uses the user's subscription login.
+    """Environment for the spawned `claude`.
 
-    Sets `CHESS_WEB_AUTOSTART=0` so the child doesn't rebind the board port, and **always
-    strips** `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`. This feature is deliberately
-    subscription-based (see module docstring), and headless `claude -p` can't prompt the way
-    interactive Claude Code does — so a stray/empty/stale key in the environment silently
-    hijacks auth and 401s ("Invalid authentication credentials"). Removing it forces the
-    subscription login the chat is designed around.
+    Sets `CHESS_WEB_AUTOSTART=0` so the child doesn't rebind the board port.
+
+    Two routing modes:
+    - **Local LLM** (`config.LOCAL_LLM_BASE_URL` set): point the child at a local/self-hosted
+      model that speaks the Anthropic Messages API (Ollama native, LM Studio, llama.cpp, or a
+      LiteLLM proxy) via `ANTHROPIC_BASE_URL`. The CLI still needs *some* auth token even though
+      the local server ignores it, so we supply a dummy one if the env has neither. If
+      `LOCAL_LLM_MODEL` is set we point every model tier the CLI might request at it.
+    - **Subscription** (default): strip a stray/empty/stale `ANTHROPIC_API_KEY`, which headless
+      `claude -p` would otherwise silently use and 401 on ("Invalid authentication credentials"),
+      forcing the subscription login this feature is designed around.
     """
     env = {**os.environ, "CHESS_WEB_AUTOSTART": "0"}
+    base_url = (config.LOCAL_LLM_BASE_URL or "").strip()
+    if base_url:
+        env["ANTHROPIC_BASE_URL"] = base_url
+        if not env.get("ANTHROPIC_AUTH_TOKEN") and not env.get("ANTHROPIC_API_KEY"):
+            env["ANTHROPIC_AUTH_TOKEN"] = "local"
+        model = (config.LOCAL_LLM_MODEL or "").strip()
+        if model:
+            for var in (
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_SMALL_FAST_MODEL",
+            ):
+                env[var] = model
+        return env
     env.pop("ANTHROPIC_API_KEY", None)
-    env.pop("ANTHROPIC_AUTH_TOKEN", None)
     return env
 
 
@@ -340,11 +360,11 @@ def ask(
         ),
         "--output-format",
         "json",
-        "--mcp-config",
-        str(_MCP_CONFIG),
-        "--allowedTools",
-        _ALLOWED_TOOLS,
     ]
+    # Local models are unreliable at tool-calling, and the prompt already embeds every engine
+    # fact (`_engine_facts`), so skip the chess MCP tools when routed at a local LLM.
+    if not (config.LOCAL_LLM_BASE_URL or "").strip():
+        cmd += ["--mcp-config", str(_MCP_CONFIG), "--allowedTools", _ALLOWED_TOOLS]
     if session_id:
         cmd += ["--resume", session_id]
 

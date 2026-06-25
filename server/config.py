@@ -293,3 +293,12 @@ WEB_OPEN: bool = os.environ.get("CHESS_WEB_OPEN", "1") != "0"
 # /api/app-config and, when on, auto-loads the user's most recent Lichess game on open. Left off
 # (0) for the MCP-driven board and dev `run_web.py <pgn>` runs, so neither gets a surprise autoload.
 APP_MODE: bool = os.environ.get("CHESS_APP_MODE", "0") == "1"
+
+# Local / self-hosted LLM for the in-browser chat + AI coach summary. When LOCAL_LLM_BASE_URL is
+# set, the child `claude -p` is pointed at it via ANTHROPIC_BASE_URL (see claude_bridge._child_env)
+# instead of the user's Claude subscription — any server speaking the Anthropic Messages API works
+# (Ollama native, LM Studio, llama.cpp, or a LiteLLM proxy). LOCAL_LLM_MODEL names the model to
+# request (e.g. "qwen2.5-coder"); blank lets the endpoint pick its default. Both are editable in
+# the Settings panel. Leave the base URL blank to keep the default subscription path.
+LOCAL_LLM_BASE_URL: str = os.environ.get("CHESS_LOCAL_LLM_BASE_URL", "").strip()
+LOCAL_LLM_MODEL: str = os.environ.get("CHESS_LOCAL_LLM_MODEL", "").strip()

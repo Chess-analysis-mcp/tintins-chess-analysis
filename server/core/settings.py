@@ -30,6 +30,8 @@ KEYS = (
     "stockfish_path",
     "coach_ai_auto",
     "personalize_history",
+    "local_llm_base_url",
+    "local_llm_model",
 )
 
 
@@ -84,6 +86,10 @@ def apply(settings: dict) -> None:
         config.COACH_AI_AUTO = bool(settings["coach_ai_auto"])
     if "personalize_history" in settings:
         config.PERSONALIZE_HISTORY = bool(settings["personalize_history"])
+    if "local_llm_base_url" in settings:
+        config.LOCAL_LLM_BASE_URL = (settings["local_llm_base_url"] or "").strip()
+    if "local_llm_model" in settings:
+        config.LOCAL_LLM_MODEL = (settings["local_llm_model"] or "").strip()
 
 
 def apply_saved(data_dir: Optional[str] = None) -> dict:
@@ -106,6 +112,8 @@ def effective() -> dict:
         "stockfish_path": config.STOCKFISH_PATH or "",
         "coach_ai_auto": config.COACH_AI_AUTO,
         "personalize_history": config.PERSONALIZE_HISTORY,
+        "local_llm_base_url": config.LOCAL_LLM_BASE_URL or "",
+        "local_llm_model": config.LOCAL_LLM_MODEL or "",
     }
 
 
