@@ -3,12 +3,14 @@
 [![CI](https://github.com/Chess-analysis-mcp/tintins-chess-analysis/actions/workflows/ci.yml/badge.svg)](https://github.com/Chess-analysis-mcp/tintins-chess-analysis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Analyze a chess game (PGN) with **Stockfish**, find where you went wrong, and, unlike a bare
-engine, get the mistakes **explained in words**, grounded in real engine lines. Works with games
-from **anywhere** — Lichess, Chess.com, or any PGN you can paste — and Lichess players get a few
-extras (fetch your recent games by username, auto-load on launch). It runs two ways: from the
-**Claude Code terminal** (as an MCP server) and as an **interactive web board** that share one
-engine and one analysis, so they never disagree.
+A chess coach you can actually **talk to**, and one that **doesn't make things up**. Ask why a move
+was a mistake or what you should have played, and get a straight answer **in words**, grounded in
+real **Stockfish** lines instead of guessed. Under the hood it reviews your game with the engine and
+finds exactly where you went wrong; the difference is it then explains it. Works with games from
+**anywhere** (Lichess, Chess.com, or any PGN you can paste), and Lichess players get a few extras
+(fetch your recent games by username, auto-load on launch). It runs two ways: from the **Claude Code
+terminal** (as an MCP server) and as an **interactive web board** that share one engine and one
+analysis, so they never disagree.
 
 ![Chess Review board: the board with played, best, and refutation arrows, an eval bar, a win graph, the mistake list, the Snowie AI coach, and the Games panel](docs/screenshots/chess_new_pipeline.png)
 
@@ -431,6 +433,45 @@ This tool is **local-first**, but it is not fully offline, so here's the honest 
   engine review works without `claude` at all if you'd rather keep everything local.
 - **Lichess import is optional.** Fetching your games calls the public Lichess API with the username
   (and optional token) you provide. Skip it and paste PGNs instead, and nothing is sent to Lichess.
+
+---
+
+## FAQ
+
+### How do I install the `claude` CLI, and how is it different from the Claude app?
+
+The `claude` CLI (Claude Code) is a separate program that runs in your computer's **terminal**. It
+is not the Claude desktop app or the claude.ai website, but it signs in with the **same Claude
+subscription**, so there's no extra account, no API key, and no per-token bill. This tool uses the
+CLI behind the scenes to write the plain-English coaching, which is why you need it installed and
+logged in.
+
+<details>
+<summary><strong>Show installation steps</strong></summary>
+
+<br>
+
+Open a terminal and install Claude Code with one of these (the native install is recommended):
+
+```bash
+# macOS / Linux / WSL
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Windows (PowerShell)
+irm https://claude.ai/install.ps1 | iex
+```
+
+Or use a package manager: `brew install --cask claude-code` (macOS) or
+`winget install Anthropic.ClaudeCode` (Windows).
+
+Then run `claude` once and follow the prompt to log in with your Claude subscription. After that,
+restart the app (or reload Claude Code) and the AI coach will work. Full details are in the
+[Claude Code docs](https://docs.claude.com/en/docs/claude-code/overview).
+
+</details>
+
+> The engine review itself (the mistake list, eval bar, win graph, and arrows) works without the
+> CLI. You only need it for the conversational coaching and the AI summaries.
 
 ---
 

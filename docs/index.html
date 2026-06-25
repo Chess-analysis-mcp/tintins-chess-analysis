@@ -20,12 +20,13 @@
   <header class="hero">
     <div class="wrap">
       <div class="brand">Tintin's AI Chess Analysis</div>
-      <span class="eyebrow">Stockfish + plain English</span>
+      <span class="eyebrow">A chess coach you can talk to, that doesn't make things up</span>
       <h1>Stop guessing <span class="accent">why</span> you lost.</h1>
       <p class="tagline">
-        Tintin's AI Chess Analysis reviews your game with Stockfish and finds exactly where you went
-        wrong. Then, unlike a bare engine, <strong>Snowie</strong>, your AI coach, explains each
-        mistake <strong>in words</strong>, grounded in the real lines the engine saw.
+        Ask <strong>why</strong> a move was a mistake, or <strong>what</strong> you should have played
+        instead, and get a straight answer in plain words. <strong>Snowie</strong>, your AI coach, is
+        built on a full Stockfish review of your game, so every explanation is grounded in the real
+        lines the engine saw rather than guessed.
       </p>
       <div class="buttons">
         <a class="btn primary" href="https://github.com/Chess-analysis-mcp/tintins-chess-analysis/releases/latest">Download for Mac</a>
@@ -189,6 +190,52 @@
         Full setup, configuration, and options are in the
         <a href="https://github.com/Chess-analysis-mcp/tintins-chess-analysis#readme">README on GitHub</a>.
       </p>
+    </div>
+  </section>
+
+  <!-- ===================== FAQ ===================== -->
+  <section id="faq">
+    <div class="wrap">
+      <h2>FAQ</h2>
+
+      <details class="faq">
+        <summary>How do I install the <code>claude</code> CLI, and how is it different from the Claude app?</summary>
+        <div class="faq-body">
+          <p>
+            The <code>claude</code> CLI (Claude Code) is a separate program that runs in your computer's
+            <strong>terminal</strong>. It is not the Claude desktop app or the claude.ai website, but it
+            signs in with the <strong>same Claude subscription</strong>, so there is no extra account, no
+            API key, and no per-token bill. This app uses the CLI behind the scenes to write the
+            plain-English coaching, which is why you need it installed and logged in.
+          </p>
+
+          <details class="faq-sub">
+            <summary>Show installation steps</summary>
+            <div class="faq-body">
+              <p>Open a terminal and install Claude Code with one of these (the native install is recommended):</p>
+              <pre><code># macOS / Linux / WSL
+curl -fsSL https://claude.ai/install.sh | bash
+
+# Windows (PowerShell)
+irm https://claude.ai/install.ps1 | iex</code></pre>
+              <p>
+                Or use a package manager: <code>brew install --cask claude-code</code> (macOS) or
+                <code>winget install Anthropic.ClaudeCode</code> (Windows).
+              </p>
+              <p>
+                Then run <code>claude</code> once and follow the prompt to log in with your Claude
+                subscription. After that, restart this app and the AI coach will work. Full details are in
+                the <a href="https://docs.claude.com/en/docs/claude-code/overview">Claude Code docs</a>.
+              </p>
+            </div>
+          </details>
+
+          <p class="muted">
+            Note: the engine review itself (the mistake list, eval bar, win graph, and arrows) works
+            without the CLI. You only need it for the conversational coaching and the AI summaries.
+          </p>
+        </div>
+      </details>
     </div>
   </section>
 
