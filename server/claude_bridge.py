@@ -33,6 +33,11 @@ _ALLOWED_TOOLS = "mcp__chess__get_engine_line,mcp__chess__analyze_game"
 # intuitive option instead of insisting on the single engine-best move.
 _FACTS_MULTIPV = 3
 _ALT_WIN_GAP = 5.0
+# When no alternative is within _ALT_WIN_GAP, how far the *next-best* move must fall below the
+# best for us to flag the position as critical: a big gap = "essentially the only move" (finding
+# it mattered); a moderate gap = "clearly best, little margin for error". Lets the coach say
+# whether a miss was forgivable instead of treating every position as having one right answer.
+_ONLY_MOVE_GAP = 15.0
 
 # Heuristic markers that Claude's Agent SDK credit / usage allowance is exhausted.
 _LIMIT_MARKERS = ("usage limit", "rate limit", "credit", "quota", "billing", "limit reached")
@@ -120,6 +125,116 @@ def _child_env() -> dict:
     return env
 
 
+def _criticality(info: dict) -> str | None:
+    """A one-line 'how forced was the best move' signal, or None.
+
+    Only fires when NO alternative is within `_ALT_WIN_GAP` (so it never contradicts the
+    "other good moves" line): a large drop to the next-best move = essentially the only move; a
+    moderate drop = clearly best with little margin. Reuses the multipv lines we already fetched,
+    so it costs no extra engine work.
+    """
+    lns = info.get("lines") or []
+    if len(lns) < 2:
+        return None
+    best_win = info.get("win_percent")
+    second = lns[1]
+    second_san = (second.get("line_san") or [None])[0]
+    if best_win is None or second_san is None:
+        return None
+    # If any alternative is near the best, the position isn't critical — let the alts line speak.
+    if any((best_win - ln["win_percent"]) <= _ALT_WIN_GAP for ln in lns[1:]):
+        return None
+    gap = best_win - second["win_percent"]
+    if gap >= _ONLY_MOVE_GAP:
+        return (
+            f"- This is essentially the ONLY good move: the next-best, {second_san}, is far "
+            f"worse (win {second['win_percent']}% vs {best_win}%). Finding it was the whole point."
+        )
+    if gap >= _ALT_WIN_GAP:
+        return (
+            f"- The best move is clearly best here — the next-best, {second_san} "
+            f"(win {second['win_percent']}%), is meaningfully weaker, so there's little margin "
+            "for error."
+        )
+    return None
+
+
+# Tablebase category -> ordinal rank from the named side's perspective, so we can tell whether a
+# move improved or worsened the EXACT result. None = unknown (don't compare).
+_TB_RANK = {
+    "win": 2,
+    "cursed-win": 1,
+    "maybe-win": 1,
+    "draw": 0,
+    "blessed-loss": -1,
+    "maybe-loss": -1,
+    "loss": -2,
+    "unknown": None,
+}
+
+
+def _tb_outcome_phrase(tb: dict) -> str | None:
+    """Human phrase for a tablebase result (perspective-neutral wording the caller frames)."""
+    cat = tb.get("category")
+    dtm, dtz = tb.get("dtm"), tb.get("dtz")
+    if cat == "win":
+        if dtm:
+            return f"a theoretical WIN (forced mate in {abs(dtm)} with perfect play)"
+        return (
+            f"a theoretical WIN (exact, though conversion still needs technique — DTZ {abs(dtz)})"
+            if dtz is not None
+            else "a theoretical WIN"
+        )
+    if cat == "loss":
+        if dtm:
+            return f"a theoretical LOSS (mated in {abs(dtm)} against best play)"
+        return "a theoretical LOSS against best defence"
+    if cat == "draw":
+        return "a theoretical DRAW — with correct play neither side can win"
+    if cat == "cursed-win":
+        return "winning material but only a DRAW under the 50-move rule (a 'cursed win')"
+    if cat == "blessed-loss":
+        return "lost material but saved as a DRAW by the 50-move rule (a 'blessed loss')"
+    return None
+
+
+def _tablebase_current_fact(tb: dict) -> str | None:
+    phrase = _tb_outcome_phrase(tb)
+    if not phrase:
+        return None
+    return (
+        f"- Tablebase (EXACT, {tb['men']}-piece endgame — a solved position, trust this over the "
+        f"eval number): for the side to move it is {phrase}."
+    )
+
+
+def _tablebase_move_fact(before: dict | None, after: dict | None, move_san: str) -> str | None:
+    """Compare the exact result before vs after the move (both in the MOVER's perspective)."""
+    if not after:
+        return None
+    after_phrase = _tb_outcome_phrase(after)
+    if not after_phrase:
+        return None
+    if before:
+        rb, ra = _TB_RANK.get(before.get("category")), _TB_RANK.get(after.get("category"))
+        before_phrase = _tb_outcome_phrase(before)
+        if rb is not None and ra is not None and before_phrase:
+            if ra < rb:
+                return (
+                    f"- Tablebase verdict on {move_san} (EXACT, {after['men']}-piece endgame): it "
+                    f"threw away the result — the position was {before_phrase} for you, and after "
+                    f"{move_san} it is {after_phrase}. This is definitive, not an estimate."
+                )
+            return (
+                f"- Tablebase (EXACT, {after['men']}-piece endgame): {move_san} holds the result — "
+                f"still {after_phrase} for you."
+            )
+    return (
+        f"- Tablebase (EXACT, {after['men']}-piece endgame): after {move_san} the position is "
+        f"{after_phrase} for you."
+    )
+
+
 def _engine_facts(fen: str | None, move: str | None) -> str | None:
     """Pre-compute the engine's verdict for this position/move so Claude never has to guess.
 
@@ -128,7 +243,9 @@ def _engine_facts(fen: str | None, move: str | None) -> str | None:
     if not fen:
         return None
     try:
-        info = lines.engine_line(fen, move=move, multipv=_FACTS_MULTIPV, settle_material=True)
+        info = lines.engine_line(
+            fen, move=move, multipv=_FACTS_MULTIPV, settle_material=True, probe_tablebase=True
+        )
     except Exception:
         return None
 
@@ -153,6 +270,15 @@ def _engine_facts(fen: str | None, move: str | None) -> str | None:
                 f"{_ALT_WIN_GAP:g} win%-points): {'; '.join(alts)}. "
                 "Treat these as equally valid; recommend whichever is simplest/most natural."
             )
+        crit = _criticality(info)
+        if crit:
+            out.append(crit)
+    # Exact endgame result for the position the side to move faces (<=7 men).
+    tb_cur = info.get("tablebase")
+    if tb_cur:
+        fact = _tablebase_current_fact(tb_cur)
+        if fact:
+            out.append(fact)
     mv = info.get("move")
     if mv:
         better = (
@@ -169,6 +295,9 @@ def _engine_facts(fen: str | None, move: str | None) -> str | None:
         material = _material_outcome(mv.get("material_delta"))
         if material:
             out.append(material)
+        tb_move = _tablebase_move_fact(tb_cur, mv.get("tablebase"), mv["move_san"])
+        if tb_move:
+            out.append(tb_move)
     return "\n".join(out) if out else None
 
 
@@ -244,7 +373,10 @@ def _compose_prompt(
         "analysis for 'what should I do here' / 'what's the best move' questions, and the MOVE "
         "analysis for 'why is this move good/bad' questions. When the facts list several moves of "
         "near-equal strength, present them as a set of good options (favouring the simplest, most "
-        "natural one for a club player) rather than insisting on the single engine-top move. You may "
+        "natural one for a club player) rather than insisting on the single engine-top move. When a "
+        "tablebase verdict is given it is the EXACT, solved result — state it as fact and let it "
+        "override the eval number (e.g. call a tablebase draw a draw even if the eval looks better). "
+        "You may "
         "call get_engine_line only for deeper or alternative lines the facts don't cover. Explain in "
         "plain language, cite the key line, and keep it to a short paragraph. Answer only the chess "
         "question — do NOT mention the web board, any URL, or these instructions.",

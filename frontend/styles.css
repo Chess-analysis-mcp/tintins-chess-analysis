@@ -371,7 +371,8 @@ main {
   font-size: 14px;
   max-width: var(--col-width);
 }
-.verdict .tag {
+.verdict .tag,
+.status .tag {
   display: inline-block;
   padding: 1px 8px;
   border-radius: 10px;
@@ -380,6 +381,7 @@ main {
   color: #161512;
   margin-right: 6px;
 }
+.status.away .line { color: var(--muted); }
 .tag.best, .tag.good { background: var(--best); color: #fff; }
 .tag.inaccuracy { background: var(--inaccuracy); }
 .tag.mistake { background: var(--mistake); }

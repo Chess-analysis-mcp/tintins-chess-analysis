@@ -329,6 +329,18 @@ LICHESS_DEFAULT_MAX: int = int(os.environ.get("CHESS_LICHESS_MAX", "3"))
 # HTTP timeout (seconds) for Lichess requests.
 LICHESS_TIMEOUT: float = float(os.environ.get("CHESS_LICHESS_TIMEOUT", "20"))
 
+# Endgame tablebase (server.core.tablebase). For <=7-man positions the in-browser chat / AI coach
+# facts include the EXACT theoretical result (win/draw/loss + DTZ/DTM) from the public Lichess
+# tablebase API, so endgame advice is precise instead of trusting a depth-limited eval. Best-effort
+# (any network/parse failure is silently omitted) and only used by the chat/coach path — the
+# interactive board never probes. CHESS_TABLEBASE=0 disables it; the API base is overridable for
+# tests.
+TABLEBASE_ENABLED: bool = os.environ.get("CHESS_TABLEBASE", "1") != "0"
+TABLEBASE_API_BASE: str = os.environ.get(
+    "CHESS_TABLEBASE_API_BASE", "https://tablebase.lichess.ovh"
+).rstrip("/")
+TABLEBASE_TIMEOUT: float = float(os.environ.get("CHESS_TABLEBASE_TIMEOUT", "6"))
+
 # Web board (Phase 4). The FastAPI server runs in the same process as the MCP server,
 # sharing the one engine pool and ReviewSession. WEB_AUTOSTART=0 disables the autostart
 # (e.g. when driving the web server standalone via scripts/run_web.py).

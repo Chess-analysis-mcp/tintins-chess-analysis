@@ -13,6 +13,7 @@ import chess
 
 from server import config
 from server.core import engine
+from server.core import tablebase
 from server.core.evaluation import classify
 from server.core.game_analysis import _signed_cp
 
@@ -121,6 +122,7 @@ def engine_line(
     depth: int = config.DEFAULT_DEPTH,
     multipv: int = 1,
     settle_material: bool = False,
+    probe_tablebase: bool = False,
 ) -> dict:
     """Evaluate a position (optionally after a candidate move) and return engine lines.
 
@@ -132,6 +134,11 @@ def engine_line(
     fields to the `move` dict, counted at a QUIESCENT leaf (see `_settle_leaf`) so a caller can
     tell "loses a piece" from "loses tempo" without inferring it from the SAN line. It costs a few
     extra engine calls when a trade is unresolved, so only the chat path enables it.
+
+    `probe_tablebase` (also off by default — it does network I/O) attaches the EXACT tablebase
+    result to the position (`result["tablebase"]`) and, when a `move` is given, to the move
+    (`result["move"]["tablebase"]`, normalised to the MOVER's perspective) for <=7-man endgames.
+    Only the chat / coach path enables it; the interactive board never pays the network cost.
     """
     board = chess.Board(fen)
     base = engine.analyse(fen, depth=depth, multipv=max(1, multipv))
@@ -150,6 +157,12 @@ def engine_line(
         "line_uci": best.pv_uci[:12],
         "shapes": [],  # board annotations: deferred to Phase 7
     }
+
+    # Exact endgame result for the position the side to move faces (<=7 men). Trumps the eval.
+    if probe_tablebase and tablebase.count_men(board) <= tablebase.PIECE_LIMIT:
+        tb = tablebase.probe(fen)
+        if tb:
+            result["tablebase"] = tb
 
     if multipv > 1:
         result["lines"] = [
@@ -178,6 +191,10 @@ def engine_line(
         # of inferring it from the SAN line. Filled (quiescently) from the refutation PV below;
         # None for a move that ends the game (mate/stalemate) or when settle_material is off.
         material_after_line: int | None = None
+        # Exact tablebase verdict on the resulting position, normalised back to the MOVER's
+        # perspective (the after-position has the opponent to move, so we flip it). None for a
+        # terminal/over-7-men position or when probing is off.
+        move_tablebase: dict | None = None
         after_board = board.copy(stack=False)
         after_board.push(mv)
 
@@ -205,6 +222,8 @@ def engine_line(
             if settle_material:
                 leaf = _settle_leaf(after_board, after.pv_uci, depth)
                 material_after_line = material_balance(leaf, mover)
+            if probe_tablebase and tablebase.count_men(after_board) <= tablebase.PIECE_LIMIT:
+                move_tablebase = tablebase.flip(tablebase.probe(after_board.fen()))
 
         # Board annotation (Phase 7): draw the punishing reply as a red arrow so the board
         # shows *why* the move is bad, not just the prose.
@@ -233,6 +252,7 @@ def engine_line(
                 if material_after_line is not None
                 else None
             ),
+            "tablebase": move_tablebase,
         }
 
     return result

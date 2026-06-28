@@ -22,6 +22,11 @@ let currentPrompt = "";
 
 let exploring = false; // off the game line, free-playing variations
 let exploreBaseNode = 0; // node we left the timeline from
+// Verdict for the move just tried in explore mode, surfaced in the (always-visible) status
+// banner under the board — the full #verdict panel lives far down the scrolling side column,
+// so without this you'd never see "good / mistake / blunder" for a variation you played.
+// null = none, "pending" = evaluating, move dict = result, {error:true} = failed.
+let exploreVerdict = null;
 
 let bestArrowOn = false;
 // Live best-move arrows: progressively deepen and refine while you sit on a position,
@@ -231,11 +236,28 @@ function nodeLabel(i) {
   return `${prev.move_number}${prev.color === "white" ? "." : "…"} ${prev.move_san}`;
 }
 
+// Compact verdict for the move just tried in explore mode, shown inline in the status banner.
+function exploreVerdictHtml() {
+  if (exploreVerdict === "pending") return ` <span class="line">evaluating…</span>`;
+  if (!exploreVerdict) return "";
+  if (exploreVerdict.error) return ` <span class="line">couldn't evaluate that move</span>`;
+  const m = exploreVerdict;
+  // Mirror renderVerdict: a "best" that isn't literally the engine's #1 reads as "good".
+  const label = m.classification === "best" && !m.is_engine_best ? "good" : m.classification;
+  return (
+    ` <span class="tag ${label}">${label}</span>` +
+    `<b>${escapeHtml(m.move_san)}</b> — win ${m.win_before}% → ${m.win_after}%` +
+    (m.is_engine_best ? "" : ` · best was <b>${escapeHtml(m.better_move_san || "")}</b>`)
+  );
+}
+
 function updateStatus() {
   const el = $("status");
   if (exploring) {
     el.className = "status away";
-    el.innerHTML = `🔍 Exploring a variation. <button id="ret">Back to review move</button>`;
+    el.innerHTML =
+      `🔍 Exploring a variation.${exploreVerdictHtml()} ` +
+      `<button id="ret">Back to review move</button>`;
     $("ret").onclick = returnToReview;
   } else if (cur !== anchorNode) {
     el.className = "status away";
@@ -304,6 +326,7 @@ function undoOne() {
   }
   chatFen = chess.fen(); // backed up mid-line: ask about the position, no single move
   chatMove = null;
+  exploreVerdict = null; // no specific move under judgement at the backed-up position
   renderBoard();
   renderVerdict(null);
   updateStatus();
@@ -355,6 +378,7 @@ async function onUserMove(orig, dest) {
   chatFen = fenBefore; // position before the move in question (consistent in explore mode)
   chatMove = (moveObj && moveObj.san) || null;
   evalShapes = [];
+  exploreVerdict = "pending"; // banner shows "evaluating…" until the engine replies
   renderBoard();
   updateStatus();
   renderGraph();
@@ -373,9 +397,13 @@ async function onUserMove(orig, dest) {
   } catch (err) {
     // Never leave the verdict stuck on "Evaluating…": surface the failure so the user
     // can retry instead of thinking the board froze.
+    exploreVerdict = { error: true };
+    updateStatus();
     renderVerdict({ error: "Couldn't evaluate that move — the engine may be busy or restarting. Try again." });
     return;
   }
+  exploreVerdict = res.move || (res.error ? { error: true } : null);
+  updateStatus(); // surface good/mistake/blunder in the always-visible banner under the board
   renderVerdict(res);
   if (res.move) {
     setEvalBar(moverColor === "white" ? res.move.win_after : 100 - res.move.win_after);
