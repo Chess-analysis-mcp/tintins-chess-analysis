@@ -29,28 +29,45 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
     Ok "uv installed ($(uv --version))"
 }
 
-# 2) Stockfish ------------------------------------------------------------------------
+# 2) Build the project environment ----------------------------------------------------
+# Built before Stockfish so the download fallback below can run via `uv run python`.
+Info "Setting up the Python environment with uv (first run downloads Python + deps)..."
+uv sync
+Ok "Environment ready"
+
+# 3) Stockfish - try winget/choco, else download the official static build. ------------
 if (Get-Command stockfish -ErrorAction SilentlyContinue) {
     Ok "Stockfish already installed"
 } else {
     Info "Installing Stockfish engine..."
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id=Stockfish.Stockfish -e --accept-source-agreements --accept-package-agreements
-    } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
-        choco install stockfish -y
-    } else {
-        Warn "Couldn't find winget or choco."
-        Warn "Install Stockfish from https://stockfishchess.org/download/, then set STOCKFISH_PATH"
-        Warn "in .mcp.json to the stockfish.exe path and re-run install.ps1."
-        exit 1
+    # Wrapped so a package-manager failure (which throws under PowerShell 7's native-command
+    # error handling) still falls through to the direct-download fallback below.
+    try {
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            winget install --id=Stockfish.Stockfish -e --accept-source-agreements --accept-package-agreements
+        } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+            choco install stockfish -y
+        }
+    } catch {
+        Warn "Package-manager install didn't complete; trying a direct download instead."
     }
-    Ok "Stockfish installed"
+    # winget/choco often don't put stockfish on PATH for this session (or aren't present), so
+    # re-check; if it's still missing, download the official static build into the app's managed
+    # engine dir (auto-detected by the app - no admin, no PATH changes).
+    if (Get-Command stockfish -ErrorAction SilentlyContinue) {
+        Ok "Stockfish installed"
+    } else {
+        Info "Downloading the official Stockfish engine (no package manager needed)..."
+        try { $SfPath = uv run python scripts/download_stockfish.py } catch { $SfPath = $null }
+        if ($SfPath) {
+            Ok "Stockfish downloaded ($SfPath)"
+        } else {
+            Warn "Couldn't install or download Stockfish automatically."
+            Warn "Install it from https://stockfishchess.org/download/ and re-run install.ps1,"
+            Warn "or set the Stockfish path in the app's Settings panel."
+        }
+    }
 }
-
-# 3) Build the project environment ----------------------------------------------------
-Info "Setting up the Python environment with uv (first run downloads Python + deps)..."
-uv sync
-Ok "Environment ready"
 
 # 4) Record your chess username -------------------------------------------------------
 # Saved to the user-level settings.json (shared by app + MCP), NOT a tracked file — so the working

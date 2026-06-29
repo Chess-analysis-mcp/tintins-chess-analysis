@@ -23,6 +23,7 @@ import chess
 from server import config
 from server.core import history
 from server.core import lines
+from server.core import local_llm
 from server.core import session as session_mod
 from server.core.evaluation import time_control_clock
 
@@ -92,37 +93,17 @@ def _is_login_response(data: dict, answer: str) -> bool:
 
 
 def _child_env() -> dict:
-    """Environment for the spawned `claude`.
+    """Environment for the spawned `claude` (subscription path only).
 
-    Sets `CHESS_WEB_AUTOSTART=0` so the child doesn't rebind the board port.
+    Sets `CHESS_WEB_AUTOSTART=0` so the child doesn't rebind the board port, and strips a
+    stray/empty/stale `ANTHROPIC_API_KEY`, which headless `claude -p` would otherwise silently use
+    and 401 on ("Invalid authentication credentials"), forcing the subscription login this feature
+    is designed around.
 
-    Two routing modes:
-    - **Local LLM** (`config.LOCAL_LLM_BASE_URL` set): point the child at a local/self-hosted
-      model that speaks the Anthropic Messages API (Ollama native, LM Studio, llama.cpp, or a
-      LiteLLM proxy) via `ANTHROPIC_BASE_URL`. The CLI still needs *some* auth token even though
-      the local server ignores it, so we supply a dummy one if the env has neither. If
-      `LOCAL_LLM_MODEL` is set we point every model tier the CLI might request at it.
-    - **Subscription** (default): strip a stray/empty/stale `ANTHROPIC_API_KEY`, which headless
-      `claude -p` would otherwise silently use and 401 on ("Invalid authentication credentials"),
-      forcing the subscription login this feature is designed around.
+    Note: a configured local LLM no longer routes through here — it's served by direct HTTP
+    (`server.core.local_llm`), so the subprocess path runs only in subscription mode.
     """
     env = {**os.environ, "CHESS_WEB_AUTOSTART": "0"}
-    base_url = (config.LOCAL_LLM_BASE_URL or "").strip()
-    if base_url:
-        env["ANTHROPIC_BASE_URL"] = base_url
-        if not env.get("ANTHROPIC_AUTH_TOKEN") and not env.get("ANTHROPIC_API_KEY"):
-            env["ANTHROPIC_AUTH_TOKEN"] = "local"
-        model = (config.LOCAL_LLM_MODEL or "").strip()
-        if model:
-            for var in (
-                "ANTHROPIC_MODEL",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "ANTHROPIC_SMALL_FAST_MODEL",
-            ):
-                env[var] = model
-        return env
     env.pop("ANTHROPIC_API_KEY", None)
     return env
 
@@ -755,15 +736,10 @@ def _game_facts(sess) -> str:
 def coach_summary_ai(sess, *, timeout: int = 120) -> str:
     """A richer, Claude-WRITTEN end-of-game coaching summary, grounded in pre-computed facts.
 
-    Opt-in (spends the user's Claude subscription). No MCP tools / engine calls — the prompt already
-    carries every fact Claude needs, so it only has to phrase the coaching well. Raises ChatError.
+    Opt-in (spends the user's Claude subscription, or runs on the configured local LLM). No MCP
+    tools / engine calls — the prompt already carries every fact needed, so the model only has to
+    phrase the coaching well. Raises ChatError.
     """
-    claude = shutil.which("claude")
-    if not claude:
-        raise ChatError(
-            "The `claude` CLI isn't on PATH, so the AI coach summary is unavailable. The free "
-            "summary above still works; install the Claude CLI for the AI version."
-        )
     profile_facts = _profile_facts()
     prompt_parts = [
         "You are an honest, encouraging chess coach writing a short end-of-game summary for the "
@@ -804,7 +780,23 @@ def coach_summary_ai(sess, *, timeout: int = 120) -> str:
             "closing takeaway must come from this game's own moments.\n" + profile_facts
         )
     prompt_parts.append("This game's facts:\n" + _game_facts(sess))
-    cmd = [claude, "-p", "\n\n".join(prompt_parts), "--output-format", "json"]
+    prompt = "\n\n".join(prompt_parts)
+
+    # Local LLM: write the summary over direct HTTP, no `claude` CLI.
+    if local_llm.is_enabled():
+        try:
+            return local_llm.complete(prompt, timeout=max(timeout, local_llm.DEFAULT_TIMEOUT))
+        except local_llm.LocalLLMError as exc:
+            raise ChatError(str(exc))
+
+    claude = shutil.which("claude")
+    if not claude:
+        raise ChatError(
+            "The `claude` CLI isn't on PATH, so the AI coach summary is unavailable. The free "
+            "summary above still works; install the Claude CLI (or set a local AI model in "
+            "Settings) for the AI version."
+        )
+    cmd = [claude, "-p", prompt, "--output-format", "json"]
 
     env = _child_env()
     try:
@@ -848,13 +840,6 @@ def ask(
 
     Raises ChatError (with a friendly message) on any failure.
     """
-    claude = shutil.which("claude")
-    if not claude:
-        raise ChatError(
-            "The `claude` CLI isn't on PATH, so in-browser chat is unavailable. Use the Claude "
-            "Code terminal to ask 'why?' instead."
-        )
-
     # The move is "at the current board" when it has no separate origin position (timeline node).
     move_at_current = bool(last_move) and (not move_fen or move_fen == fen)
     current_facts = _engine_facts(fen, last_move if move_at_current else None)
@@ -863,20 +848,36 @@ def ask(
     )
     profile_facts = _profile_facts() if use_profile else None
     speed_context = _speed_context()
+    prompt = _compose_prompt(
+        question, fen, last_move, move_fen, current_facts, move_facts, profile_facts,
+        speed_context,
+    )
+
+    # Local LLM: answer over direct HTTP, no `claude` CLI. The prompt already embeds every engine
+    # fact, so no tools are needed (local models are unreliable at tool-calling anyway).
+    if local_llm.is_enabled():
+        try:
+            return local_llm.chat(prompt, session_id=session_id)
+        except local_llm.LocalLLMError as exc:
+            raise ChatError(str(exc))
+
+    claude = shutil.which("claude")
+    if not claude:
+        raise ChatError(
+            "The `claude` CLI isn't on PATH, so in-browser chat is unavailable. Use the Claude "
+            "Code terminal to ask 'why?' instead, or set a local AI model in Settings."
+        )
+
     cmd = [
         claude,
         "-p",
-        _compose_prompt(
-            question, fen, last_move, move_fen, current_facts, move_facts, profile_facts,
-            speed_context,
-        ),
+        prompt,
         "--output-format",
         "json",
     ]
-    # Local models are unreliable at tool-calling, and the prompt already embeds every engine
-    # fact (`_engine_facts`), so skip the chess MCP tools when routed at a local LLM.
-    if not (config.LOCAL_LLM_BASE_URL or "").strip():
-        cmd += ["--mcp-config", str(_MCP_CONFIG), "--allowedTools", _ALLOWED_TOOLS]
+    # Pre-approve the chess MCP tools so Claude can fetch deeper/alternative lines the embedded
+    # facts don't cover.
+    cmd += ["--mcp-config", str(_MCP_CONFIG), "--allowedTools", _ALLOWED_TOOLS]
     if session_id:
         cmd += ["--resume", session_id]
 

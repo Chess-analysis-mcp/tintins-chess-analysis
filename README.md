@@ -14,12 +14,14 @@ analysis, so they never disagree.
 
 ![Chess Review board: the board with played, best, and refutation arrows, an eval bar, a win graph, the mistake list, the Snowie AI coach, and the Games panel](docs/screenshots/chess_new_pipeline.png)
 
-> **Requires a Claude subscription.** The AI-coach explanations and chat (Snowie) — the whole
-> "explained in words" part — run on **headless `claude`, using your existing Claude
-> subscription** (no API key, no per-token billing). You need the [`claude`
+> **Requires a Claude subscription** *(or a local model)***.** The AI-coach explanations and chat
+> (Snowie) — the whole "explained in words" part — run on **headless `claude`, using your existing
+> Claude subscription** (no API key, no per-token billing). You need the [`claude`
 > CLI](https://docs.claude.com/en/docs/claude-code/overview) installed and logged in
-> (`claude login`). The engine review itself (mistake list, eval bar, win graph, arrows) works
-> without it, but the word explanations are the point of the tool.
+> (`claude login`). Prefer to stay fully offline? You can instead point the AI coach at a **local
+> model** (Ollama, LM Studio, …) with no Claude account at all — see
+> [Run the AI on a local model](#run-the-ai-on-a-local-model-instead-of-claude). Either way, the
+> engine review itself (mistake list, eval bar, win graph, arrows) works without any of it.
 
 > **New here? Pick your goal:**
 > - 🎯 **I just want to review my games** → [get the app](#-i-just-want-to-review-my-games) (download on Mac, or double-click the launcher on Windows/Linux — it sets itself up).
@@ -198,8 +200,10 @@ that interpreter instead of `uv run python`.
 
 ### Prerequisites (what the app/installer handles for you)
 
-- **Stockfish** engine (the installer adds it via `brew` / `apt` / `winget`). The tool auto-detects
-  a normal install, so no path configuration is needed. To use a custom build, set `STOCKFISH_PATH`.
+- **Stockfish** engine (the installer adds it via `brew` / `apt` / `winget`, and if no package
+  manager is available it downloads the official static build automatically, so no manual setup is
+  needed on any platform). The tool auto-detects a normal install, so no path configuration is
+  needed. To use a custom build, set `STOCKFISH_PATH`.
 - **Internet connection** for the web board's first load (chessground / chess.js come from a CDN, so
   there's no Node/npm build step).
 - **A Claude subscription + the `claude` CLI** (Claude Code), installed and logged in
@@ -305,34 +309,38 @@ from real lines. Follow-up questions remember the conversation.
 
 ### Run the AI on a local model (instead of Claude)
 
-The chat + AI coach can run on a model **on your own machine** instead of your Claude subscription —
-useful if you'd rather not use the cloud, or have no subscription. It works with **any local server
-that speaks the Anthropic API**: [Ollama](https://ollama.com), LM Studio, llama.cpp, a
-[LiteLLM](https://github.com/BerriAI/litellm) proxy, and others. **Ollama is the easiest**, so it
-gets a one-click setup; everything else is two fields.
+The chat + AI coach can run on a model **entirely on your own machine** instead of your Claude
+subscription. This is the fully-offline path for the AI: it needs **no Claude subscription, no
+login, and not even the `claude` CLI**. The app talks to your local model directly over HTTP.
+
+It works with **any local server that exposes an OpenAI-compatible `/v1/chat/completions`
+endpoint**, which is almost all of them: [Ollama](https://ollama.com), LM Studio, llama.cpp's
+server, a [LiteLLM](https://github.com/BerriAI/litellm) proxy, and others. **Ollama is the
+easiest**, so it gets a one-click setup; everything else is two fields.
 
 **With Ollama (one click):**
 
-1. Install Ollama and pull a model: `ollama pull qwen2.5-coder` (any model works; it just needs to
-   be running — `ollama serve`).
+1. Install Ollama and pull a model: `ollama pull qwen2.5-coder` (any chat model works; it just needs
+   to be running, e.g. `ollama serve`).
 2. In the board, open **⚙ Settings → Advanced → Local AI model** and click **Detect Ollama**. It
-   finds the URL and lists the models you've pulled — pick one and **Save**.
+   finds the URL, lists the models you've pulled, and you pick one and **Save**.
 
 That's it. The chat and AI coach now run locally; clear the field to switch back to Claude.
 
 **With anything else (two fields):** under the same setting, fill in:
 
-- **URL** — your server's Anthropic-API base URL (e.g. `http://localhost:1234` for LM Studio,
-  `http://localhost:4000` for a LiteLLM proxy).
-- **Model** — the model name that server should serve.
+- **URL** — your server's base URL. The app appends `/v1/chat/completions` for you, so any of these
+  forms work: `http://localhost:11434` (Ollama), `http://localhost:1234/v1` (LM Studio),
+  `http://localhost:8080/v1` (llama.cpp), `http://localhost:4000` (a LiteLLM proxy).
+- **Model** — the model name that server should serve (e.g. `qwen2.5-coder`).
 
 Equivalently, set `CHESS_LOCAL_LLM_BASE_URL` and `CHESS_LOCAL_LLM_MODEL` (see the env-var table).
 
-> **Notes.** The `claude` CLI still needs to be installed (the app drives it), but **no Claude
-> subscription or login is required** in this mode — it's pointed at your local server instead.
-> Quality depends entirely on the local model: small models explain noticeably worse than Claude,
-> and an older/slower machine may be too slow to answer in time. The Stockfish analysis is always
-> local and unaffected by this setting.
+> **Notes.** Quality depends entirely on the local model: small models explain noticeably worse
+> than Claude, and an older or slower machine may answer slowly (local generation can take a while,
+> so the app waits patiently). The Stockfish analysis is always local and is unaffected by this
+> setting. The terminal MCP workflow still uses Claude; this option covers the in-browser chat and
+> the AI coach summary.
 
 ---
 
@@ -415,8 +423,8 @@ All settable via environment variables too (sensible defaults shown); `settings.
 | `CHESS_PROFILE_RECENT` | `100` | Games in the profile's `recent` sliding window. |
 | `CHESS_PROFILE_LIFETIME` | `all` | Lifetime view span; positive N = last N games, `0` = omit it (pure sliding window). |
 | `CHESS_SESSION_TTL` | `86400` | Seconds of inactivity before the server self-terminates (`0` disables the watchdog). |
-| `CHESS_LOCAL_LLM_BASE_URL` | *(empty)* | Run the chat + AI coach on a local model instead of Claude: the Anthropic-API base URL of a local server (Ollama `http://localhost:11434`, LM Studio, llama.cpp, LiteLLM proxy…). Blank = use the Claude subscription. |
-| `CHESS_LOCAL_LLM_MODEL` | *(empty)* | The model name the local server should serve (e.g. `qwen2.5-coder`). Only used when the base URL above is set. |
+| `CHESS_LOCAL_LLM_BASE_URL` | *(empty)* | Run the chat + AI coach on a local model instead of Claude (no `claude` CLI needed): the base URL of a server with an OpenAI-compatible `/v1/chat/completions` endpoint (Ollama `http://localhost:11434`, LM Studio `http://localhost:1234/v1`, llama.cpp, LiteLLM proxy). Blank = use the Claude subscription. |
+| `CHESS_LOCAL_LLM_MODEL` | *(empty)* | The model name the local server should serve (e.g. `qwen2.5-coder`). Required when the base URL above is set. |
 
 ---
 
@@ -456,7 +464,8 @@ tests/               # pytest suite
 - The web board pulls chessground & chess.js from a CDN at runtime (no build step), so it needs
   internet on first load.
 - In-browser chat requires the `claude` CLI installed and logged in, and draws from your Agent SDK
-  credit; the terminal path is the zero-extra-cost fallback.
+  credit; the terminal path is the zero-extra-cost fallback. (Or point it at a
+  [local model](#run-the-ai-on-a-local-model-instead-of-claude) to skip Claude entirely.)
 - Engine analysis is fixed-depth and cached for reproducibility, so evals can differ slightly from
   Lichess near classification boundaries. That's expected.
 

@@ -357,11 +357,12 @@ WEB_OPEN: bool = os.environ.get("CHESS_WEB_OPEN", "1") != "0"
 APP_MODE: bool = os.environ.get("CHESS_APP_MODE", "0") == "1"
 
 # Local / self-hosted LLM for the in-browser chat + AI coach summary. When LOCAL_LLM_BASE_URL is
-# set, the child `claude -p` is pointed at it via ANTHROPIC_BASE_URL (see claude_bridge._child_env)
-# instead of the user's Claude subscription — any server speaking the Anthropic Messages API works
-# (Ollama native, LM Studio, llama.cpp, or a LiteLLM proxy). LOCAL_LLM_MODEL names the model to
-# request (e.g. "qwen2.5-coder"); blank lets the endpoint pick its default. Both are editable in
-# the Settings panel. Leave the base URL blank to keep the default subscription path.
+# set, the chat/coach are served by DIRECT HTTP to that server (see server.core.local_llm) — no
+# `claude` CLI and no login needed — instead of the user's Claude subscription. Any server with an
+# OpenAI-compatible /v1/chat/completions endpoint works (Ollama, LM Studio, llama.cpp, a LiteLLM
+# proxy). LOCAL_LLM_MODEL names the model to request (e.g. "qwen2.5-coder"); required for the local
+# path. Both are editable in the Settings panel. Leave the base URL blank to keep the default
+# subscription path (headless `claude -p`).
 LOCAL_LLM_BASE_URL: str = os.environ.get("CHESS_LOCAL_LLM_BASE_URL", "").strip()
 LOCAL_LLM_MODEL: str = os.environ.get("CHESS_LOCAL_LLM_MODEL", "").strip()
 
