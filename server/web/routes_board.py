@@ -14,9 +14,37 @@ from pydantic import BaseModel
 from server import config
 from server.core import app_liveness
 from server.core import lines
+from server.core import local_llm
 from server.core import session as session_mod
 
 router = APIRouter()
+
+# Cached internet-reachability probe (see /connectivity). A miss means "offline", which gates the
+# closable banner warning that the Lichess/tablebase/Claude network features won't work. Kept cheap:
+# one short HEAD per TTL window, best-effort (any failure -> offline), never raised to the page.
+_CONN_CACHE: dict[str, float | bool] = {}
+_CONN_TTL = 30.0  # seconds
+
+
+def _probe_online() -> bool:
+    import time
+
+    import httpx
+
+    now = time.monotonic()
+    cached_at = _CONN_CACHE.get("checked_at")
+    if isinstance(cached_at, float) and (now - cached_at) < _CONN_TTL:
+        return bool(_CONN_CACHE.get("online"))
+    online = False
+    try:
+        # Probe the Lichess host the network features actually depend on; a quick HEAD is enough.
+        resp = httpx.head(config.LICHESS_API_BASE, timeout=3.0, follow_redirects=True)
+        online = resp.status_code < 500
+    except Exception:  # noqa: BLE001 - any failure (DNS/timeout/refused) means "treat as offline"
+        online = False
+    _CONN_CACHE["checked_at"] = now
+    _CONN_CACHE["online"] = online
+    return online
 
 
 @router.post("/ping")
@@ -74,7 +102,18 @@ def get_app_config() -> dict:
         "coach_ai_auto": config.COACH_AI_AUTO,  # auto-press the AI-summary button on each game?
         "personalize_history": config.PERSONALIZE_HISTORY,  # inject coaching profile into chat?
         "current_version": config.APP_VERSION,  # for the update notice (cheap, local)
+        # Is the in-browser AI served by a local LLM (works offline) vs. Claude over the network?
+        # Drives the offline banner's wording (AI still works offline only with a local LLM).
+        "local_llm": local_llm.is_enabled(),
     }
+
+
+@router.get("/connectivity")
+def get_connectivity() -> dict:
+    """Is the machine online? Drives a closable banner warning that the network-only features
+    (Lichess game fetch + endgame tablebase, and Claude-backed AI when no local LLM is configured)
+    won't work offline. Best-effort + cached; never raised to the page."""
+    return {"online": _probe_online(), "local_llm": local_llm.is_enabled()}
 
 
 @router.get("/session")
