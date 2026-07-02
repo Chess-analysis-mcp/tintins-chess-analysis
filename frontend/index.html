@@ -11,9 +11,10 @@
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#1f2733" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.base.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.brown.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/chessground@9/assets/chessground.cburnett.css" />
+    <!-- Vendored locally (frontend/vendor) so the board renders fully offline — no CDN. -->
+    <link rel="stylesheet" href="/vendor/chessground.base.css" />
+    <link rel="stylesheet" href="/vendor/chessground.brown.css" />
+    <link rel="stylesheet" href="/vendor/chessground.cburnett.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -48,6 +49,11 @@
          info-blue for a minor/patch release, red for a major one. Offers a one-click "Update now"
          on git/zip installs, or a download link on the read-only .app. Dismissible per version. -->
     <div id="update-banner" class="setup-banner update" hidden></div>
+
+    <!-- Offline notice (filled by checkOnline() from /api/connectivity): no internet was detected,
+         so the network-only features (Lichess fetch + endgame tablebase, and Claude AI unless a
+         local LLM is configured) won't work. Amber, informational, dismissible. -->
+    <div id="offline-banner" class="setup-banner" hidden></div>
 
     <main>
       <section class="board-col">
@@ -297,11 +303,11 @@
           </label>
           <div class="set-field">
             <span class="set-label">Local AI model <span class="set-opt">(optional — run the AI locally instead of Claude)</span></span>
-            <span class="set-hint">Run the “why?” chat + AI coach on your own machine instead of your
-              Claude subscription. Works with any local server that speaks the Anthropic API —
-              Ollama, LM Studio, llama.cpp, a LiteLLM proxy, and more. <b>Ollama is easiest:</b> just
-              click <b>Detect Ollama</b> below. For anything else, fill in the URL (and model) by
-              hand. Leave blank to use Claude.</span>
+            <span class="set-hint">Run the “why?” chat + AI coach entirely on your own machine instead
+              of your Claude subscription — <b>no <code>claude</code> CLI or login needed</b>. Connects
+              directly to any local server with an OpenAI-compatible API (Ollama, LM Studio, llama.cpp,
+              a LiteLLM proxy, and more). <b>Ollama is easiest:</b> just click <b>Detect Ollama</b>
+              below. For anything else, fill in the URL (and model) by hand. Leave blank to use Claude.</span>
             <div class="set-llm-row">
               <button type="button" id="set-ollama-detect" class="linklike">Detect Ollama</button>
               <span id="set-ollama-status" class="set-hint"></span>

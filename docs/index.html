@@ -36,7 +36,8 @@
 
       <p class="local-note">
         Runs locally on your machine, and the AI coach uses your <strong>existing Claude
-        subscription</strong>. No API keys, no per-token bills.
+        subscription</strong>. No API keys, no per-token bills. Prefer fully offline? Point the coach
+        at a <strong>local model</strong> (Ollama, LM Studio, &hellip;) with no Claude account at all.
       </p>
 
       <!-- HERO SCREENSHOT: docs/screenshots/chess_new_pipeline.png
@@ -233,6 +234,42 @@ irm https://claude.ai/install.ps1 | iex</code></pre>
           <p class="muted">
             Note: the engine review itself (the mistake list, eval bar, win graph, and arrows) works
             without the CLI. You only need it for the conversational coaching and the AI summaries.
+          </p>
+        </div>
+      </details>
+
+      <details class="faq">
+        <summary>Can I run the AI coach on a local model instead of Claude?</summary>
+        <div class="faq-body">
+          <p>
+            Yes. The AI chat and coach summaries can run on a model <strong>on your own machine</strong>,
+            with <strong>no Claude subscription, no login, and not even the <code>claude</code> CLI</strong>.
+            The app talks to your local model directly. It works with any local server that exposes an
+            OpenAI-compatible API: <a href="https://ollama.com">Ollama</a>, LM Studio, llama.cpp, a
+            LiteLLM proxy, and others.
+          </p>
+
+          <details class="faq-sub">
+            <summary>Show setup steps</summary>
+            <div class="faq-body">
+              <p><strong>With Ollama (easiest):</strong></p>
+              <pre><code># install Ollama, then pull any chat model
+ollama pull qwen2.5-coder</code></pre>
+              <p>
+                In the board, open <strong>&#9881; Settings &rarr; Advanced &rarr; Local AI model</strong>,
+                click <strong>Detect Ollama</strong>, pick a model, and <strong>Save</strong>. That's it.
+              </p>
+              <p>
+                <strong>With anything else:</strong> under the same setting, fill in the server's
+                <strong>URL</strong> (for example <code>http://localhost:1234/v1</code> for LM Studio) and
+                the <strong>Model</strong> name. Leave the field blank to switch back to Claude.
+              </p>
+            </div>
+          </details>
+
+          <p class="muted">
+            Note: quality depends on the local model, so small models explain less well than Claude. The
+            Stockfish engine review is always fully local either way.
           </p>
         </div>
       </details>

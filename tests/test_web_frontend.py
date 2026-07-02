@@ -58,6 +58,71 @@ def test_packaged_frontend_location_matches_pyproject_force_include():
     )
 
 
+# --- Offline-capable frontend (vendored chessground/chess.js, no CDN) -----------------------------
+
+
+def test_frontend_has_no_cdn_dependencies():
+    # The board must render fully offline: chessground + chess.js (JS and CSS) are vendored under
+    # frontend/vendor and referenced by relative path. A reintroduced CDN URL would silently break
+    # offline use, so guard index.html + main.js against the old hosts.
+    client = TestClient(app_module.create_app())
+    index = client.get("/").text
+    main_js = client.get("/main.js").text
+    for ref in ("cdn.jsdelivr.net", "esm.sh", "unpkg.com"):
+        assert ref not in index, f"index.html still references {ref} (breaks offline use)"
+        assert ref not in main_js, f"main.js still references {ref} (breaks offline use)"
+
+
+def test_vendored_assets_are_served():
+    # The relative paths index.html/main.js import must actually resolve from the static mount.
+    client = TestClient(app_module.create_app())
+    for path in (
+        "/vendor/chessground.min.js",
+        "/vendor/chess.min.js",
+        "/vendor/chessground.base.css",
+        "/vendor/chessground.brown.css",
+        "/vendor/chessground.cburnett.css",
+    ):
+        r = client.get(path)
+        assert r.status_code == 200, f"{path} should be served, not {r.status_code}"
+        assert r.content, f"{path} is empty"
+    # The JS must carry a JavaScript MIME or the browser rejects the ES module import.
+    ct = client.get("/vendor/chessground.min.js").headers["content-type"]
+    assert ct.startswith(("text/javascript", "application/javascript")), ct
+
+
+def test_js_served_with_javascript_mime_even_if_registry_says_text_plain(monkeypatch):
+    # Windows footgun: some installs map `.js` -> `text/plain` in the registry, which makes the
+    # browser refuse `<script type="module">` (and thus the vendored chessground/chess.js imports),
+    # blanking the offline board. `server.web.app` calls mimetypes.add_type at import to override
+    # that. Simulate the hostile mapping, reload the module, and confirm the override wins.
+    import importlib
+    import mimetypes
+
+    monkeypatch.setitem(mimetypes.types_map, ".js", "text/plain")
+    importlib.reload(app_module)
+    try:
+        assert mimetypes.guess_type("vendor/chessground.min.js")[0] == "text/javascript"
+        assert mimetypes.guess_type("main.js")[0] == "text/javascript"
+    finally:
+        importlib.reload(app_module)  # restore clean module state for the rest of the suite
+
+
+def test_connectivity_endpoint_reports_shape(monkeypatch):
+    # The offline banner (checkOnline() in main.js) reads /api/connectivity; it must always return
+    # booleans for `online` and `local_llm` so the page can decide the warning wording. Mock the
+    # probe so the test never hits the network (and exercises the offline branch deterministically).
+    from server.web import routes_board
+
+    monkeypatch.setattr(routes_board, "_probe_online", lambda: False)
+    client = TestClient(app_module.create_app())
+    r = client.get("/api/connectivity")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["online"] is False
+    assert isinstance(body["local_llm"], bool)
+
+
 # --- Local-only request guard (CSRF / DNS-rebinding defence) -------------------------------------
 
 

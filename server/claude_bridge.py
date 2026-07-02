@@ -18,9 +18,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import chess
+
 from server import config
 from server.core import history
 from server.core import lines
+from server.core import local_llm
 from server.core import session as session_mod
 from server.core.evaluation import time_control_clock
 
@@ -90,37 +93,17 @@ def _is_login_response(data: dict, answer: str) -> bool:
 
 
 def _child_env() -> dict:
-    """Environment for the spawned `claude`.
+    """Environment for the spawned `claude` (subscription path only).
 
-    Sets `CHESS_WEB_AUTOSTART=0` so the child doesn't rebind the board port.
+    Sets `CHESS_WEB_AUTOSTART=0` so the child doesn't rebind the board port, and strips a
+    stray/empty/stale `ANTHROPIC_API_KEY`, which headless `claude -p` would otherwise silently use
+    and 401 on ("Invalid authentication credentials"), forcing the subscription login this feature
+    is designed around.
 
-    Two routing modes:
-    - **Local LLM** (`config.LOCAL_LLM_BASE_URL` set): point the child at a local/self-hosted
-      model that speaks the Anthropic Messages API (Ollama native, LM Studio, llama.cpp, or a
-      LiteLLM proxy) via `ANTHROPIC_BASE_URL`. The CLI still needs *some* auth token even though
-      the local server ignores it, so we supply a dummy one if the env has neither. If
-      `LOCAL_LLM_MODEL` is set we point every model tier the CLI might request at it.
-    - **Subscription** (default): strip a stray/empty/stale `ANTHROPIC_API_KEY`, which headless
-      `claude -p` would otherwise silently use and 401 on ("Invalid authentication credentials"),
-      forcing the subscription login this feature is designed around.
+    Note: a configured local LLM no longer routes through here — it's served by direct HTTP
+    (`server.core.local_llm`), so the subprocess path runs only in subscription mode.
     """
     env = {**os.environ, "CHESS_WEB_AUTOSTART": "0"}
-    base_url = (config.LOCAL_LLM_BASE_URL or "").strip()
-    if base_url:
-        env["ANTHROPIC_BASE_URL"] = base_url
-        if not env.get("ANTHROPIC_AUTH_TOKEN") and not env.get("ANTHROPIC_API_KEY"):
-            env["ANTHROPIC_AUTH_TOKEN"] = "local"
-        model = (config.LOCAL_LLM_MODEL or "").strip()
-        if model:
-            for var in (
-                "ANTHROPIC_MODEL",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "ANTHROPIC_SMALL_FAST_MODEL",
-            ):
-                env[var] = model
-        return env
     env.pop("ANTHROPIC_API_KEY", None)
     return env
 
@@ -541,6 +524,157 @@ def _time_note(m, avg_spent: float | None) -> str:
     return note + ")"
 
 
+# A move the player got "right enough" not to lose ground.
+_GOOD_CLASS = {"best", "good"}
+# The errors that actually cost games (inaccuracies are tolerated by the "clean" detectors below).
+_SERIOUS_CLASS = {"mistake", "blunder"}
+
+
+def _player_won(sess) -> bool:
+    return sess.result == ("1-0" if sess.player == "white" else "0-1")
+
+
+def _player_lost(sess) -> bool:
+    return sess.result == ("0-1" if sess.player == "white" else "1-0")
+
+
+def _strengths(sess) -> list[str]:
+    """Robust, can't-be-faked positive facts about the *whole game*, derived only from the sweep's
+    per-move classification + win% (zero extra engine cost). The idea (Option 5): rather than hunt
+    for a single "brilliant" move — where matching the engine on an obvious move isn't impressive —
+    praise patterns the data already proves: a clean conversion, resilient defense, a solid opening,
+    a clean endgame, high accuracy. Each is conservative and only fires when genuinely earned, so a
+    forgettable game yields nothing and the summary stays honest. The prompt decides whether to cite
+    one. Returns short factual strings, most-impressive first (capped)."""
+    moves = sess.all_moves
+    if not moves:
+        return []
+    out: list[str] = []
+
+    # Clean conversion: from the first point you were clearly winning, no further mistakes/blunders,
+    # and you actually won. The strongest "you closed it out" signal.
+    win_idx = next((i for i, m in enumerate(moves) if m.win_before >= 80), None)
+    if win_idx is not None:
+        after = moves[win_idx:]
+        if len(after) >= 4 and _player_won(sess) and not any(
+            m.classification in _SERIOUS_CLASS for m in after
+        ):
+            out.append(
+                f"Clean conversion: clearly winning by move {moves[win_idx].move_number}, then made "
+                "no further mistakes or blunders and brought home the win."
+            )
+
+    # Resilient defense: a stretch of consecutive moves played from a clearly worse position with no
+    # serious error, after which you clawed back toward equality (or at least didn't lose).
+    best_run: list = []
+    run: list = []
+    for m in moves:
+        if m.win_before <= 35 and m.classification not in _SERIOUS_CLASS:
+            run.append(m)
+            if len(run) > len(best_run):
+                best_run = run
+        else:
+            run = []
+    if len(best_run) >= 4:
+        end_ply = best_run[-1].ply
+        recovered = any(m.ply > end_ply and m.win_before >= 45 for m in moves) or not _player_lost(
+            sess
+        )
+        if recovered:
+            out.append(
+                f"Resilient defense: held a clearly worse position for {len(best_run)} straight "
+                "moves without a serious error and fought back toward equality."
+            )
+
+    # Solid opening: your first several moves were all engine-approved (no inaccuracy or worse).
+    opening = [m for m in moves if m.move_number <= 10]
+    if len(opening) >= 6 and all(m.classification in _GOOD_CLASS for m in opening):
+        out.append(
+            f"Solid opening: your first {len(opening)} moves were all engine-approved, with no "
+            "inaccuracies."
+        )
+
+    # Clean endgame: once the game simplified into an endgame you made no mistakes or blunders.
+    endgame = [m for m in moves if history._phase(m.fen_before, m.move_number) == "endgame"]
+    if len(endgame) >= 4 and not any(m.classification in _SERIOUS_CLASS for m in endgame):
+        out.append("Clean endgame: once the game reached an endgame you made no mistakes or blunders.")
+
+    # Overall accuracy — a flat, hard-to-argue-with summary signal.
+    acc = sess.accuracy_white if sess.player == "white" else sess.accuracy_black
+    opp = sess.accuracy_black if sess.player == "white" else sess.accuracy_white
+    if acc >= 90:
+        out.append(f"High accuracy: {acc}% across the game.")
+    elif acc >= 75 and acc >= opp + 8:
+        out.append(f"You were the more accurate player ({acc}% to your opponent's {opp}%).")
+
+    return out[:3]
+
+
+def _sac_detail(m) -> dict | None:
+    """If the player's move `m` is a *sound material sacrifice*, describe it; else None.
+
+    A sacrifice = after the move one of your own pieces (a minor or more) is left en prise such that
+    the opponent can win material on the exchange (history._is_hanging, a static SEE-lite), yet the
+    move is sound (the caller only passes 'best'/'good' moves the engine approves). The #3 quiet
+    filter lives in `invested = sacrificed - captured`: a plain recapture or equal trade nets ~0 and
+    is rejected, so only moves that genuinely give up material (a quiet piece offer, or a capture that
+    surrenders more than it takes — e.g. Bxh7+ giving a bishop for a pawn) survive. Fully engine-free
+    (python-chess attackers/defenders over FENs already on the session)."""
+    try:
+        before = chess.Board(m.fen_before)
+        after = chess.Board(m.fen_after)
+        move = chess.Move.from_uci(m.move_uci)
+    except (ValueError, AssertionError):
+        return None
+    player_color = before.turn
+    captured = 0
+    is_capture = before.is_capture(move)
+    if is_capture:
+        if before.is_en_passant(move):
+            captured = 1
+        else:
+            captured = history._val(before.piece_at(move.to_square))
+    # Most valuable own piece left hanging after the move.
+    sacrificed = 0
+    for sq, piece in after.piece_map().items():
+        if piece.color == player_color and history._is_hanging(after, sq):
+            sacrificed = max(sacrificed, history._val(piece))
+    if sacrificed < 3:  # only a minor piece or more counts as a standout sacrifice
+        return None
+    invested = sacrificed - captured
+    if invested < 2:  # a near-even trade / recapture is not a sacrifice
+        return None
+    return {
+        "invested": invested,
+        "sacrificed": sacrificed,
+        "captured": captured,
+        "is_capture": is_capture,
+        "quiet": 0 if is_capture else 1,
+        "gives_check": after.is_check(),
+    }
+
+
+def _sacrifices(sess, limit: int = 2):
+    """The player's sound material sacrifices (#2 standout move), best first. Engine-free: reuses
+    the sweep's classification + win% and a static material/attacker check. Skips moves played from
+    an already-winning position (sac-ing while up a queen isn't impressive) and moves that don't keep
+    the player at least roughly equal afterwards. Returns (MoveReview, detail) pairs."""
+    out = []
+    for m in sess.all_moves:
+        if m.classification not in _GOOD_CLASS:
+            continue
+        if m.win_before >= 85:  # already winning — giving material back isn't a feat
+            continue
+        if m.win_after < 45:  # the engine must still rate the position equal-or-better
+            continue
+        detail = _sac_detail(m)
+        if detail:
+            out.append((m, detail))
+    # Quiet (non-capture) sacrifices are harder to find; then bigger investment first.
+    out.sort(key=lambda md: (md[1]["quiet"], md[1]["invested"]), reverse=True)
+    return out[:limit]
+
+
 def _game_facts(sess) -> str:
     """Pre-computed, engine-grounded facts about the whole game for the coach summary prompt.
 
@@ -567,6 +701,22 @@ def _game_facts(sess) -> str:
     avg_spent = sum(spents) / len(spents) if spents else None
     if avg_spent is not None:
         out.append(f"You averaged {_fmt_secs(avg_spent)} per move this game.")
+    strengths = _strengths(sess)
+    if strengths:
+        out.append("Strengths in this game (engine-confirmed; acknowledge at most one, briefly):")
+        for s in strengths:
+            out.append(f"- {s}")
+    sacs = _sacrifices(sess)
+    if sacs:
+        out.append("Standout move(s) — a sound material sacrifice the engine approves:")
+        for m, d in sacs:
+            num = f"{m.move_number}{'.' if m.color == 'white' else '...'}"
+            check = " with check" if d["gives_check"] else ""
+            out.append(
+                f"- {num}{m.move_san}: gave up material{check} (a net ~{d['invested']} points) yet "
+                f"the engine still rates the position fine for you ({round(m.win_after)}% win chance) "
+                "— a genuinely hard move to find."
+            )
     if sess.mistakes:
         out.append(f"{side}'s flagged moves (worst first):")
         worst = sorted(sess.mistakes, key=lambda m: m.win_swing, reverse=True)
@@ -586,22 +736,25 @@ def _game_facts(sess) -> str:
 def coach_summary_ai(sess, *, timeout: int = 120) -> str:
     """A richer, Claude-WRITTEN end-of-game coaching summary, grounded in pre-computed facts.
 
-    Opt-in (spends the user's Claude subscription). No MCP tools / engine calls — the prompt already
-    carries every fact Claude needs, so it only has to phrase the coaching well. Raises ChatError.
+    Opt-in (spends the user's Claude subscription, or runs on the configured local LLM). No MCP
+    tools / engine calls — the prompt already carries every fact needed, so the model only has to
+    phrase the coaching well. Raises ChatError.
     """
-    claude = shutil.which("claude")
-    if not claude:
-        raise ChatError(
-            "The `claude` CLI isn't on PATH, so the AI coach summary is unavailable. The free "
-            "summary above still works; install the Claude CLI for the AI version."
-        )
     profile_facts = _profile_facts()
     prompt_parts = [
-        "You are an encouraging but honest chess coach writing a short end-of-game summary for the "
+        "You are an honest, encouraging chess coach writing a short end-of-game summary for the "
         "player whose moves are reviewed below. The Stockfish facts are authoritative — TRUST them, "
-        "do not recompute. Write a few short paragraphs in warm, direct second person ('you'): name "
-        "the one or two moments that mattered most IN THIS GAME (with the move and the better idea), "
-        "and end with one concrete takeaway drawn from those specific moments. Ground every claim in "
+        "do not recompute. Write a few short paragraphs in warm, direct second person ('you'). "
+        "Be balanced, not relentlessly negative: when the facts genuinely warrant it — a sound "
+        "sacrifice flagged under 'Standout move(s)', a genuine strength listed under 'Strengths in "
+        "this game' (a clean conversion, resilient defense, solid opening, clean endgame, or high "
+        "accuracy), or simply a clean game — acknowledge ONE such strength briefly and specifically "
+        "before turning to what went wrong. But never manufacture praise, pad with faint compliments, "
+        "or call an ordinary move good; if nothing genuinely stands out, just skip straight to the "
+        "mistakes. Then name the one or two moments that mattered most IN THIS GAME (with the move "
+        "and the better idea), and end with one concrete takeaway drawn from those specific moments. "
+        "Honesty leads: don't soften a clear mistake, but frame it as something to improve rather "
+        "than a verdict on the player. Ground every claim in "
         "the facts provided; do not invent moves or lines. Keep the summary about THIS game — only "
         "name a broader habit if these particular moves clearly and usefully show one; if they don't, "
         "skip it rather than manufacturing a theme. Use light Markdown for readability: **bold** the "
@@ -627,7 +780,23 @@ def coach_summary_ai(sess, *, timeout: int = 120) -> str:
             "closing takeaway must come from this game's own moments.\n" + profile_facts
         )
     prompt_parts.append("This game's facts:\n" + _game_facts(sess))
-    cmd = [claude, "-p", "\n\n".join(prompt_parts), "--output-format", "json"]
+    prompt = "\n\n".join(prompt_parts)
+
+    # Local LLM: write the summary over direct HTTP, no `claude` CLI.
+    if local_llm.is_enabled():
+        try:
+            return local_llm.complete(prompt, timeout=max(timeout, local_llm.DEFAULT_TIMEOUT))
+        except local_llm.LocalLLMError as exc:
+            raise ChatError(str(exc))
+
+    claude = shutil.which("claude")
+    if not claude:
+        raise ChatError(
+            "The `claude` CLI isn't on PATH, so the AI coach summary is unavailable. The free "
+            "summary above still works; install the Claude CLI (or set a local AI model in "
+            "Settings) for the AI version."
+        )
+    cmd = [claude, "-p", prompt, "--output-format", "json"]
 
     env = _child_env()
     try:
@@ -671,13 +840,6 @@ def ask(
 
     Raises ChatError (with a friendly message) on any failure.
     """
-    claude = shutil.which("claude")
-    if not claude:
-        raise ChatError(
-            "The `claude` CLI isn't on PATH, so in-browser chat is unavailable. Use the Claude "
-            "Code terminal to ask 'why?' instead."
-        )
-
     # The move is "at the current board" when it has no separate origin position (timeline node).
     move_at_current = bool(last_move) and (not move_fen or move_fen == fen)
     current_facts = _engine_facts(fen, last_move if move_at_current else None)
@@ -686,20 +848,36 @@ def ask(
     )
     profile_facts = _profile_facts() if use_profile else None
     speed_context = _speed_context()
+    prompt = _compose_prompt(
+        question, fen, last_move, move_fen, current_facts, move_facts, profile_facts,
+        speed_context,
+    )
+
+    # Local LLM: answer over direct HTTP, no `claude` CLI. The prompt already embeds every engine
+    # fact, so no tools are needed (local models are unreliable at tool-calling anyway).
+    if local_llm.is_enabled():
+        try:
+            return local_llm.chat(prompt, session_id=session_id)
+        except local_llm.LocalLLMError as exc:
+            raise ChatError(str(exc))
+
+    claude = shutil.which("claude")
+    if not claude:
+        raise ChatError(
+            "The `claude` CLI isn't on PATH, so in-browser chat is unavailable. Use the Claude "
+            "Code terminal to ask 'why?' instead, or set a local AI model in Settings."
+        )
+
     cmd = [
         claude,
         "-p",
-        _compose_prompt(
-            question, fen, last_move, move_fen, current_facts, move_facts, profile_facts,
-            speed_context,
-        ),
+        prompt,
         "--output-format",
         "json",
     ]
-    # Local models are unreliable at tool-calling, and the prompt already embeds every engine
-    # fact (`_engine_facts`), so skip the chess MCP tools when routed at a local LLM.
-    if not (config.LOCAL_LLM_BASE_URL or "").strip():
-        cmd += ["--mcp-config", str(_MCP_CONFIG), "--allowedTools", _ALLOWED_TOOLS]
+    # Pre-approve the chess MCP tools so Claude can fetch deeper/alternative lines the embedded
+    # facts don't cover.
+    cmd += ["--mcp-config", str(_MCP_CONFIG), "--allowedTools", _ALLOWED_TOOLS]
     if session_id:
         cmd += ["--resume", session_id]
 

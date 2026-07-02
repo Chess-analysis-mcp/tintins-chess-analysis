@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import mimetypes
 import sys
 from pathlib import Path
 
@@ -18,6 +19,16 @@ from server.web.routes_chat import router as chat_router
 from server.web.routes_history import router as history_router
 from server.web.routes_settings import router as settings_router
 from server.web.routes_updates import router as updates_router
+
+
+# Force a JavaScript MIME type for .js/.mjs regardless of the host's mimetypes registry. The board
+# loads `main.js` as an ES module (`<script type="module">`) and that module imports the vendored
+# chessground/chess.js from `/vendor/*.min.js`; browsers REFUSE a module script unless it's served
+# with a JS MIME. On Windows, `mimetypes.guess_type` reads the registry, where some installed apps
+# map `.js` -> `text/plain`, which would break the offline board ("Failed to load module script").
+# `add_type` runs init() first then overrides, so our value wins over any registry entry.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
 
 
 # --- Local-only request guard (CSRF / DNS-rebinding defence) ------------------------------------

@@ -31,31 +31,41 @@ else
   ok "uv installed ($(uv --version))"
 fi
 
-# 2) Stockfish — not a pip package, install via the OS package manager. ----------------
+# 2) Build the project environment (downloads a compatible Python if needed). ----------
+# Built before Stockfish so the download fallback below can run via `uv run python`.
+info "Setting up the Python environment with uv (first run downloads Python + deps)…"
+uv sync
+ok "Environment ready"
+
+# 3) Stockfish — try the OS package manager, else download the official static build. ---
 if command -v stockfish >/dev/null 2>&1; then
   ok "Stockfish already installed ($(command -v stockfish))"
 else
   info "Installing Stockfish engine…"
   if [[ "$(uname)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
-    brew install stockfish
+    brew install stockfish || true
   elif command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update && sudo apt-get install -y stockfish
+    { sudo apt-get update && sudo apt-get install -y stockfish; } || true
   elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y stockfish
+    sudo dnf install -y stockfish || true
   elif command -v pacman >/dev/null 2>&1; then
-    sudo pacman -S --noconfirm stockfish
-  else
-    warn "Couldn't find a package manager (brew/apt/dnf/pacman)."
-    warn "Install Stockfish from https://stockfishchess.org/download/ then re-run this script."
-    exit 1
+    sudo pacman -S --noconfirm stockfish || true
   fi
-  ok "Stockfish installed ($(command -v stockfish))"
+  if command -v stockfish >/dev/null 2>&1; then
+    ok "Stockfish installed ($(command -v stockfish))"
+  else
+    # No package manager, or it failed / didn't put stockfish on PATH → download the official
+    # static build into the app's managed engine dir (auto-detected; no sudo, no PATH changes).
+    info "Downloading the official Stockfish engine (no package manager needed)…"
+    if SF_PATH="$(uv run python scripts/download_stockfish.py)"; then
+      ok "Stockfish downloaded ($SF_PATH)"
+    else
+      warn "Couldn't install or download Stockfish automatically."
+      warn "Install it from https://stockfishchess.org/download/ and re-run this script,"
+      warn "or set the Stockfish path in the app's ⚙ Settings panel."
+    fi
+  fi
 fi
-
-# 3) Build the project environment (downloads a compatible Python if needed). ----------
-info "Setting up the Python environment with uv (first run downloads Python + deps)…"
-uv sync
-ok "Environment ready"
 
 # 4) Record your chess username (optional). --------------------------------------------
 # Saved to the user-level settings.json (shared by the app + MCP), NOT a tracked file — so the

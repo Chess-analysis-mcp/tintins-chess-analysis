@@ -1,5 +1,6 @@
-import { Chessground } from "https://esm.sh/chessground@9";
-import { Chess } from "https://esm.sh/chess.js@1";
+// Vendored locally (frontend/vendor) so the board works fully offline — no CDN dependency.
+import { Chessground } from "/vendor/chessground.min.js";
+import { Chess } from "/vendor/chess.min.js";
 
 // --- state ---------------------------------------------------------------
 const chess = new Chess();
@@ -926,6 +927,7 @@ async function loadAll() {
   if (appMode) startHeartbeat(); // so closing this tab quits the standalone app
   checkSetup(); // surface a banner if Stockfish / the claude CLI is missing (fire-and-forget)
   checkUpdates(); // surface an "update available" banner in app mode (fire-and-forget)
+  checkOnline(); // surface a banner if there's no internet (network features unavailable)
 
   const session = await fetch("/api/session").then((r) => r.json());
   if (session.empty) {
@@ -992,6 +994,38 @@ function showSetupBanner(banner, isErr, msgHtml, onDismiss) {
     if (onDismiss) onDismiss();
   });
   banner.hidden = false;
+}
+
+// --- offline notice ------------------------------------------------------
+// Hits /api/connectivity (cached server-side reachability probe). When there's no internet, the
+// network-only features won't work: Lichess game fetch + endgame tablebase always, and the Claude-
+// backed AI chat / coach summary too — UNLESS a local LLM is configured (then AI stays available
+// offline). Amber, informational, dismissible (remembered for the session so we don't nag).
+async function checkOnline() {
+  const banner = $("offline-banner");
+  if (!banner) return;
+  if (sessionStorage.getItem("hideOfflineBanner") === "1") return;
+  let info;
+  try {
+    info = await fetch("/api/connectivity").then((r) => r.json());
+  } catch (_) {
+    return; // can't even reach our own server — leave it to the page-load failure to be visible
+  }
+  if (!info || info.online !== false) return; // online (or unknown) — nothing to warn about
+
+  let msg =
+    "<b>You're offline.</b> Local analysis (Stockfish) works as normal, but " +
+    "<b>Lichess game fetch</b> and the <b>endgame tablebase</b> need internet and won't be available.";
+  if (!info.local_llm) {
+    // No local LLM, so the AI chat / coach summary go through Claude over the network.
+    msg +=
+      " The <b>AI chat &amp; coach summary</b> also won't work — they need internet (or a " +
+      "local LLM, which you can set up in ⚙ Settings).";
+  }
+  msg += " Paste or upload a PGN to review a game.";
+  showSetupBanner(banner, false, msg, () =>
+    sessionStorage.setItem("hideOfflineBanner", "1")
+  );
 }
 
 // --- update-available banner (app mode only) -----------------------------
