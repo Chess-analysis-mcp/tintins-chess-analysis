@@ -7,8 +7,9 @@ A chess coach you can actually **talk to**, and one that **doesn't make things u
 was a mistake or what you should have played, and get a straight answer **in words**, grounded in
 real **Stockfish** lines instead of guessed. Under the hood it reviews your game with the engine and
 finds exactly where you went wrong; the difference is it then explains it. Works with games from
-**anywhere** (Lichess, Chess.com, or any PGN you can paste), and Lichess players get a few extras
-(fetch your recent games by username, auto-load on launch). It runs two ways: from the **Claude Code
+**anywhere** (Lichess, Chess.com, or any PGN you can paste). Both Lichess and Chess.com games can
+be fetched by username, your latest game auto-loads on launch, and new **Chess.com games sync
+automatically** into your history. Lichess players get a few extras. It runs two ways: from the **Claude Code
 terminal** (as an MCP server) and as an **interactive web board** that share one engine and one
 analysis, so they never disagree.
 
@@ -41,7 +42,11 @@ analysis, so they never disagree.
 - **Eval bar + Lichess-style win graph** that orient to the side you're reviewing (black-on-bottom
   when you played black). Click the graph or use ← / → to scrub the whole game.
 - **Move arrows:** gray = the move you played, green = engine best moves (live **multi-PV** with
-  **progressive deepening**, thicker arrow = better move), red = the refutation of a move you try.
+  **progressive deepening**, thicker arrow = better move), red = the refutation of a move you try and yellow = threats (toggle **Show threats** or press `t`) to show what the opponent is threatening to play next.
+- **Chess.com auto-sync.** If your Chess.com username is set, your latest games will be fetched
+ and analyzed (alternatively you cna use the ⟳ Sync button on the Chess.com tab).
+- **Insights panel.** Recurring themes and stats aggregated across every analyzed game in a chosen
+  period (today / past 7 days / past 30 days / all time). Insights inclulde record, average accuracy, your most common mistake motifs, weakest phase, and most-played openings.
 - **In-browser AI coach (Snowie).** A "why? / what now?" chat powered by headless `claude -p`
   (your Claude subscription), fed pre-computed engine facts so answers are grounded, not estimated.
 - **Cross-game history + coaching profile.** Every reviewed game is saved locally, tagged with
@@ -87,8 +92,8 @@ everything (it uses [uv](https://docs.astral.sh/uv/) to download a compatible Py
 ### 🎯 I just want to review my games
 
 Zero terminal required. Open the app and it brings up a chess board in your browser, ready to
-review a game from **any source** — paste or upload a PGN (Chess.com, OTB, anywhere), or, if you
-play on **Lichess**, just give it your username and it loads your recent games for you.
+review a game from **any source** — paste or upload a PGN, or, if you
+play on **Lichess** or **Chess.com**, just give it your username and it loads your recent games for you.
 
 <a id="review-mac"></a>
 **macOS — the app.** Download the zip from the
@@ -128,14 +133,16 @@ minutes — a loading page opens in your browser while it works. Every launch af
 the board.
 
 **Once the board is open (any platform), load a game from wherever you play** — via the **Games**
-panel (☰), which has three tabs:
+panel (☰), which has four tabs:
 
 - **Paste PGN** — works for *everyone*. Paste any PGN, or **Upload .pgn** a file (e.g. a Chess.com
   export of one *or many* games), pick your side, and click **Analyze**; all games land in **My
   games**. This is the universal path — no account of any kind needed.
-- **Lichess** *(bonus for Lichess players)* — type any handle to fetch that player's recent games,
+- **Lichess** — type any handle to fetch that player's recent games,
   and click **"Set as my account"** to make it yours: that drives **My games**, your coaching
   profile, and (in the app) auto-loading your latest game on launch.
+- **Chess.com** — Enter any chess.com username to fetch that player's recent games, or press 
+  **⟳ Sync new games** to retrieve any new games of your own if your Chess.com username is set.
 - **My games** — your previously-analyzed games, to reopen instantly.
 
 Your account/username is set under **⚙ Settings → Your username** (or the Lichess panel's button)
@@ -240,13 +247,12 @@ It analyzes the game (~20 to 45s depending on length), opens your browser to
 The third argument is your color: `white`, `black`, or `auto` (infer from the PGN headers).
 
 **Browse & reopen past games (the Games panel).** A collapsible third column (toggle with the **☰
-Games** button) lists games you can open in the board. The panel has three tabs: **My games**
-(your previously-analyzed local games), **Lichess** (your recent Lichess games, with a lookup box
-for any handle), and **Paste PGN** — paste a PGN from anywhere (e.g. **Chess.com → Share → PGN**),
-pick which color you played (or leave it on *auto*), and click **Analyze**. Click any game (or
-submit a paste) and the board opens **immediately** — you can step through the moves with ← / →
-while the engine analysis runs in the background; the eval bar, win graph, mistake list, comments,
-and best-move arrows fill in as soon as it finishes.
+Games** button) lists games you can open in the board. The panel has four tabs: **My games**
+(your previously-analyzed local games), **Lichess**, **Chess.com**, and **Paste PGN** — paste 
+a PGN from anywhere, pick which color you played (or leave it on *auto*), and click **Analyze**. 
+Click any game (or paste PGN data) and the board opens **immediately** — you can step through 
+the moves with ← / → while the engine analysis runs in the background; the eval bar, win graph, 
+mistake list, comments, and best-move arrows fill in as soon as it finishes.
 
 **Bulk-analyze a Chess.com export (multiple games at once).** Chess.com lets you download many
 games as a single PGN file. In the **Paste PGN** tab, hit **Upload .pgn** (or paste the file's
@@ -549,6 +555,7 @@ It stands on the shoulders of others, with thanks:
 - **[FastAPI](https://fastapi.tiangolo.com/)**, **[uvicorn](https://www.uvicorn.org/)**,
   **[Pydantic](https://docs.pydantic.dev/)**, and the **[MCP](https://modelcontextprotocol.io/)**
   Python SDK power the server.
+- **[riskydissonance](https://github.com/riskydissonance)** and **[Leland Olney](https://github.com/JohnnyPrimus)**: chess.com api integration
 
 Trademarks (Lichess, Chess.com, Claude, Anthropic) belong to their respective owners; this is an
 independent project not affiliated with any of them.

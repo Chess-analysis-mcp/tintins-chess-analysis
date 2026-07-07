@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server import config
+from server.core import chesscom
 from server.core import game_analysis
 from server.core import history
 from server.core import lichess
@@ -25,6 +26,11 @@ router = APIRouter()
 class AnalyzeBody(BaseModel):
     pgn: str
     player: str = "auto"
+
+
+class SyncBody(BaseModel):
+    username: str = ""  # blank -> the configured chess.com handle
+    max: int = 0  # how many recent games to check; 0 -> config.CHESSCOM_SYNC_MAX
 
 
 class AnalyzeBatchBody(BaseModel):
@@ -62,6 +68,15 @@ def get_history() -> dict:
     return {"player_id": history.my_player_id(), "games": rows}
 
 
+@router.get("/insights")
+def get_insights(days: int = 0) -> dict:
+    """Cross-game insights for the configured user within a time window (days=0 -> all time)."""
+    try:
+        return history.insights(days if days > 0 else None)
+    except Exception as exc:  # pragma: no cover - insights must never break the board
+        return {"games": 0, "error": str(exc)}
+
+
 @router.get("/lichess/games")
 def get_lichess_games(username: str = "", max: int = config.LICHESS_DEFAULT_MAX, perf: str = "") -> JSONResponse:
     """Recent Lichess games (newest first) for `username` (blank -> configured CHESS_USERNAME)."""
@@ -70,6 +85,63 @@ def get_lichess_games(username: str = "", max: int = config.LICHESS_DEFAULT_MAX,
     except lichess.LichessError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
     return JSONResponse({"count": len(games), "games": [g.to_dict() for g in games]})
+
+
+@router.get("/chesscom/games")
+def get_chesscom_games(username: str = "", max: int = config.LICHESS_DEFAULT_MAX) -> JSONResponse:
+    """Recent Chess.com games (newest first) for `username` (blank -> configured handle)."""
+    try:
+        games = chesscom.fetch_user_games(username, max=max)
+    except chesscom.ChesscomError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse({"count": len(games), "games": [g.to_dict() for g in games]})
+
+
+def _known_game_urls() -> set[str]:
+    """Normalised URLs of every game already in history, for sync dedup."""
+    urls = set()
+    for r in history.load_records():
+        url = (r.get("game_url") or "").strip().rstrip("/")
+        if url:
+            urls.add(url)
+    return urls
+
+
+@router.post("/sync/chesscom")
+def post_sync_chesscom(body: SyncBody | None = None) -> JSONResponse:
+    """Auto-sync: fetch the configured user's recent Chess.com games and analyse the new ones.
+
+    Checks the newest `max` games against history (by game URL) and kicks off a background batch
+    analysis of any not seen before — so they land in "My games" with no paste/upload. Returns the
+    batch bootstrap (first game's PGN + side) when something new was found, else {"new_games": 0}.
+    """
+    username = ((body.username if body else "") or config.CHESSCOM_USERNAME or "").strip()
+    if not username:
+        return JSONResponse({"error": "No chess.com username configured."}, status_code=400)
+    n = (body.max if body and body.max > 0 else 0) or config.CHESSCOM_SYNC_MAX
+    try:
+        games = chesscom.fetch_user_games(username, max=n)
+    except chesscom.ChesscomError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+    known = _known_game_urls()
+    new = [g for g in games if g.pgn and (g.url or "").strip().rstrip("/") not in known]
+    if not new:
+        return JSONResponse({"new_games": 0, "total_checked": len(games)})
+
+    pgns = [g.pgn for g in new]
+    sides = [_side_for(multipgn.headers_of(p), username, "auto") for p in pgns]
+    jobs.start_batch(pgns, sides, self_handle=username, platform="chesscom")
+    return JSONResponse(
+        {
+            "status": "pending",
+            "new_games": len(new),
+            "total_checked": len(games),
+            "first_pgn": pgns[0],
+            "first_side": sides[0],
+            "self_handle": username,
+        }
+    )
 
 
 @router.post("/analyze")
