@@ -9,6 +9,10 @@
   --mistake: #e08000;
   --blunder: #d33;
   --best: #629924;
+  /* Puzzle mode reads as its own place via a cool blue-teal accent, so green stays reserved for
+     "correct" (a solved-tile pulse) and isn't overloaded to mean "puzzle mode". */
+  --puzzle-accent: #4a90c2;
+  --puzzle-partial: #d9a441;
   /* Board scales with viewport height but caps out — and never takes more than ~half the viewport
      width, so on smaller laptops the board and the analysis column still fit side by side (the
      board stays pinned; see .board-col). This is the *default*; the drag handle between the board
@@ -793,8 +797,24 @@ body.history-hidden .history-col { display: none; }
 }
 .set-as-me:disabled { opacity: 0.6; cursor: default; }
 
-/* Settings panel (reuses the .firstrun-overlay backdrop + .firstrun-card shell). */
-.settings-card { width: min(440px, 92vw); max-height: 88vh; overflow-y: auto; gap: 14px; }
+/* Settings panel (reuses the .firstrun-overlay backdrop + .firstrun-card shell).
+   Fixed height so the card never resizes between tabs: the header + tab bar stay pinned at the top
+   and the actions at the bottom, while only the content scrolls. Switching tabs then feels like
+   moving left/right, not the whole dialog jumping. */
+.settings-card { width: min(460px, 92vw); height: min(640px, 88vh); overflow: hidden; gap: 12px; }
+/* Category tabs across the top; one panel visible at a time. Pinned (never scroll). */
+.set-tabs { display: flex; gap: 2px; border-bottom: 1px solid #3a372f; flex-wrap: wrap; flex: none; }
+/* The only scrolling region — so the tab bar above and Save/Cancel below hold their positions. */
+.set-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.set-tab-btn {
+  background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  color: var(--muted); font-size: 13px; font-weight: 600; padding: 7px 12px; cursor: pointer;
+}
+.set-tab-btn:hover { color: var(--text); }
+.set-tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+.set-tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.set-panel { display: none; flex-direction: column; gap: 14px; }
+.set-panel.active { display: flex; }
 .set-field { display: flex; flex-direction: column; gap: 5px; }
 .set-label { font-size: 13px; font-weight: 600; color: var(--text); }
 .set-opt { font-weight: 400; color: var(--muted); font-size: 12px; }
@@ -815,10 +835,6 @@ body.history-hidden .history-col { display: none; }
 .set-check input {
   width: auto; padding: 0; margin: 0; flex: none; accent-color: var(--accent); cursor: pointer;
 }
-.set-adv { margin: 2px 0; border-top: 1px solid #3a372f; padding-top: 12px; }
-.set-adv summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: revert; }
-.set-adv[open] summary { color: var(--text); margin-bottom: 12px; }
-.set-adv .set-field + .set-field { margin-top: 12px; }
 .set-llm-row { display: flex; align-items: center; gap: 10px; margin: 2px 0; }
 .set-llm-row .linklike { white-space: nowrap; }
 .set-sub { display: flex; align-items: center; gap: 8px; }
@@ -902,4 +918,215 @@ body.history-hidden .history-col { display: none; }
   .side-col { width: 100%; flex-basis: auto; }
   /* Columns stack, so there's no left/right boundary to drag. */
   .col-resizer { display: none; }
+}
+
+/* ===================== Puzzle mode ===================================================== */
+
+/* Header activity switch [ Analyze | Puzzles ]. */
+.mode-switch[hidden] { display: none; }
+.mode-switch {
+  display: inline-flex;
+  margin-right: 14px;
+  border: 1px solid var(--panel2);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.mode-seg {
+  background: var(--panel);
+  color: var(--muted);
+  border: 0;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mode-seg:hover { color: var(--text); }
+.mode-seg.active { background: var(--puzzle-accent); color: #fff; }
+.mode-seg#mode-analyze.active { background: var(--accent); }
+
+/* The board feedback overlay lives over the board (eval bar is hidden in puzzle mode, so the board
+   sits at the wrap's left edge and the overlay aligns at left:0). pointer-events:none so it never
+   eats clicks meant for the board. */
+.board-wrap { position: relative; }
+.board-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--board-size);
+  height: var(--board-size);
+  pointer-events: none;
+  display: none;
+  z-index: 5;
+}
+body.puzzle-mode .board-overlay { display: block; }
+
+/* One pulsing cell, positioned by file/rank % (orientation-aware, set in JS). */
+.sq-blink {
+  position: absolute;
+  width: 12.5%;
+  height: 12.5%;
+  border-radius: 4px;
+  pointer-events: none;
+  animation: sq-pulse 0.42s ease-in-out 3;
+}
+/* Solve fill: a soft highlight that eases in and away — no scale, so it sits flush on the square
+   and reads as an integrated highlight rather than a floating tile. Colour tells green vs amber. */
+.sq-blink.ok   { box-shadow: inset 0 0 0 9999px rgba(98, 153, 36, 0.5); animation: sq-solve 0.7s ease-out 1; }
+.sq-blink.part { box-shadow: inset 0 0 0 9999px rgba(224, 128, 0, 0.5); animation: sq-solve 0.7s ease-out 1; }
+.sq-blink.bad  { box-shadow: inset 0 0 0 9999px rgba(211, 51, 51, 0.55); animation: sq-flash 0.5s ease-in-out 1; }
+@keyframes sq-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+@keyframes sq-flash { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes sq-solve { 0% { opacity: 0; } 16% { opacity: 1; } 55% { opacity: 0.85; } 100% { opacity: 0; } }
+
+/* An expanding ripple ring on a solve — the elegant part of the flash. Grows out from the square
+   centre and fades, like a soft Material ripple. */
+.sq-ring {
+  position: absolute;
+  width: 12.5%;
+  height: 12.5%;
+  border-radius: 7px;
+  box-sizing: border-box;
+  pointer-events: none;
+  transform-origin: center;
+  animation: sq-ripple 0.65s cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+.sq-ring.ok   { border: 2.5px solid rgba(98, 153, 36, 0.9); }
+.sq-ring.part { border: 2.5px solid rgba(224, 128, 0, 0.9); }
+@keyframes sq-ripple {
+  0%   { opacity: 0.85; transform: scale(0.8); }
+  100% { opacity: 0;    transform: scale(1.7); }
+}
+
+/* Confetti burst off the solved piece. Each particle is positioned at the square centre in JS,
+   which also sets its colour, size and the --dx/--dy/--rot flight vector. */
+.confetti {
+  position: absolute;
+  border-radius: 1px;
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: confetti-fly 0.8s ease-out forwards;
+}
+@keyframes confetti-fly {
+  0%   { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+  70%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(var(--rot)) scale(0.7); }
+}
+
+/* A brief shake on the board element for a wrong move. */
+body.puzzle-mode #board.shake { animation: pz-shake 0.36s ease-in-out 1; }
+@keyframes pz-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+/* In puzzle mode, collapse the dense analysis layout to board + slim rail. */
+body.puzzle-mode #evalbar,
+body.puzzle-mode #graph-wrap,
+body.puzzle-mode .controls,
+body.puzzle-mode #scoreboard,
+body.puzzle-mode .board-col > #status,
+body.puzzle-mode .side-col,
+body.puzzle-mode .history-col,
+body.puzzle-mode #col-resizer,
+body.puzzle-mode #history-toggle { display: none !important; }
+body.puzzle-mode .puzzle-rail { display: flex; }
+/* The rail's panels set `display: flex`, which would otherwise beat the UA `[hidden]` rule (equal
+   specificity, later source order) and leave a hidden panel visible — so toggling `.hidden` in JS
+   wouldn't actually hide it. Make the hidden attribute win inside the rail. */
+.puzzle-rail [hidden] { display: none !important; }
+
+/* The rail. */
+.puzzle-rail {
+  flex: 0 1 320px;
+  width: 320px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 4px;
+}
+.pz-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 14px;
+}
+.pz-rating { font-weight: 600; color: var(--text); }
+.pz-streak { display: inline-flex; align-items: center; gap: 5px; }
+.pz-pip {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--panel2);
+}
+.pz-pip.ok { background: var(--accent); }
+.pz-pip.bad { background: var(--blunder); }
+.pz-streak-n { margin-left: 4px; color: var(--muted); font-size: 13px; }
+
+.pz-card {
+  background: var(--panel);
+  border: 1px solid var(--puzzle-accent);
+  border-left: 4px solid var(--puzzle-accent);
+  border-radius: 9px;
+  padding: 18px 18px;
+}
+.pz-prompt-line { font-size: 24px; font-weight: 700; color: var(--text); }
+.pz-prompt-sub { margin-top: 4px; color: var(--muted); font-size: 15px; }
+
+.pz-ghosts { display: flex; gap: 10px; }
+.pz-ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--panel2);
+  border-radius: 7px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pz-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+.pz-result {
+  background: var(--panel);
+  border-radius: 9px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pz-verdict { font-size: 19px; font-weight: 700; }
+.pz-verdict.ok { color: var(--accent); }
+.pz-verdict.part { color: var(--mistake); } /* orange: solved after a miss (still a win, not a failure) */
+.pz-verdict.bad { color: var(--blunder); }
+.pz-theme { color: var(--muted); font-size: 14px; }
+.pz-theme b { color: var(--text); }
+.pz-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.pz-explain, .pz-next {
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pz-explain { background: var(--panel2); color: var(--text); }
+.pz-explain:hover { background: #3d3a35; }
+.pz-next { background: var(--puzzle-accent); color: #fff; }
+.pz-next:hover { filter: brightness(1.08); }
+.pz-explain-out {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  border-top: 1px solid var(--panel2);
+  padding-top: 10px;
+}
+.pz-explain-out p { margin: 0 0 8px; }
+.pz-status { color: var(--muted); font-size: 13px; min-height: 18px; }
+
+@media (max-width: 900px) {
+  .puzzle-rail { flex-basis: auto; width: 100%; }
 }

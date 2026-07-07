@@ -33,6 +33,12 @@
           </span>
         </span>
       </h1>
+      <!-- Top-level activity switch (Analyze vs Puzzles). Hidden until /api/puzzle/config says
+           puzzles are available. Switching swaps the whole workspace to the focused solve layout. -->
+      <div id="mode-switch" class="mode-switch" hidden role="tablist" aria-label="Mode">
+        <button id="mode-analyze" class="mode-seg active" type="button">Analyze</button>
+        <button id="mode-puzzles" class="mode-seg" type="button">Puzzles</button>
+      </div>
       <div id="game-meta" class="muted">Loading…</div>
       <button id="settings-toggle" class="hist-toggle" title="Settings"
         aria-label="Settings">⚙ Settings</button>
@@ -61,6 +67,10 @@
         <div class="board-wrap">
           <div id="evalbar"><div id="evalbar-fill"></div></div>
           <div id="board" class="cg-wrap"></div>
+          <!-- Decoupled feedback layer for puzzle mode: square-blink pulses (green/yellow) and the
+               wrong-move red flash live here, positioned over the board independent of chessground's
+               internals so they survive its redraws + orientation flips. Shown only in puzzle mode. -->
+          <div id="board-overlay" class="board-overlay" aria-hidden="true"></div>
         </div>
 
         <div id="graph-wrap">
@@ -90,6 +100,39 @@
 
         <div id="status" class="status"></div>
       </section>
+
+      <!-- Puzzle mode: a single slim rail beside the board (the dense 3-column analysis layout is
+           hidden in puzzle mode). The prompt card is the hero; the result block replaces it in
+           place after solving. Shown only when body.puzzle-mode is set. -->
+      <aside class="puzzle-rail" id="puzzle-rail" hidden>
+        <div class="pz-stats">
+          <span class="pz-rating" id="pz-rating">Puzzle · 1500</span>
+          <span class="pz-streak" id="pz-streak"></span>
+        </div>
+
+        <div class="pz-card" id="pz-prompt">
+          <div class="pz-prompt-line" id="pz-prompt-line">Loading puzzle…</div>
+          <div class="pz-prompt-sub">Find the best move</div>
+        </div>
+
+        <div class="pz-ghosts" id="pz-ghosts">
+          <button type="button" id="pz-hint" class="pz-ghost">Hint</button>
+          <button type="button" id="pz-solution" class="pz-ghost">Show solution</button>
+          <button type="button" id="pz-skip" class="pz-ghost">Skip ›</button>
+        </div>
+
+        <div class="pz-result" id="pz-result" hidden>
+          <div class="pz-verdict" id="pz-verdict"></div>
+          <div class="pz-theme" id="pz-theme"></div>
+          <div class="pz-actions">
+            <button type="button" id="pz-explain" class="pz-explain">✨ Explain why</button>
+            <button type="button" id="pz-next" class="pz-next">Next puzzle →</button>
+          </div>
+          <div class="pz-explain-out" id="pz-explain-out" hidden></div>
+        </div>
+
+        <div id="pz-status" class="pz-status"></div>
+      </aside>
 
       <!-- iPad-split-view-style drag handle: drag left/right to resize the board (and reflow the
            analysis column); double-click to reset to the responsive default. position:fixed in CSS,
@@ -203,69 +246,65 @@
     <div id="settings" class="firstrun-overlay" hidden>
       <form id="settings-form" class="firstrun-card settings-card">
         <h2>Settings</h2>
-        <label class="set-field">
-          <span class="set-label">Lichess username <span class="set-opt">(optional)</span></span>
-          <input id="set-username" type="text" autocomplete="off" placeholder="your Lichess handle" />
-          <span class="set-hint">Lets the app auto-open your latest game, and decides which side is
-            “you”, your <b>My games</b>, and your coaching profile.</span>
-        </label>
-
-        <label class="set-field">
-          <span class="set-label">Chess.com username <span class="set-opt">(optional)</span></span>
-          <input id="set-chesscom" type="text" autocomplete="off" placeholder="ChessComUsername" />
-          <span class="set-hint">So your pasted / uploaded Chess.com games are recognised as
-            yours and folded into the same profile.</span>
-        </label>
-
-        <label class="set-field set-check">
-          <span class="set-check-row">
-            <input id="set-coach-ai-auto" type="checkbox" />
-            <span class="set-label">Auto-generate AI coach (Snowie) summary <span class="set-opt">(uses your Claude subscription)</span></span>
-          </span>
-          <span class="set-hint">Auto-write the fuller summary for every game, instead of pressing the
-            button under the board. The quick side-panel summary always shows.</span>
-        </label>
-
-        <label class="set-field set-check">
-          <span class="set-check-row">
-            <input id="set-personalize" type="checkbox" />
-            <span class="set-label">Personalize AI coach with my history</span>
-          </span>
-          <span class="set-hint">Include your cross-game history so Snowie coaches you on recurring
-            patterns. Turn off to send fewer tokens.</span>
-        </label>
-
-        <label class="set-field set-check">
-          <span class="set-check-row">
-            <input id="set-skill-auto" type="checkbox" />
-            <span class="set-label">Auto-scale mistake sensitivity to each game's rating</span>
-          </span>
-          <span class="set-hint">On: reads each game's Elo from the PGN to decide how strict to be.
-            Turn off to set your own level.</span>
-        </label>
-
-        <div id="skill-manual" class="set-field" hidden>
-          <span class="set-label">Mistake sensitivity
-            <span class="set-opt" id="set-elo-label"></span></span>
-          <input id="set-elo" type="range" min="400" max="2400" step="50" value="1200" />
-          <div class="set-slider-ends"><span>More forgiving</span><span>Stricter</span></div>
-          <span class="set-hint">Higher flags subtler mistakes (and searches deeper); lower flags only
-            clearer blunders.</span>
+        <div class="set-tabs" role="tablist">
+          <button type="button" class="set-tab-btn active" data-tab="account" role="tab">Account</button>
+          <button type="button" class="set-tab-btn" data-tab="coaching" role="tab">Coaching</button>
+          <button type="button" class="set-tab-btn" data-tab="puzzles" role="tab">Puzzles</button>
+          <button type="button" class="set-tab-btn" data-tab="system" role="tab">Engine &amp; AI</button>
         </div>
 
-        <label class="set-field">
-          <span class="set-label">Coaching memory</span>
-          <select id="set-profile-mode">
-            <option value="balanced">Recent form + all-time (recommended)</option>
-            <option value="recent">Recent games only</option>
-            <option value="all">My whole history (weigh all equally)</option>
-            <option value="custom">Custom — set the windows below</option>
-          </select>
-          <span id="set-profile-hint" class="set-hint"></span>
-        </label>
+        <!-- Scrolling content area: the tab bar above and the actions below stay pinned. -->
+        <div class="set-body">
+        <!-- Account: who "you" are across sites. -->
+        <div class="set-panel active" data-panel="account">
+          <label class="set-field">
+            <span class="set-label">Lichess username <span class="set-opt">(optional)</span></span>
+            <input id="set-username" type="text" autocomplete="off" placeholder="your Lichess handle" />
+            <span class="set-hint">Lets the app auto-open your latest game, and decides which side is
+              “you”, your <b>My games</b>, and your coaching profile.</span>
+          </label>
 
-        <details class="set-adv">
-          <summary>Advanced</summary>
+          <label class="set-field">
+            <span class="set-label">Chess.com username <span class="set-opt">(optional)</span></span>
+            <input id="set-chesscom" type="text" autocomplete="off" placeholder="ChessComUsername" />
+            <span class="set-hint">So your pasted / uploaded Chess.com games are recognised as
+              yours and folded into the same profile.</span>
+          </label>
+
+          <label class="set-field">
+            <span class="set-label">Other accounts <span class="set-opt">(optional)</span></span>
+            <input id="set-aliases" type="text" autocomplete="off" placeholder="my_other_lichess, another_handle" />
+            <span class="set-hint">Any additional handles that are also you (comma-separated) — they
+              fold into one profile. Pin one to a site with “chesscom:handle” if a name clashes.</span>
+          </label>
+
+          <label class="set-field">
+            <span class="set-label">Lichess token <span class="set-opt">(optional)</span></span>
+            <input id="set-token" type="password" autocomplete="off" placeholder="for higher rate limits" />
+            <span class="set-hint">A personal access token raises your Lichess fetch rate limit. Leave blank for anonymous access.</span>
+          </label>
+        </div>
+
+        <!-- Coaching: the game-review AI + mistake sensitivity + memory. -->
+        <div class="set-panel" data-panel="coaching">
+          <label class="set-field set-check">
+            <span class="set-check-row">
+              <input id="set-coach-ai-auto" type="checkbox" />
+              <span class="set-label">Auto-generate AI coach (Snowie) summary <span class="set-opt">(uses your Claude subscription)</span></span>
+            </span>
+            <span class="set-hint">Auto-write the fuller summary for every game, instead of pressing the
+              button under the board. The quick side-panel summary always shows.</span>
+          </label>
+
+          <label class="set-field set-check">
+            <span class="set-check-row">
+              <input id="set-personalize" type="checkbox" />
+              <span class="set-label">Personalize AI coach with my history</span>
+            </span>
+            <span class="set-hint">Include your cross-game history so Snowie coaches you on recurring
+              patterns. Turn off to send fewer tokens.</span>
+          </label>
+
           <label class="set-field set-check">
             <span class="set-check-row">
               <input id="set-coach-ai-persist" type="checkbox" />
@@ -275,17 +314,36 @@
               reopening it later shows the saved text instead of spending Claude to regenerate. Use the
               ⟳ on the summary to re-run it anyway. Off: summaries regenerate each time you reopen.</span>
           </label>
-          <label class="set-field">
-            <span class="set-label">Other accounts <span class="set-opt">(optional)</span></span>
-            <input id="set-aliases" type="text" autocomplete="off" placeholder="my_other_lichess, another_handle" />
-            <span class="set-hint">Any additional handles that are also you (comma-separated) — they
-              fold into one profile. Pin one to a site with “chesscom:handle” if a name clashes.</span>
+
+          <label class="set-field set-check">
+            <span class="set-check-row">
+              <input id="set-skill-auto" type="checkbox" />
+              <span class="set-label">Auto-scale mistake sensitivity to each game's rating</span>
+            </span>
+            <span class="set-hint">On: reads each game's Elo from the PGN to decide how strict to be.
+              Turn off to set your own level.</span>
           </label>
+
+          <div id="skill-manual" class="set-field" hidden>
+            <span class="set-label">Mistake sensitivity
+              <span class="set-opt" id="set-elo-label"></span></span>
+            <input id="set-elo" type="range" min="400" max="2400" step="50" value="1200" />
+            <div class="set-slider-ends"><span>More forgiving</span><span>Stricter</span></div>
+            <span class="set-hint">Higher flags subtler mistakes (and searches deeper); lower flags only
+              clearer blunders.</span>
+          </div>
+
           <label class="set-field">
-            <span class="set-label">Lichess token <span class="set-opt">(optional)</span></span>
-            <input id="set-token" type="password" autocomplete="off" placeholder="for higher rate limits" />
-            <span class="set-hint">A personal access token raises your Lichess fetch rate limit. Leave blank for anonymous access.</span>
+            <span class="set-label">Coaching memory</span>
+            <select id="set-profile-mode">
+              <option value="balanced">Recent form + all-time (recommended)</option>
+              <option value="recent">Recent games only</option>
+              <option value="all">My whole history (weigh all equally)</option>
+              <option value="custom">Custom — set the windows below</option>
+            </select>
+            <span id="set-profile-hint" class="set-hint"></span>
           </label>
+
           <label class="set-field">
             <span class="set-label">Recent-form window <span class="set-opt">(games)</span></span>
             <input id="set-recent" type="text" autocomplete="off" inputmode="numeric" />
@@ -296,6 +354,23 @@
             <input id="set-lifetime" type="text" autocomplete="off" />
             <span class="set-hint">All-time view layered on top: "all" = whole history, a number = last N, 0 = off.</span>
           </label>
+        </div>
+
+        <!-- Puzzles: the tactics trainer. -->
+        <div class="set-panel" data-panel="puzzles">
+          <label class="set-field set-check">
+            <span class="set-check-row">
+              <input id="set-puzzle-animations" type="checkbox" />
+              <span class="set-label">Show solve animations</span>
+            </span>
+            <span class="set-hint">The square flash, ripple and confetti on a solve (and the shake on a
+              miss). Turn off to just see the result as coloured text — green for a clean solve, orange
+              after a miss, red for the shown solution.</span>
+          </label>
+        </div>
+
+        <!-- Engine & AI: local paths / local model. -->
+        <div class="set-panel" data-panel="system">
           <label class="set-field">
             <span class="set-label">Stockfish path</span>
             <input id="set-stockfish" type="text" autocomplete="off" />
@@ -325,7 +400,8 @@
               <input id="set-local-llm-model" type="text" autocomplete="off" placeholder="e.g. qwen2.5-coder" />
             </label>
           </div>
-        </details>
+        </div>
+        </div><!-- /.set-body -->
 
         <div class="set-actions">
           <button type="button" id="settings-cancel" class="linklike">Cancel</button>

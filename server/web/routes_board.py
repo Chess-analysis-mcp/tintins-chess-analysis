@@ -101,6 +101,7 @@ def get_app_config() -> dict:
         "chesscom_username": config.CHESSCOM_USERNAME or "",  # configured chess.com handle (if any)
         "coach_ai_auto": config.COACH_AI_AUTO,  # auto-press the AI-summary button on each game?
         "personalize_history": config.PERSONALIZE_HISTORY,  # inject coaching profile into chat?
+        "puzzle_animations": config.PUZZLE_ANIMATIONS,  # play the puzzle solve/miss board animations?
         "current_version": config.APP_VERSION,  # for the update notice (cheap, local)
         # Is the in-browser AI served by a local LLM (works offline) vs. Claude over the network?
         # Drives the offline banner's wording (AI still works offline only with a local LLM).

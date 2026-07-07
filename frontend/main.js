@@ -76,6 +76,35 @@ let coachAiToken = 0;
 // Whether chat questions inject the cross-game coaching profile (a Settings option, default on).
 let personalizeHistory = true;
 
+// --- puzzle mode ---------------------------------------------------------
+// A focused tactical trainer that reuses the same chessground board + chess.js instance. When
+// `puzzleMode` is on the analysis layout is hidden (body.puzzle-mode) and onUserMove routes to the
+// puzzle handler. `puzzleData` is the active puzzle from /api/puzzle/next; `puzzleSolveColor` is the
+// side the user plays; `puzzleShapes` are the post-solve solution/refutation arrows.
+let puzzleMode = false;
+let puzzleConfigCache = null; // /api/puzzle/config result (rating, has_engine, has_llm)
+let puzzleData = null; // current puzzle {id, fen, moves(not sent), side_to_move, ...}
+let puzzleSolveColor = "white";
+let puzzleDone = false; // true once solved/failed/given-up (board locked, result shown)
+let puzzleFailed = false; // user played a wrong move
+let puzzleHinted = false;
+let puzzleAnimations = true; // Settings toggle: play the board solve/miss animations vs. text only
+// The rating summary from the FIRST wrong move (which already applied the Glicko loss). Kept so the
+// final "Solved (after a miss)" card can surface that the rating already moved, rather than looking
+// like nothing happened. Reset on each new puzzle.
+let puzzleMissRating = null;
+let puzzleBusy = false; // true while animating a forced reply (ignore input)
+let puzzleShapes = []; // solution/refutation arrows shown after the fact
+let puzzleLastMove = null; // [from, to] of the last move, for the square-blink
+let puzzleStreak = 0; // server streak number (clean solves in a row)
+// Last few puzzle outcomes THIS session (true = solved clean/green, false = missed/red), shown as
+// colour-coded pips beside the streak. Mirrored to sessionStorage so a reload keeps them.
+let puzzleResults = [];
+// Bumped every time a new puzzle is loaded/resumed. An in-flight move/solution handler captures it
+// and bails after each await if it changed, so a stale callback from the PREVIOUS puzzle can never
+// leak its result (or a forced reply) onto the puzzle now on the board.
+let puzzleGen = 0;
+
 const $ = (id) => document.getElementById(id);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
@@ -122,6 +151,10 @@ function arrowShape(uci, brush) {
   return { orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush };
 }
 function drawArrows() {
+  if (puzzleMode) {
+    ground.setAutoShapes(puzzleShapes);
+    return;
+  }
   const shapes = [];
   // The move you actually played in-game — only at the review position. Grey = neutral
   // "here's what you did", not a colour-coded judgement.
@@ -349,6 +382,7 @@ async function syncExplore() {
 
 // --- user moves ----------------------------------------------------------
 async function onUserMove(orig, dest) {
+  if (puzzleMode) return onPuzzleMove(orig, dest);
   const moverColor = turnColor();
   const fenBefore = chess.fen();
   const promo = isPromotion(orig, dest) ? "q" : undefined;
@@ -922,15 +956,31 @@ async function loadAll() {
     chesscomUsername = (cfg.chesscom_username || "").trim();
     coachAiAuto = !!cfg.coach_ai_auto;
     personalizeHistory = cfg.personalize_history !== false; // default on
+    puzzleAnimations = cfg.puzzle_animations !== false; // default on
   } catch (_) {}
   if (appUsername) $("lichess-user").placeholder = appUsername;
   if (appMode) startHeartbeat(); // so closing this tab quits the standalone app
+  // Reveal the Analyze/Puzzles switch only when puzzle data is available. Awaited (not fire-and-
+  // forget) so we know before touching the board whether to resume puzzle mode after a reload.
+  let wantPuzzle = false;
+  try {
+    const cfg = await fetch("/api/puzzle/config").then((r) => r.json());
+    if (cfg && cfg.enabled) {
+      puzzleConfigCache = cfg;
+      $("mode-switch").hidden = false;
+      wantPuzzle = sessionStorage.getItem("pzMode") === "1";
+    }
+  } catch (_) {}
   checkSetup(); // surface a banner if Stockfish / the claude CLI is missing (fire-and-forget)
   checkUpdates(); // surface an "update available" banner in app mode (fire-and-forget)
   checkOnline(); // surface a banner if there's no internet (network features unavailable)
 
   const session = await fetch("/api/session").then((r) => r.json());
   if (session.empty) {
+    if (wantPuzzle) {
+      await setPuzzleMode(true, { resume: true });
+      return;
+    }
     // App mode: try to auto-load the user's most recent Lichess game instead of an empty board.
     if (appMode && (await maybeAutoload())) return;
     $("game-meta").textContent =
@@ -940,10 +990,15 @@ async function loadAll() {
   applySession(session);
   const tl = await fetch("/api/timeline").then((r) => r.json());
   applyTimeline(tl);
-  if (mistakes.length) selectMistake(session.current_index ?? 0);
-  else gotoNode(0);
+  // Skip the analysis board navigation when we're about to resume puzzle mode (it would clobber the
+  // puzzle position); the game data is still loaded for when the user switches back to Analyze.
+  if (!wantPuzzle) {
+    if (mistakes.length) selectMistake(session.current_index ?? 0);
+    else gotoNode(0);
+  }
   restoreChat(); // restore any in-memory Q&A for the game already on the board (e.g. after a refresh)
   prepareCoachAI(session); // show a saved AI summary outright, else offer the button
+  if (wantPuzzle) await setPuzzleMode(true, { resume: true });
 }
 
 // --- setup self-check banner ---------------------------------------------
@@ -1676,7 +1731,7 @@ function updateProfileHint() {
   const mode = $("set-profile-mode").value;
   $("set-profile-hint").textContent = PROFILE_PRESETS[mode]
     ? PROFILE_PRESETS[mode].hint
-    : "Using your own window sizes from Advanced below.";
+    : "Using your own window sizes from the fields below.";
 }
 
 // Mistake sensitivity: a checkbox auto-scales it to each game's PGN rating (default on). Unchecking
@@ -1749,11 +1804,24 @@ async function openSettings() {
   $("set-coach-ai-auto").checked = !!s.coach_ai_auto; // auto-generate per game (default off)
   $("set-coach-ai-persist").checked = s.coach_ai_persist !== false; // remember summaries (default on)
   $("set-personalize").checked = s.personalize_history !== false; // personalize chat (default on)
+  $("set-puzzle-animations").checked = s.puzzle_animations !== false; // solve animations (default on)
   $("set-sf-status").textContent = data.stockfish_ok
     ? "Stockfish engine found ✓"
     : "Stockfish not found — analysis won't run until this points at the engine.";
+  // Open on the tab most relevant to what the user is doing (Puzzles while solving, else Account).
+  activateSettingsTab(puzzleMode ? "puzzles" : "account");
   $("settings").hidden = false;
-  $("set-username").focus();
+  if (!puzzleMode) $("set-username").focus();
+}
+
+// Switch the Settings panel to one category tab.
+function activateSettingsTab(name) {
+  document
+    .querySelectorAll(".set-tab-btn")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  document
+    .querySelectorAll(".set-panel")
+    .forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
 }
 
 // One-click Ollama setup: fill in the default URL if blank, ask the backend what models Ollama
@@ -1811,6 +1879,7 @@ async function saveSettings(e) {
     coach_ai_auto: $("set-coach-ai-auto").checked,
     coach_ai_persist: $("set-coach-ai-persist").checked,
     personalize_history: $("set-personalize").checked,
+    puzzle_animations: $("set-puzzle-animations").checked,
   };
   // The Advanced fields are the source of truth (the dropdowns just fill them).
   patch.profile_recent = $("set-recent").value.trim();
@@ -1840,6 +1909,7 @@ async function saveSettings(e) {
   // only act when nothing's there yet (turn-on -> generate now; turn-off -> offer the button).
   coachAiAuto = !!(res.settings && res.settings.coach_ai_auto);
   personalizeHistory = !(res.settings && res.settings.personalize_history === false);
+  puzzleAnimations = !(res.settings && res.settings.puzzle_animations === false);
   const card = $("coach-ai");
   const busy = card && !card.hidden && !card.classList.contains("err");
   if (timeline.length && !busy) {
@@ -2113,6 +2183,512 @@ function initBoardResizer() {
   });
 }
 
+// --- puzzle mode ---------------------------------------------------------
+
+// 'e4' -> {left,top} as board-percent, respecting orientation (the board flips for Black).
+function squareXY(square, orientation) {
+  let f = square.charCodeAt(0) - 97; // file a..h -> 0..7
+  let r = 8 - parseInt(square[1], 10); // rank 8..1 -> 0..7 (row from top)
+  if (orientation === "black") {
+    f = 7 - f;
+    r = 7 - r;
+  }
+  return { left: f * 12.5 + "%", top: r * 12.5 + "%" };
+}
+
+// Pulse a square in the decoupled overlay (survives chessground redraws). kind: ok|part|bad.
+// A solve (ok/part) also gets a soft expanding ripple ring, which reads cleaner than a scaling fill.
+function blinkSquare(square, kind) {
+  if (!puzzleAnimations) return; // animations off -> result shown by verdict text colour only
+  const overlay = $("board-overlay");
+  if (!overlay || !square) return;
+  const xy = squareXY(square, orient);
+  const cell = document.createElement("div");
+  cell.className = "sq-blink " + kind;
+  cell.style.left = xy.left;
+  cell.style.top = xy.top;
+  overlay.appendChild(cell);
+  setTimeout(() => cell.remove(), kind === "bad" ? 520 : 900);
+  if (kind === "ok" || kind === "part") {
+    const ring = document.createElement("div");
+    ring.className = "sq-ring " + kind;
+    ring.style.left = xy.left;
+    ring.style.top = xy.top;
+    overlay.appendChild(ring);
+    setTimeout(() => ring.remove(), 720);
+  }
+}
+
+// A little confetti burst from the solved square. Multicoloured green/gold for a clean solve,
+// a smaller warmer amber puff when the solve came after a miss (still a win, but calmer).
+function spawnConfetti(square, kind) {
+  if (!puzzleAnimations) return;
+  const overlay = $("board-overlay");
+  if (!overlay || !square) return;
+  const xy = squareXY(square, orient);
+  const cx = parseFloat(xy.left) + 6.25 + "%"; // square centre
+  const cy = parseFloat(xy.top) + 6.25 + "%";
+  const colors =
+    kind === "part"
+      ? ["#e08000", "#f0a640", "#f5c451", "#ffffff"]
+      : ["#7bb434", "#a3d160", "#f5c451", "#ffffff", "#5a9216"];
+  const n = kind === "part" ? 10 : 18;
+  for (let i = 0; i < n; i++) {
+    const p = document.createElement("div");
+    p.className = "confetti";
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 26 + Math.random() * 48;
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist + 22; // gravity bias so pieces drift down as they fly
+    p.style.left = cx;
+    p.style.top = cy;
+    p.style.background = colors[i % colors.length];
+    p.style.setProperty("--dx", dx.toFixed(1) + "px");
+    p.style.setProperty("--dy", dy.toFixed(1) + "px");
+    p.style.setProperty("--rot", (Math.random() * 540 - 270).toFixed(0) + "deg");
+    p.style.animationDelay = Math.floor(Math.random() * 70) + "ms";
+    const s = 4 + Math.random() * 4;
+    p.style.width = s.toFixed(1) + "px";
+    p.style.height = (s * (0.55 + Math.random() * 0.7)).toFixed(1) + "px";
+    overlay.appendChild(p);
+    setTimeout(() => p.remove(), 1050);
+  }
+}
+
+function shakeBoard() {
+  if (!puzzleAnimations) return;
+  const b = $("board");
+  if (!b) return;
+  b.classList.remove("shake");
+  void b.offsetWidth; // restart the animation
+  b.classList.add("shake");
+  setTimeout(() => b.classList.remove("shake"), 400);
+}
+
+// Set the board to the current `chess` position for puzzle solving. `movable` gates whether the
+// solver can move (locked while a forced reply animates or after the puzzle is done).
+function renderPuzzleBoard(movable) {
+  const color = turnColor();
+  ground.set({
+    fen: chess.fen(),
+    orientation: orient,
+    turnColor: color,
+    check: chess.inCheck(),
+    movable: {
+      color: movable ? color : undefined,
+      dests: movable ? computeDests() : new Map(),
+      free: false,
+      showDests: true,
+    },
+    animation: { enabled: true },
+  });
+  drawArrows(); // draws puzzleShapes in puzzle mode
+}
+
+function pzStatus(msg) {
+  $("pz-status").textContent = msg || "";
+}
+
+function updatePuzzleStats(rating, streak) {
+  if (rating != null) $("pz-rating").textContent = "Puzzle · " + rating;
+  if (streak != null) puzzleStreak = streak;
+  renderPuzzlePips();
+}
+
+// Colour-coded pips for the last 5 outcomes THIS session (green = solved clean, red = missed),
+// plus the running streak number.
+function renderPuzzlePips() {
+  const el = $("pz-streak");
+  if (!el) return;
+  const last = puzzleResults.slice(-5);
+  let html = last.map((ok) => `<span class="pz-pip ${ok ? "ok" : "bad"}"></span>`).join("");
+  if (puzzleStreak) html += `<span class="pz-streak-n">streak ${puzzleStreak}</span>`;
+  el.innerHTML = html;
+}
+
+function loadPuzzleResults() {
+  try {
+    puzzleResults = JSON.parse(sessionStorage.getItem("pzResults") || "[]");
+  } catch (_) {
+    puzzleResults = [];
+  }
+}
+
+function recordPuzzleResult(ok) {
+  puzzleResults.push(!!ok);
+  if (puzzleResults.length > 20) puzzleResults = puzzleResults.slice(-20);
+  try {
+    sessionStorage.setItem("pzResults", JSON.stringify(puzzleResults));
+  } catch (_) {}
+  renderPuzzlePips();
+}
+
+async function setPuzzleMode(on, opts = {}) {
+  if (on === puzzleMode) return;
+  puzzleMode = on;
+  document.body.classList.toggle("puzzle-mode", on);
+  $("mode-analyze").classList.toggle("active", !on);
+  $("mode-puzzles").classList.toggle("active", on);
+  if (on) {
+    try {
+      sessionStorage.setItem("pzMode", "1"); // so a browser reload returns here
+    } catch (_) {}
+    closeHistoryDrawer();
+    evalShapes = [];
+    bestArrows = [];
+    loadPuzzleResults();
+    if (!puzzleConfigCache) {
+      puzzleConfigCache = await fetch("/api/puzzle/config").then((r) => r.json()).catch(() => null);
+    }
+    if (puzzleConfigCache) updatePuzzleStats(puzzleConfigCache.your_rating, puzzleConfigCache.streak);
+    // On a reload, resume the in-progress puzzle at the same spot; otherwise start a fresh one.
+    if (opts.resume && (await resumeCurrentPuzzle())) return;
+    await loadNextPuzzle();
+  } else {
+    try {
+      sessionStorage.removeItem("pzMode");
+    } catch (_) {}
+    // Restore the analysis board to wherever the game cursor was.
+    puzzleData = null;
+    puzzleShapes = [];
+    if (timeline.length) gotoNode(cur);
+    else {
+      chess.reset();
+      renderBoard();
+    }
+  }
+}
+
+// Resume the puzzle the server still has in progress (after a browser reload). Returns false if
+// there's nothing to resume (e.g. the server restarted), so the caller loads a fresh puzzle.
+async function resumeCurrentPuzzle() {
+  const myGen = ++puzzleGen;
+  let cur;
+  try {
+    cur = await fetch("/api/puzzle/current").then((r) => r.json());
+  } catch (_) {
+    return false;
+  }
+  if (myGen !== puzzleGen) return true; // superseded; caller should not load another
+  if (!cur || !cur.active || cur.finished) return false;
+  puzzleData = {
+    id: cur.id,
+    side_to_move: cur.side_to_move,
+    themes: cur.themes || [],
+    rating: cur.rating,
+    your_rating: cur.your_rating,
+  };
+  puzzleDone = false;
+  puzzleFailed = !!cur.failed;
+  puzzleHinted = !!cur.hinted;
+  puzzleMissRating = null;
+  puzzleBusy = false;
+  puzzleShapes = [];
+  puzzleSolveColor = cur.side_to_move || "white";
+  orient = puzzleSolveColor;
+  $("pz-result").hidden = true;
+  $("pz-explain-out").hidden = true;
+  $("pz-prompt").hidden = false;
+  $("pz-ghosts").hidden = false;
+  $("pz-prompt-line").textContent = (puzzleSolveColor === "white" ? "White" : "Black") + " to move";
+  updatePuzzleStats(cur.your_rating, puzzleStreak);
+  chess.load(cur.fen);
+  renderPuzzleBoard(true);
+  pzStatus(puzzleFailed ? "Resumed — keep trying, or press Show solution." : "Resumed your puzzle.");
+  return true;
+}
+
+async function loadNextPuzzle(opts = {}) {
+  const myGen = ++puzzleGen; // cancel any in-flight handler from the puzzle we're leaving
+  puzzleBusy = true; // lock the board until the new puzzle is in place
+  pzStatus("Loading…");
+  const q = new URLSearchParams();
+  if (opts.difficulty) q.set("difficulty", opts.difficulty);
+  let p;
+  try {
+    p = await fetch("/api/puzzle/next?" + q.toString()).then((r) => r.json());
+  } catch (_) {
+    if (myGen === puzzleGen) puzzleBusy = false;
+    pzStatus("Couldn't load a puzzle.");
+    return;
+  }
+  if (myGen !== puzzleGen) return; // superseded by another load
+  if (!p || p.error || !p.fen) {
+    puzzleBusy = false;
+    pzStatus((p && p.error) || "No puzzles available.");
+    return;
+  }
+  applyPuzzle(p);
+}
+
+function applyPuzzle(p) {
+  const myGen = ++puzzleGen; // this is now the current puzzle; older handlers are superseded
+  puzzleData = p;
+  puzzleDone = false;
+  puzzleFailed = false;
+  puzzleHinted = false;
+  puzzleMissRating = null;
+  puzzleBusy = true;
+  puzzleShapes = [];
+  puzzleSolveColor = p.side_to_move || "white";
+  orient = puzzleSolveColor;
+  pzStatus("");
+
+  // Reset the result/prompt cards.
+  $("pz-result").hidden = true;
+  $("pz-explain-out").hidden = true;
+  $("pz-explain-out").innerHTML = "";
+  $("pz-prompt").hidden = false;
+  $("pz-ghosts").hidden = false;
+  $("pz-explain").disabled = false;
+  $("pz-prompt-line").textContent = (puzzleSolveColor === "white" ? "White" : "Black") + " to move";
+  if (puzzleConfigCache) updatePuzzleStats(p.your_rating, puzzleConfigCache.streak);
+  else updatePuzzleStats(p.your_rating, null);
+
+  // Show the position BEFORE the setup move, then play it in with a short animation.
+  chess.load(p.fen);
+  ground.set({
+    fen: chess.fen(),
+    orientation: orient,
+    turnColor: turnColor(),
+    check: chess.inCheck(),
+    movable: { color: undefined, dests: new Map() },
+    animation: { enabled: true },
+  });
+  drawArrows();
+
+  setTimeout(() => {
+    if (myGen !== puzzleGen) return; // a newer puzzle loaded while we waited
+    const su = p.setup_move;
+    if (su) {
+      chess.move({ from: su.slice(0, 2), to: su.slice(2, 4), promotion: su.slice(4) || undefined });
+      puzzleLastMove = [su.slice(0, 2), su.slice(2, 4)];
+    }
+    renderPuzzleBoard(true);
+    puzzleBusy = false;
+  }, 430);
+}
+
+async function onPuzzleMove(orig, dest) {
+  if (puzzleDone || puzzleBusy) {
+    renderPuzzleBoard(!puzzleDone); // snap the piece back; chessground already moved it visually
+    return;
+  }
+  const promo = isPromotion(orig, dest) ? "q" : undefined;
+  const uci = orig + dest + (promo ?? "");
+  const mv = chess.move({ from: orig, to: dest, promotion: promo });
+  if (!mv) {
+    renderPuzzleBoard(true);
+    return;
+  }
+  puzzleLastMove = [orig, dest];
+  puzzleBusy = true;
+  const myGen = puzzleGen;
+  renderPuzzleBoard(false);
+
+  let res;
+  try {
+    res = await fetch("/api/puzzle/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: puzzleData.id, uci }),
+    }).then((r) => r.json());
+  } catch (_) {
+    if (myGen !== puzzleGen) return;
+    chess.undo();
+    renderPuzzleBoard(true);
+    puzzleBusy = false;
+    pzStatus("Move check failed — try again.");
+    return;
+  }
+  if (myGen !== puzzleGen) return; // a new puzzle loaded while the server was validating
+
+  if (res.error) {
+    chess.undo();
+    renderPuzzleBoard(true);
+    puzzleBusy = false;
+    pzStatus(res.error);
+    return;
+  }
+
+  if (!res.correct) {
+    // Wrong move: flash red and take it back, but DON'T reveal the solution — let them try again.
+    // The first miss already cost the rating server-side; reflect that, but keep the board live.
+    blinkSquare(dest, "bad");
+    shakeBoard();
+    await sleep(440);
+    if (myGen !== puzzleGen) return;
+    chess.undo();
+    puzzleLastMove = null;
+    puzzleFailed = true;
+    renderPuzzleBoard(true);
+    if (res.rating) {
+      puzzleMissRating = res.rating; // remember the applied loss for the final card
+      updatePuzzleStats(res.rating.rating_after, res.rating.streak);
+    }
+    pzStatus(
+      res.rating && res.rating.rated
+        ? "Not quite — that cost some rating. Try again, or press Show solution."
+        : "Not quite — try again, or press Show solution."
+    );
+    puzzleBusy = false;
+    return;
+  }
+
+  if (res.is_complete) {
+    // Celebratory green for a clean solve, calmer amber when it took a miss — matches the verdict
+    // colour so the board and the text tell the same story, and a little confetti off the piece.
+    const kind = puzzleFailed ? "part" : "ok";
+    blinkSquare(dest, kind);
+    spawnConfetti(dest, kind);
+    puzzleDone = true;
+    renderPuzzleBoard(false);
+    const outcome = puzzleFailed || puzzleHinted ? "solved_with_hints" : "solved_first_try";
+    finishPuzzle(outcome, res.rating, null);
+    puzzleBusy = false;
+    return;
+  }
+
+  // Correct, more to come: play the forced reply, then hand the move back.
+  await sleep(280);
+  if (myGen !== puzzleGen) return;
+  const reply = res.opponent_reply_uci;
+  if (reply) {
+    chess.move({ from: reply.slice(0, 2), to: reply.slice(2, 4), promotion: reply.slice(4) || undefined });
+    puzzleLastMove = [reply.slice(0, 2), reply.slice(2, 4)];
+  }
+  renderPuzzleBoard(true);
+  puzzleBusy = false;
+}
+
+function finishPuzzle(outcome, ratingSummary, yourMove) {
+  puzzleDone = true;
+  $("pz-prompt").hidden = true;
+  $("pz-ghosts").hidden = true;
+  $("pz-result").hidden = false;
+
+  const solved = outcome !== "failed";
+  const clean = solved && !puzzleFailed; // green only when solved with no wrong move
+  const verdict = $("pz-verdict");
+  // Three states, so a correct final attempt never wears the same red as a genuine failure:
+  //   green  = solved first try, orange = solved after a miss (still a win!), red = solution shown.
+  verdict.className = "pz-verdict " + (!solved ? "bad" : clean ? "ok" : "part");
+  let head = solved ? (clean ? "✓ Solved!" : "✓ Solved (after a miss)") : "Solution shown";
+  // The rating may have been applied on the FIRST wrong move (Lichess-style), so the completion
+  // itself returns no fresh summary. Fall back to that stored miss summary so a solve-after-miss
+  // still shows the rating already moved — otherwise it looks like the miss cost nothing.
+  const applied =
+    ratingSummary && ratingSummary.rated
+      ? ratingSummary
+      : puzzleMissRating && puzzleMissRating.rated
+      ? puzzleMissRating
+      : null;
+  if (applied) {
+    const sign = applied.delta >= 0 ? "+" : "";
+    head += `  ${applied.rating_before} → ${applied.rating_after} (${sign}${applied.delta})`;
+    updatePuzzleStats(applied.rating_after, applied.streak);
+  } else if (ratingSummary || puzzleMissRating) {
+    const su = ratingSummary || puzzleMissRating;
+    head += "  (unrated)";
+    updatePuzzleStats(su.rating_after, su.streak);
+  }
+  verdict.textContent = head;
+
+  // Record the session pip (green = clean solve, red = missed / solution shown).
+  recordPuzzleResult(clean);
+
+  const themes = (puzzleData.themes || []).filter((t) => !/^mateIn\d|^oneMove$|^short$|^long$/.test(t));
+  $("pz-theme").innerHTML = themes.length ? "Theme: <b>" + themes.slice(0, 3).join(", ") + "</b>" : "";
+
+  // Stash for the Explain call.
+  puzzleData._outcome = outcome;
+  puzzleData._yourMove = yourMove || null;
+  $("pz-explain").hidden = !(puzzleConfigCache && puzzleConfigCache.has_llm);
+}
+
+// "Show solution": reveal + play out the remaining solution line, then end the puzzle.
+async function puzzleShowSolution() {
+  if (!puzzleData || puzzleDone || puzzleBusy) return;
+  const myGen = puzzleGen;
+  puzzleBusy = true;
+  renderPuzzleBoard(false);
+  let res;
+  try {
+    res = await fetch("/api/puzzle/giveup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: puzzleData.id }),
+    }).then((r) => r.json());
+  } catch (_) {
+    if (myGen !== puzzleGen) return;
+    puzzleBusy = false;
+    renderPuzzleBoard(true);
+    return;
+  }
+  if (myGen !== puzzleGen) return;
+  const line = (res && res.solution_uci) || [];
+  // Play the solution out move by move so the user sees the idea.
+  for (const uci of line) {
+    chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci.slice(4) || undefined });
+    puzzleLastMove = [uci.slice(0, 2), uci.slice(2, 4)];
+    renderPuzzleBoard(false);
+    await sleep(480);
+    if (myGen !== puzzleGen) return;
+  }
+  puzzleBusy = false;
+  finishPuzzle("failed", null, null);
+}
+
+async function puzzleExplain() {
+  const btn = $("pz-explain");
+  const out = $("pz-explain-out");
+  btn.disabled = true;
+  out.hidden = false;
+  out.innerHTML = '<p class="muted">Thinking…</p>';
+  let res;
+  try {
+    res = await fetch("/api/puzzle/explain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: puzzleData.id,
+        outcome: puzzleData._outcome,
+        your_move: puzzleData._yourMove,
+      }),
+    }).then((r) => r.json());
+  } catch (_) {
+    out.innerHTML = '<p class="muted">Explanation failed — try again.</p>';
+    btn.disabled = false;
+    return;
+  }
+  if (res.error) {
+    out.innerHTML = renderMarkdown(res.error);
+  } else {
+    out.innerHTML = renderMarkdown(res.answer || "");
+  }
+  btn.disabled = false;
+}
+
+async function puzzleHint() {
+  if (!puzzleData || puzzleDone) return;
+  let res;
+  try {
+    res = await fetch("/api/puzzle/hint", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: puzzleData.id }),
+    }).then((r) => r.json());
+  } catch (_) {
+    return;
+  }
+  if (res && res.from_square) {
+    puzzleHinted = true;
+    puzzleShapes = [{ orig: res.from_square, brush: "blue" }];
+    drawArrows();
+    pzStatus("Hint: move the piece on " + res.from_square + " (this attempt is now unrated).");
+  }
+}
+
 function init() {
   // On small screens the Games panel is a drawer that overlays the board, so start it closed.
   closeHistoryDrawer();
@@ -2203,10 +2779,22 @@ function init() {
     if (lichess) autoOpenLatest(lichess);
     else openPastePanel(`Paste or upload ${chesscom}'s games to analyze them.`);
   });
+  // Puzzle mode: top-level Analyze/Puzzles switch + the rail controls.
+  $("mode-analyze").addEventListener("click", () => setPuzzleMode(false));
+  $("mode-puzzles").addEventListener("click", () => setPuzzleMode(true));
+  $("pz-next").addEventListener("click", () => loadNextPuzzle());
+  $("pz-skip").addEventListener("click", () => loadNextPuzzle());
+  $("pz-hint").addEventListener("click", puzzleHint);
+  $("pz-solution").addEventListener("click", puzzleShowSolution);
+  $("pz-explain").addEventListener("click", puzzleExplain);
+
   // Settings panel.
   $("settings-toggle").addEventListener("click", openSettings);
   $("settings-cancel").addEventListener("click", () => ($("settings").hidden = true));
   $("settings-form").addEventListener("submit", saveSettings);
+  document
+    .querySelectorAll(".set-tab-btn")
+    .forEach((b) => b.addEventListener("click", () => activateSettingsTab(b.dataset.tab)));
   $("set-profile-mode").addEventListener("change", applyProfilePreset);
   $("set-recent").addEventListener("input", syncProfileModeFromFields);
   $("set-lifetime").addEventListener("input", syncProfileModeFromFields);
@@ -2223,6 +2811,7 @@ function init() {
       return;
     }
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    if (puzzleMode) return; // puzzle mode has no game-navigation hotkeys
     if (e.key === "ArrowLeft") {
       e.preventDefault();
       stepBack();

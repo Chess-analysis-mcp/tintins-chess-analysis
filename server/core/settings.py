@@ -31,6 +31,7 @@ KEYS = (
     "coach_ai_auto",
     "coach_ai_persist",
     "personalize_history",
+    "puzzle_animations",
     "local_llm_base_url",
     "local_llm_model",
 )
@@ -89,6 +90,8 @@ def apply(settings: dict) -> None:
         config.COACH_AI_PERSIST = bool(settings["coach_ai_persist"])
     if "personalize_history" in settings:
         config.PERSONALIZE_HISTORY = bool(settings["personalize_history"])
+    if "puzzle_animations" in settings:
+        config.PUZZLE_ANIMATIONS = bool(settings["puzzle_animations"])
     if "local_llm_base_url" in settings:
         config.LOCAL_LLM_BASE_URL = (settings["local_llm_base_url"] or "").strip()
     if "local_llm_model" in settings:
@@ -116,6 +119,7 @@ def effective() -> dict:
         "coach_ai_auto": config.COACH_AI_AUTO,
         "coach_ai_persist": config.COACH_AI_PERSIST,
         "personalize_history": config.PERSONALIZE_HISTORY,
+        "puzzle_animations": config.PUZZLE_ANIMATIONS,
         "local_llm_base_url": config.LOCAL_LLM_BASE_URL or "",
         "local_llm_model": config.LOCAL_LLM_MODEL or "",
     }

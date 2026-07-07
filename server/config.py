@@ -366,6 +366,37 @@ APP_MODE: bool = os.environ.get("CHESS_APP_MODE", "0") == "1"
 LOCAL_LLM_BASE_URL: str = os.environ.get("CHESS_LOCAL_LLM_BASE_URL", "").strip()
 LOCAL_LLM_MODEL: str = os.environ.get("CHESS_LOCAL_LLM_MODEL", "").strip()
 
+# --- Puzzle mode (server.core.puzzles / puzzle_rating) ------------------------------------------
+# A tactical-trainer built on the same substrate (board, engine, claude_bridge, DATA_DIR). Puzzles
+# ship as small compressed JSONL: a committed offline baseline (server/data/puzzles/baseline.jsonl.gz,
+# >=100/band) plus dense per-band shards downloaded on demand (P3) from a SEPARATE data repo so the
+# app's Releases tab stays app-versions-only. Per-user state (rating, seen_ids, streak) lives in
+# <DATA_DIR>/puzzles/state.json. CHESS_PUZZLES=0 hides the feature entirely.
+PUZZLES_ENABLED: bool = os.environ.get("CHESS_PUZZLES", "1") != "0"
+# Dedicated puzzle-DATA repo (NOT the app repo) hosting the dense band shards as release assets.
+PUZZLE_SHARD_REPO: str = os.environ.get(
+    "CHESS_PUZZLE_SHARD_REPO", "Chess-analysis-mcp/tintins-chess-puzzles"
+).strip()
+PUZZLE_SHARD_TAG: str = os.environ.get("CHESS_PUZZLE_SHARD_TAG", "puzzles-v1").strip()
+# LRU cap on downloaded band shards under <DATA_DIR>/puzzles (P3); 0 = unbounded.
+PUZZLE_CACHE_MAX: int = _parse_int("CHESS_PUZZLE_CACHE_MAX", 12)
+# Allow the background shard fetch (P3). 0 = baseline-only / fully offline.
+PUZZLE_DOWNLOAD: bool = os.environ.get("CHESS_PUZZLE_DOWNLOAD", "1") != "0"
+# Only let an attempt move the Glicko rating when the puzzle's own RatingDeviation is below this
+# (mirrors Lichess: well-established puzzles only). Higher-RD puzzles still play, but unrated.
+# Kept generous: Glicko already down-weights a high-RD puzzle in the update, so a low gate here
+# needlessly leaves a big slice of perfectly good puzzles unrated (at 90, ~1/3 of the baseline).
+PUZZLE_MAX_RD: int = _parse_int("CHESS_PUZZLE_MAX_RD", 130)
+# Show the solve/miss board animations (square flash, ripple ring, confetti, shake). Off = the
+# result is conveyed by the verdict text colour alone (green / orange / red). Settings toggle.
+PUZZLE_ANIMATIONS: bool = os.environ.get("CHESS_PUZZLE_ANIMATIONS", "1") != "0"
+
+
+def _puzzle_dir() -> str:
+    """Per-user puzzle state + downloaded shards (under DATA_DIR, shared by every entry point)."""
+    return os.path.join(DATA_DIR, "puzzles")
+
+
 # --- Auto-update (server.core.updates) ----------------------------------------------------------
 # The app version (canonical = pyproject.toml). Surfaced via /api/app-config and compared against
 # the latest GitHub release tag so the board can show a non-blocking "update available" notice.

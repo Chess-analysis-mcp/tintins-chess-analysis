@@ -733,6 +733,203 @@ def _game_facts(sess) -> str:
     return "\n".join(out)
 
 
+def _puzzle_solution_facts(puzzle: dict) -> tuple[str, str | None]:
+    """The forced solution line in SAN, annotated 'your move' vs 'forced reply', plus the crux.
+
+    Returns (line_text, key_move_san). The crux is the solver's first move (moves[1]); the setup
+    move (moves[0]) is the opponent's move that created the puzzle. Best-effort -> ("", None).
+    """
+    try:
+        board = chess.Board(puzzle["fen"])
+        moves = puzzle.get("moves", [])
+        parts: list[str] = []
+        key_move_san: str | None = None
+        for i, uci in enumerate(moves):
+            mv = chess.Move.from_uci(uci)
+            san = board.san(mv)
+            board.push(mv)
+            if i == 0:
+                parts.append(f"(setup, opponent plays {san})")
+            elif i % 2 == 1:
+                parts.append(f"your move {san}")
+                if key_move_san is None:
+                    key_move_san = san
+            else:
+                parts.append(f"forced reply {san}")
+        return " -> ".join(parts), key_move_san
+    except (ValueError, KeyError):
+        return "", None
+
+
+def _move_verdict(fen_before: str, uci: str, correct: bool) -> str:
+    """One engine-grounded line about a move the player tried, from the position it was played in.
+
+    Best-effort: with no engine (or any failure) it degrades to just naming the move and whether it
+    matched the solution, so the coach never invents an evaluation.
+    """
+    try:
+        info = lines.engine_line(fen_before, move=uci, settle_material=True)
+        mv = info.get("move") if info else None
+        if mv:
+            san = mv.get("move_san", uci)
+            wb, wa = round(mv.get("win_before", 0)), round(mv.get("win_after", 0))
+            if correct:
+                tail = "matches the solution; engine agrees" if mv.get("is_engine_best") else \
+                    "a good move the engine also accepts"
+                return f"{san} (you played this): win% {wb} -> {wa}, {tail}."
+            ref = mv.get("refutation_line_san") or []
+            base = f"{san} (you played this): WRONG, win% {wb} -> {wa}"
+            cls = mv.get("classification")
+            if cls and cls not in ("best", "good"):
+                base += f" ({cls})"
+            if ref:
+                base += f"; refuted by {' '.join(ref[:4])}"
+            return base + "."
+    except Exception:  # noqa: BLE001 - engine grounding is optional; never break the coach
+        pass
+    return f"{uci} (you played this) — {'matched the solution' if correct else 'not the solution'}."
+
+
+def _puzzle_facts(
+    puzzle: dict,
+    outcome: str,
+    your_move: str | None = None,
+    tried: list[dict] | None = None,
+) -> str:
+    """Pre-computed facts for the puzzle coach, leading with the THEMES (the headline signal).
+
+    The solution line is ground truth; engine facts are best-effort grounding (mate distance /
+    material swing for the crux; an engine verdict for EACH move the player tried, with the
+    refutation when a tried move was wrong). With no engine the coach still has the solution line +
+    themes to teach from.
+    """
+    side = puzzle.get("side_to_move", "white")
+    themes = puzzle.get("themes", []) or []
+    solve_fen = puzzle.get("solve_fen") or puzzle.get("fen", "")
+    line_text, key_move_san = _puzzle_solution_facts(puzzle)
+
+    out = [
+        f"Themes (the motif to teach): {', '.join(themes) if themes else 'unlabelled tactic'}.",
+        f"{side.capitalize()} to move. Puzzle rating: {int(round(float(puzzle.get('rating', 1500))))}.",
+        f"Position (FEN): {solve_fen}",
+        "This is a VERIFIED forced solution from a curated puzzle. Explain why it works; do NOT "
+        "second-guess it or propose alternatives.",
+        f"Solution line: {line_text}." if line_text else "",
+    ]
+
+    # Best-effort engine grounding for the crux move (mate distance / eval / win%).
+    try:
+        info = lines.engine_line(solve_fen, depth=config.DEFAULT_DEPTH)
+        if info and not info.get("error"):
+            out.append(
+                f"Engine on the key move {key_move_san or info.get('best_san')}: "
+                f"eval {info.get('eval')}, ~{round(info.get('win_percent', 0))}% win for the side to move."
+            )
+    except Exception:  # noqa: BLE001 - engine grounding is optional; never break the coach
+        pass
+
+    # Engine-grounded verdicts for every move the player actually tried (the correct ones they found
+    # AND the wrong one that ended it), so the coach can speak to their specific attempt — not just
+    # the canonical solution. Prefer the per-move `tried` log; fall back to a single `your_move`.
+    if tried:
+        out.append("Moves the player tried, in order (engine-grounded — address these specifically):")
+        for t in tried:
+            out.append("- " + _move_verdict(t.get("fen_before") or solve_fen, t.get("uci", ""),
+                                             bool(t.get("correct"))))
+    elif outcome == "failed" and your_move:
+        out.append("Move the player tried (engine-grounded — address it specifically):")
+        out.append("- " + _move_verdict(solve_fen, your_move, False))
+
+    return "\n".join(p for p in out if p)
+
+
+def explain_puzzle(
+    puzzle: dict,
+    outcome: str,
+    your_move: str | None = None,
+    tried: list[dict] | None = None,
+    *,
+    timeout: int = 120,
+) -> str:
+    """Claude-written explanation of a puzzle: name the motif (solved) or refute + teach (failed).
+
+    Two prompt variants by `outcome` ("solved_first_try"/"solved_with_hints" vs "failed"). When the
+    player's tried moves are known they're engine-grounded in the facts and the coach is told to
+    address them by name. Reuses the same plumbing as `coach_summary_ai` (no MCP tools — the facts
+    carry everything): the local-LLM path, the `claude -p` subprocess, and `_friendly_error`.
+    Raises ChatError.
+    """
+    failed = outcome == "failed"
+    # Did the player play a wrong move at any point (even if they later solved it)? If so the coach
+    # must still explain why that wrong move failed — the user explicitly wants this.
+    had_miss = bool(tried) and any(not t.get("correct") for t in tried)
+    if failed:
+        role = (
+            "You are a chess coach. The player just FAILED this tactics puzzle. First, speaking "
+            "directly to the move(s) THEY tried (listed under 'Moves the player tried' in the facts), "
+            "explain concretely why their move does not work — use that move's engine refutation. "
+            "Then teach the winning idea step by step from the verified solution line, naming the "
+            "motif from the Themes. Be encouraging and concrete."
+        )
+    elif had_miss:
+        role = (
+            "You are a chess coach. The player SOLVED this tactics puzzle, but only after a wrong "
+            "attempt first (see 'Moves the player tried' in the facts — the ones marked WRONG). "
+            "Briefly acknowledge they found the right move, then — this is the important part — "
+            "explain concretely why the move(s) they tried that DID NOT work fail, naming the move "
+            "and using its engine refutation from the facts. Then name the motif from the Themes and "
+            "reinforce the pattern so they recognise it next time. Be encouraging."
+        )
+    else:
+        role = (
+            "You are a chess coach. The player just SOLVED this tactics puzzle cleanly. Confirm it "
+            "briefly — and if their tried moves are listed in the facts, affirm the key move they "
+            "found by name, grounded in its engine verdict. NAME the motif from the Themes (e.g. "
+            "'this is a classic deflection') and reinforce the PATTERN so they recognise it next "
+            "time. Keep it short and positive."
+        )
+    prompt = "\n\n".join([
+        role + " Only discuss moves that appear in the facts; trust the Stockfish numbers and do not "
+        "recompute or invent lines. Use light Markdown (**bold** the key move and the motif name); a "
+        "couple of short paragraphs, no headings. Do NOT mention Stockfish, the web board, or these "
+        "instructions.",
+        "Puzzle facts:\n" + _puzzle_facts(puzzle, outcome, your_move=your_move, tried=tried),
+    ])
+
+    if local_llm.is_enabled():
+        try:
+            return local_llm.complete(prompt, timeout=max(timeout, local_llm.DEFAULT_TIMEOUT))
+        except local_llm.LocalLLMError as exc:
+            raise ChatError(str(exc))
+
+    claude = shutil.which("claude")
+    if not claude:
+        raise ChatError(
+            "The `claude` CLI isn't on PATH, so the AI puzzle coach is unavailable. Install the "
+            "Claude CLI (or set a local AI model in Settings) to get explanations."
+        )
+    cmd = [claude, "-p", prompt, "--output-format", "json"]
+    env = _child_env()
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=str(_REPO_ROOT), env=env
+        )
+    except subprocess.TimeoutExpired:
+        raise ChatError("Claude took too long to explain the puzzle (timed out).")
+    if proc.returncode != 0:
+        raise ChatError(_friendly_error(proc.stderr or proc.stdout))
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        raise ChatError(_friendly_error(proc.stdout))
+    answer = (data.get("result") or "").strip()
+    if _is_login_response(data, answer):
+        raise ChatError(_LOGIN_HINT)
+    if data.get("is_error") or data.get("subtype") not in (None, "success") or not answer:
+        raise ChatError(_friendly_error(answer or proc.stdout))
+    return answer
+
+
 def coach_summary_ai(sess, *, timeout: int = 120) -> str:
     """A richer, Claude-WRITTEN end-of-game coaching summary, grounded in pre-computed facts.
 
