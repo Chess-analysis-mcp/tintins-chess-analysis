@@ -99,6 +99,8 @@ def get_app_config() -> dict:
         "default_username": config.USERNAME or "",  # canonical "me" (Lichess if set, else chess.com)
         "lichess_username": config.LICHESS_USERNAME or "",  # autoloadable handle (drives first-run)
         "chesscom_username": config.CHESSCOM_USERNAME or "",  # configured chess.com handle (if any)
+        "chesscom_sync": config.CHESSCOM_SYNC_ENABLED,  # auto-analyze new chess.com games on launch?
+        "chesscom_sync_max": config.CHESSCOM_SYNC_MAX,  # how many recent games auto-sync checks
         "coach_ai_auto": config.COACH_AI_AUTO,  # auto-press the AI-summary button on each game?
         "personalize_history": config.PERSONALIZE_HISTORY,  # inject coaching profile into chat?
         "current_version": config.APP_VERSION,  # for the update notice (cheap, local)
@@ -173,6 +175,45 @@ def best_moves(body: BestMovesBody) -> JSONResponse:
 
     depth = body.depth or config.DEFAULT_DEPTH
     info = lines.engine_line(body.fen, depth=depth, multipv=max(1, body.multipv))
+    src = info.get("lines") or [
+        {
+            "line_uci": info["line_uci"],
+            "line_san": info["line_san"],
+            "win_percent": info["win_percent"],
+            "eval": info["eval"],
+        }
+    ]
+    moves = [
+        {
+            "uci": ln["line_uci"][0],
+            "san": ln["line_san"][0] if ln.get("line_san") else None,
+            "win_percent": ln["win_percent"],
+            "eval": ln["eval"],
+        }
+        for ln in src
+        if ln.get("line_uci")
+    ]
+    return JSONResponse({"side_to_move": info["side_to_move"], "depth": depth, "moves": moves})
+
+
+@router.post("/threats")
+def threats(body: BestMovesBody) -> JSONResponse:
+    """Top-N threats in a position: the moves the side NOT to move is threatening to play.
+
+    Implemented as a null-move search (the standard "threat" analysis): pass the turn to the
+    side that just moved and ask the engine for its best moves. In check there is no legal
+    null move (the "threat" is the check itself), so we return no threats.
+    """
+    try:
+        board = chess.Board(body.fen)
+    except ValueError as exc:
+        return JSONResponse({"error": f"Invalid FEN: {exc}"}, status_code=400)
+    if board.is_check() or board.is_game_over():
+        return JSONResponse({"moves": []})
+    board.push(chess.Move.null())
+
+    depth = body.depth or config.DEFAULT_DEPTH
+    info = lines.engine_line(board.fen(), depth=depth, multipv=max(1, body.multipv))
     src = info.get("lines") or [
         {
             "line_uci": info["line_uci"],

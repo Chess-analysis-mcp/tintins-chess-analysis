@@ -858,6 +858,26 @@ body.history-hidden .history-col { display: none; }
 }
 .history li.load-more:hover { background: var(--panel); }
 
+/* --- Insights panel (cross-game themes + stats over a chosen time period) ------------------ */
+.insights { margin-top: 14px; border-top: 1px solid #000; padding-top: 10px; }
+.insights-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.insights-head h2 { font-size: 15px; margin: 0; }
+.insights-head select {
+  background: var(--panel2); color: var(--text); border: 1px solid #000; border-radius: 5px;
+  font-size: 12.5px; padding: 3px 6px;
+}
+.insights-body { font-size: 13px; }
+.insights-body h3 {
+  font-size: 12.5px; margin: 10px 0 4px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.insights-body .ins-stat { margin: 3px 0; }
+.insights-body .ins-list { list-style: none; margin: 0; padding: 0; }
+.insights-body .ins-list li {
+  background: var(--panel); border-radius: 5px; padding: 5px 8px; margin-bottom: 4px;
+  display: flex; justify-content: space-between; gap: 8px;
+}
+
 /* --- responsive: smaller laptops / windows -------------------------------------------------
    The third (Games) column needs ~1400px to sit beside the board + analysis columns. Below that
    it becomes an off-canvas drawer that slides in from the right (toggled by ☰ Games / closed by ×

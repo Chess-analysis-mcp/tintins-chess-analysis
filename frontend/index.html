@@ -84,6 +84,9 @@
           <label class="toggle" title="Toggle best-move arrows (l)">
             <input type="checkbox" id="best-toggle" /> Show best move
           </label>
+          <label class="toggle" title="Toggle threat arrows (t) — what the side that just moved is threatening, in yellow">
+            <input type="checkbox" id="threat-toggle" /> Show threats
+          </label>
           <button id="flip-review" type="button" hidden
             title="Re-analyse this same game from the other player's perspective (in case the wrong side was picked)">↺ Review other side</button>
         </div>
@@ -144,6 +147,7 @@
         <div class="seg" role="tablist">
           <button id="mode-normal" class="active" type="button">My games</button>
           <button id="mode-lichess" type="button">Lichess</button>
+          <button id="mode-chesscom" type="button">Chess.com</button>
           <button id="mode-paste" type="button">Paste PGN</button>
         </div>
         <form id="lichess-form" class="lichess-form" style="display:none">
@@ -154,6 +158,16 @@
           <button type="button" id="set-as-me" class="set-as-me"
             title="Make this your account: used for 'My games', your profile, and auto-open on launch">
             Set as my account
+          </button>
+        </form>
+        <form id="chesscom-form" class="lichess-form" style="display:none">
+          <div class="lichess-row">
+            <input id="chesscom-user" type="text" autocomplete="off" placeholder="chess.com username" />
+            <button type="submit">Load</button>
+          </div>
+          <button type="button" id="chesscom-sync" class="set-as-me"
+            title="Fetch your chess.com games and analyze any new games">
+            ⟳ Sync new games
           </button>
         </form>
         <form id="paste-form" class="paste-form" style="display:none">
@@ -176,12 +190,28 @@
         </form>
         <div id="history-status" class="hist-status"></div>
         <ol id="history-list" class="history"></ol>
+
+
+        <!-- Cross-game insights: recurring themes + stats aggregated from every analyzed game in
+             the chosen time window (GET /api/insights). Refreshes as new games are analyzed. -->
+        <section id="insights" class="insights">
+          <div class="insights-head">
+            <h2>Insights</h2>
+            <select id="insights-period" title="Time period" aria-label="Insights time period">
+              <option value="1">Today</option>
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="0">All time</option>
+            </select>
+          </div>
+          <div id="insights-body" class="insights-body"></div>
+        </section>
       </aside>
     </main>
 
     <!-- First-run prompt (app mode only): shown when there's no configured/saved account. Two
          fields — fill in either. A Lichess handle auto-opens your latest game; a Chess.com handle
-         (no public fetch API) just labels your pasted/uploaded games as "you". More accounts can be
+         auto-syncs your recent games on every launch. More accounts can be
          added later in ⚙ Settings → Advanced. -->
     <div id="firstrun" class="firstrun-overlay" hidden>
       <form id="firstrun-form" class="firstrun-card">
@@ -213,9 +243,26 @@
         <label class="set-field">
           <span class="set-label">Chess.com username <span class="set-opt">(optional)</span></span>
           <input id="set-chesscom" type="text" autocomplete="off" placeholder="ChessComUsername" />
-          <span class="set-hint">So your pasted / uploaded Chess.com games are recognised as
-            yours and folded into the same profile.</span>
+          <span class="set-hint">Your recent Chess.com games are recognised as yours and folded into
+            one profile. Auto-sync (below) can also analyze new ones on launch.</span>
         </label>
+
+        <label class="set-field set-check">
+          <span class="set-check-row">
+            <input id="set-chesscom-sync" type="checkbox" />
+            <span class="set-label">Auto-sync new Chess.com games on launch</span>
+          </span>
+          <span class="set-hint">On each launch, check your most recent Chess.com games and analyze any
+            not already reviewed. Off: fetch only when you press ⟳ Sync in the Games panel.</span>
+        </label>
+
+        <div id="chesscom-sync-max-field" class="set-field" hidden>
+          <span class="set-label">How many recent games to check</span>
+          <input id="set-chesscom-sync-max" type="number" min="1" max="50" step="1"
+            autocomplete="off" inputmode="numeric" />
+          <span class="set-hint">Already-reviewed games are skipped — if these are all analyzed
+            already, nothing new runs.</span>
+        </div>
 
         <label class="set-field set-check">
           <span class="set-check-row">

@@ -21,7 +21,7 @@ import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import chess
@@ -828,6 +828,46 @@ def history_rows(player_id: Optional[str] = None, data_dir: Optional[str] = None
             }
         )
     return rows
+
+
+# --------------------------------------------------------------------------------------
+# Insights (time-windowed aggregate for the board's Insights panel)
+# --------------------------------------------------------------------------------------
+def _record_day(r: dict) -> str:
+    """The day a game belongs to, as YYYY-MM-DD: when it was PLAYED (the PGN date) if known,
+    else when it was analysed. Lexicographic compare works for cutoffs."""
+    d = (r.get("date") or "").strip()
+    return d if d else (r.get("analyzed_at") or "")[:10]
+
+
+def insights(days: Optional[int] = None, data_dir: Optional[str] = None) -> dict:
+    """Aggregate stats + recurring themes for the configured user's games in a time window.
+
+    `days` limits to games from the last N days (by played date, falling back to analysed
+    date); None/0 = all history. Reuses `_aggregate`, plus human labels on the motifs so the
+    frontend can render them directly.
+    """
+    me = my_player_id(data_dir)
+    records = load_records(data_dir=data_dir)
+    # With an identity configured, insights are about "you". Without one (e.g. a paste-only user
+    # who never set a username), aggregate everything — same philosophy as the "My games" list.
+    if (config.USERNAME or "").strip():
+        records = [
+            r
+            for r in records
+            if r.get("player_id") == me
+            or _resolves_to_me(
+                r.get("player_name") or r.get("player_id") or "", r.get("platform"), data_dir
+            )
+        ]
+    if days and days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = [r for r in records if _record_day(r) >= cutoff]
+
+    agg = _aggregate(records)
+    for m in agg.get("top_motifs", []):
+        m["label"] = _MOTIF_LABELS.get(m["motif"], m["motif"])
+    return {"player_id": me, "days": days or 0, **agg}
 
 
 # --------------------------------------------------------------------------------------
