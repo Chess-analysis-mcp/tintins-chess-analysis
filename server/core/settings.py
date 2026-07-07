@@ -22,6 +22,8 @@ from server import config
 KEYS = (
     "username",
     "chesscom_username",
+    "chesscom_sync",
+    "chesscom_sync_max",
     "aliases",
     "lichess_token",
     "profile_recent",
@@ -68,6 +70,15 @@ def apply(settings: dict) -> None:
             settings.get("chesscom_username", config.CHESSCOM_USERNAME),
             settings.get("aliases", config.USERNAME_ALIASES_RAW),
         )
+    if "chesscom_sync" in settings:
+        config.CHESSCOM_SYNC_ENABLED = bool(settings["chesscom_sync"])
+    if "chesscom_sync_max" in settings:
+        try:
+            n = int(settings["chesscom_sync_max"])
+            if n > 0:
+                config.CHESSCOM_SYNC_MAX = n
+        except (ValueError, TypeError):
+            pass
     if "lichess_token" in settings:
         config.LICHESS_TOKEN = (settings["lichess_token"] or "").strip()
     if "profile_recent" in settings:
@@ -107,6 +118,8 @@ def effective() -> dict:
     return {
         "username": config.LICHESS_USERNAME or "",
         "chesscom_username": config.CHESSCOM_USERNAME or "",
+        "chesscom_sync": config.CHESSCOM_SYNC_ENABLED,
+        "chesscom_sync_max": str(config.CHESSCOM_SYNC_MAX),
         "aliases": config.USERNAME_ALIASES_RAW,
         "lichess_token": config.LICHESS_TOKEN or "",
         "profile_recent": str(config.PROFILE_RECENT_WINDOW),

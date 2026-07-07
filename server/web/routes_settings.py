@@ -27,6 +27,8 @@ _OLLAMA_DEFAULT_URL = "http://localhost:11434"
 class SettingsPatch(BaseModel):
     username: str | None = None
     chesscom_username: str | None = None
+    chesscom_sync: bool | None = None
+    chesscom_sync_max: str | None = None
     aliases: str | None = None
     lichess_token: str | None = None
     profile_recent: str | None = None

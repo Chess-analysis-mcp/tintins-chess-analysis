@@ -44,9 +44,9 @@ analysis, so they never disagree.
 - **Move arrows:** gray = the move you played, green = engine best moves (live **multi-PV** with
   **progressive deepening**, thicker arrow = better move), red = the refutation of a move you try and yellow = threats (toggle **Show threats** or press `t`) to show what the opponent is threatening to play next.
 - **Chess.com auto-sync.** If your Chess.com username is set, your latest games will be fetched
- and analyzed (alternatively you cna use the ⟳ Sync button on the Chess.com tab).
+ and analyzed (alternatively you can use the ⟳ Sync button on the Chess.com tab).
 - **Insights panel.** Recurring themes and stats aggregated across every analyzed game in a chosen
-  period (today / past 7 days / past 30 days / all time). Insights inclulde record, average accuracy, your most common mistake motifs, weakest phase, and most-played openings.
+  period (today / past 7 days / past 30 days / all time). Insights include record, average accuracy, your most common mistake motifs, weakest phase, and most-played openings.
 - **In-browser AI coach (Snowie).** A "why? / what now?" chat powered by headless `claude -p`
   (your Claude subscription), fed pre-computed engine facts so answers are grounded, not estimated.
 - **Cross-game history + coaching profile.** Every reviewed game is saved locally, tagged with

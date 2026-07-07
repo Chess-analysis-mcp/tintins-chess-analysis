@@ -99,6 +99,8 @@ def get_app_config() -> dict:
         "default_username": config.USERNAME or "",  # canonical "me" (Lichess if set, else chess.com)
         "lichess_username": config.LICHESS_USERNAME or "",  # autoloadable handle (drives first-run)
         "chesscom_username": config.CHESSCOM_USERNAME or "",  # configured chess.com handle (if any)
+        "chesscom_sync": config.CHESSCOM_SYNC_ENABLED,  # auto-analyze new chess.com games on launch?
+        "chesscom_sync_max": config.CHESSCOM_SYNC_MAX,  # how many recent games auto-sync checks
         "coach_ai_auto": config.COACH_AI_AUTO,  # auto-press the AI-summary button on each game?
         "personalize_history": config.PERSONALIZE_HISTORY,  # inject coaching profile into chat?
         "current_version": config.APP_VERSION,  # for the update notice (cheap, local)
