@@ -16,8 +16,9 @@ plain words. Pick the ONE option that matches what you want:
 
   The first launch sets everything up (needs internet once), then opens a
   chess board in your browser. Review a game from anywhere: paste or upload
-  a PGN (Chess.com, OTB, any site), or — if you play on Lichess — just enter
-  your username and it loads your recent games for you.
+  a PGN (Chess.com, OTB, any site), or — if you play on Lichess or 
+  chess.com — just enter your username and it loads your recent games for you.
+  
   To quit: just close the browser tab.
 
 

@@ -166,9 +166,9 @@ MATE_SCORE_CP: int = 10000
 # CHESS_USERNAME), suppressing the first-run prompt.
 #
 # LICHESS_USERNAME is specifically the Lichess handle, which is what drives the "open my latest game"
-# autoload — chess.com has no public game-fetch API, so only a Lichess handle is autoloadable.
-# CHESSCOM_USERNAME is the chess.com handle; it folds into USERNAME's profile as a chesscom-pinned
-# alias. These are derived together by `_compose_identity` (called from env at import and re-applied
+# autoload. CHESSCOM_USERNAME is the chess.com handle; it drives the chess.com game fetch +
+# auto-sync (server.core.chesscom) and folds into USERNAME's profile as a chesscom-pinned alias.
+# These are derived together by `_compose_identity` (called from env at import and re-applied
 # from settings.json), so a chess.com-only user (no Lichess handle) is still canonically identified
 # by their chess.com name.
 USERNAME: str = ""
@@ -328,6 +328,16 @@ LICHESS_API_BASE: str = os.environ.get("LICHESS_API_BASE", "https://lichess.org"
 LICHESS_DEFAULT_MAX: int = int(os.environ.get("CHESS_LICHESS_MAX", "3"))
 # HTTP timeout (seconds) for Lichess requests.
 LICHESS_TIMEOUT: float = float(os.environ.get("CHESS_LICHESS_TIMEOUT", "20"))
+
+# Chess.com game import (server.core.chesscom). Uses the public published-data API (no auth).
+# CHESSCOM_API_BASE is overridable for testing. The auto-sync (POST /api/sync/chesscom) checks the
+# configured user's newest CHESSCOM_SYNC_MAX games on app launch and analyses any not yet in
+# history; CHESS_CHESSCOM_SYNC=0 disables the automatic sync (manual fetch still works). Both the
+# on/off flag and the count are user-editable in the Settings panel (settings.json wins over env).
+CHESSCOM_API_BASE: str = os.environ.get("CHESS_CHESSCOM_API_BASE", "https://api.chess.com").rstrip("/")
+CHESSCOM_TIMEOUT: float = float(os.environ.get("CHESS_CHESSCOM_TIMEOUT", "20"))
+CHESSCOM_SYNC_ENABLED: bool = os.environ.get("CHESS_CHESSCOM_SYNC", "1") != "0"
+CHESSCOM_SYNC_MAX: int = int(os.environ.get("CHESS_CHESSCOM_SYNC_MAX", "5"))
 
 # Endgame tablebase (server.core.tablebase). For <=7-man positions the in-browser chat / AI coach
 # facts include the EXACT theoretical result (win/draw/loss + DTZ/DTM) from the public Lichess

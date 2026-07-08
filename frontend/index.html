@@ -267,9 +267,26 @@
           <label class="set-field">
             <span class="set-label">Chess.com username <span class="set-opt">(optional)</span></span>
             <input id="set-chesscom" type="text" autocomplete="off" placeholder="ChessComUsername" />
-            <span class="set-hint">So your pasted / uploaded Chess.com games are recognised as
-              yours and folded into the same profile.</span>
+            <span class="set-hint">Your recent Chess.com games are recognised as yours and folded into
+              one profile. Auto-sync (below) can also analyze new ones on launch.</span>
           </label>
+
+          <label class="set-field set-check">
+            <span class="set-check-row">
+              <input id="set-chesscom-sync" type="checkbox" />
+              <span class="set-label">Auto-sync new Chess.com games on launch</span>
+            </span>
+            <span class="set-hint">On each launch, check your most recent Chess.com games and analyze any
+              not already reviewed. Off: fetch only when you press ⟳ Sync in the Games panel.</span>
+          </label>
+
+          <div id="chesscom-sync-max-field" class="set-field" hidden>
+            <span class="set-label">How many recent games to check</span>
+            <input id="set-chesscom-sync-max" type="number" min="1" max="50" step="1"
+              autocomplete="off" inputmode="numeric" />
+            <span class="set-hint">Already-reviewed games are skipped — if these are all analyzed
+              already, nothing new runs.</span>
+          </div>
 
           <label class="set-field">
             <span class="set-label">Other accounts <span class="set-opt">(optional)</span></span>

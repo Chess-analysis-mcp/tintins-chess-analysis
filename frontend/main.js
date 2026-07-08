@@ -33,6 +33,11 @@ let bestArrowOn = false;
 // Live best-move arrows: progressively deepen and refine while you sit on a position,
 // cancelled the moment the position changes, with a hard time cap so it never runs forever.
 let bestArrows = [];
+// Threat arrows (yellow): what the side that just moved is threatening to play next
+// (a null-move engine search server-side). Toggled like the best-move arrows.
+let threatArrowOn = false;
+let threatArrows = [];
+const THREAT_DEPTH = 16; // one fixed-depth probe is enough for "what's the threat?"
 let searchGen = 0; // bumped on every position change to invalidate in-flight searches
 const SEARCH_DEPTHS = [14, 18, 22]; // escalating precision; arrows update after each
 const SEARCH_MAX_MS = 5000; // stop deepening after this, even if more depth is available
@@ -47,13 +52,15 @@ let chatGen = 0; // bumped on each game open; invalidates an in-flight restoreCh
 
 // History panel + progressive (navigate-while-analyzing) open.
 let analyzing = false; // true during phase 1: provisional PGN timeline, no engine evals yet
-let historyMode = "normal"; // "normal" (local games) | "lichess"
+let historyMode = "normal"; // "normal" (local games) | "lichess" | "chesscom" | "paste"
 let myPlayerId = ""; // configured user's id, for inferring side on lichess lookups
 let pollTimer = null; // analysis-status poller
 let batchInfo = null; // {total, self_handle, lastDone} while a multi-game upload is analyzing
 let lichessCount = 5; // how many recent lichess games to show ("Load more" grows it)
 let lichessUser = ""; // the handle currently shown in lichess mode (for "Load more")
 const LICHESS_PAGE = 5; // initial count + how many more each "Load more"
+let chesscomCount = 5; // paging for the Chess.com tab, same scheme as lichess
+let chesscomUser = "";
 // "My games": /api/history returns every analysed game; we render them in pages (inside the
 // fixed-height scroll box) so the list starts short and grows on "Show more", not the page.
 let historyGames = []; // all rows from the last /api/history fetch
@@ -61,13 +68,17 @@ let historyCount = 10; // how many to show now ("Show more" grows it)
 const HISTORY_PAGE = 10; // initial count + how many more each "Show more"
 
 // App mode (double-click launcher): on open, auto-load the user's most recent game.
-// `appUsername` is the Lichess handle (config.LICHESS_USERNAME) — the only autoloadable identity, so
-// it drives "open my latest game" and the Lichess panel placeholder. `chesscomUsername` is the
-// configured chess.com handle; chess.com has no public fetch API, so it can't autoload — it only
-// tells the first-run flow not to re-prompt and routes the user to Paste / Upload PGN instead.
+// `appUsername` is the Lichess handle (config.LICHESS_USERNAME); it drives "open my latest game"
+// and the Lichess panel placeholder. `chesscomUsername` is the configured chess.com handle — it
+// drives the automatic chess.com sync on launch (new games are fetched + analyzed into My games)
+// and the chess.com autoload for users without a Lichess handle.
 let appMode = false;
 let appUsername = "";
 let chesscomUsername = "";
+// Auto-sync the configured chess.com user's newest games on launch (a Settings option, default on):
+// check the most recent `chesscomSyncMax` games and analyze any not already in history.
+let chesscomSync = true;
+let chesscomSyncMax = 5;
 // On-demand Claude-written end-of-game summary: generated when the user presses the button, or
 // automatically per game when `coachAiAuto` is on (a Settings option). `coachAiToken` invalidates
 // an in-flight request when a new game is opened so a stale summary never lands on the wrong game.
@@ -150,18 +161,34 @@ function renderBoard() {
 function arrowShape(uci, brush) {
   return { orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush };
 }
+// True when we're parked on a selected mistake's anchor: the position BEFORE your move, with you
+// to move. Free browsing (no mistake selected, or scrubbed away) sits AFTER the last move instead.
+function atMistakeAnchor() {
+  return currentMistake >= 0 && cur === anchorNode;
+}
+
+// The timeline node whose move is "under review" at the cursor: at a mistake anchor it's this
+// node's own OUTGOING move (you're before it, playing it back); while browsing it's the move that
+// just landed us here (cur - 1). Returns -1 at the very start (no move to show).
+function reviewedMoveNode() {
+  return atMistakeAnchor() ? cur : cur - 1;
+}
+
 function drawArrows() {
   if (puzzleMode) {
     ground.setAutoShapes(puzzleShapes);
     return;
   }
   const shapes = [];
-  // The move you actually played in-game — only at the review position. Grey = neutral
-  // "here's what you did", not a colour-coded judgement.
-  if (!exploring && !analyzing && cur === anchorNode && timeline[cur] && timeline[cur].move_uci) {
+  // The move you actually played, drawn only at a mistake anchor. There the board sits on the
+  // position BEFORE your move (you're to move, so the green best-move arrow is for YOUR side), so
+  // the played move is this node's OUTGOING move. Grey = neutral "here's what you did", shown
+  // alongside the green best move so you can compare what you did vs. what was best.
+  if (!exploring && !analyzing && atMistakeAnchor() && timeline[cur] && timeline[cur].move_uci) {
     shapes.push(arrowShape(timeline[cur].move_uci, "grey"));
   }
   if (bestArrowOn) for (const a of bestArrows) shapes.push(a);
+  if (threatArrowOn) for (const a of threatArrows) shapes.push(a);
   for (const s of evalShapes) shapes.push(s);
   // autoShapes (not setShapes): app-managed annotations that survive piece press/drag and
   // only change when we redraw — so the played-move arrow stays until you actually move.
@@ -170,37 +197,45 @@ function drawArrows() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Map top engine moves → green arrows. The best move is a bold arrow; alternatives are
+// Map top engine moves → arrows. The best move is a bold arrow; alternatives are
 // clearly thinner (with proportionally smaller heads, since chessground scales the arrowhead
 // with stroke width) so the recommendation stands out at a glance.
-function movesToArrows(moves) {
+function movesToArrows(moves, brush = "green", boldWidth = 13) {
   if (!moves.length) return [];
   const best = moves[0].win_percent;
   const out = [];
   for (let i = 0; i < moves.length; i++) {
     const delta = best - moves[i].win_percent;
     if (i > 0 && delta > 12) break; // only surface genuinely good alternatives
-    // best = bold (13); alternatives start much thinner (≤7) and taper with how much worse.
-    const lineWidth = i === 0 ? 13 : Math.max(4, 7 - delta);
+    // best = bold; alternatives start much thinner (≤7) and taper with how much worse.
+    const lineWidth = i === 0 ? boldWidth : Math.max(4, 7 - delta);
     out.push({
       orig: moves[i].uci.slice(0, 2),
       dest: moves[i].uci.slice(2, 4),
-      brush: "green",
+      brush,
       modifiers: { lineWidth },
     });
   }
   return out;
 }
 
-// Run an escalating-depth search for the current position; cancels itself on any
-// position change (searchGen) and stops after SEARCH_MAX_MS. Only active when the toggle is on.
-async function refreshBestMoves() {
+// Refresh the engine-driven arrows (best moves + threats) for the current position. Bumps
+// searchGen so any in-flight search for a previous position cancels itself; each enabled
+// arrow kind then fetches independently.
+function refreshBestMoves() {
   searchGen += 1; // cancel any in-flight search
   bestArrows = [];
+  threatArrows = [];
   drawArrows();
-  if (!bestArrowOn) return;
   const myGen = searchGen;
   const fen = chess.fen();
+  if (bestArrowOn) deepenBestMoves(fen, myGen);
+  if (threatArrowOn) fetchThreats(fen, myGen);
+}
+
+// Run an escalating-depth best-move search; cancels itself on any position change (searchGen)
+// and stops after SEARCH_MAX_MS.
+async function deepenBestMoves(fen, myGen) {
   await sleep(SEARCH_DEBOUNCE_MS); // coalesce rapid arrow-key scrubbing
   if (myGen !== searchGen) return;
   const t0 = performance.now();
@@ -222,6 +257,28 @@ async function refreshBestMoves() {
       drawArrows();
     }
     if (performance.now() - t0 > SEARCH_MAX_MS) break; // time cap
+  }
+}
+
+// One fixed-depth null-move probe: what does the side that just moved threaten to play next?
+// Drawn as yellow arrows, slightly thinner than the green best-move arrows.
+async function fetchThreats(fen, myGen) {
+  await sleep(SEARCH_DEBOUNCE_MS);
+  if (myGen !== searchGen) return;
+  let res;
+  try {
+    res = await fetch("/api/threats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fen, depth: THREAT_DEPTH, multipv: 3 }),
+    }).then((r) => r.json());
+  } catch (_) {
+    return;
+  }
+  if (myGen !== searchGen) return;
+  if (res && res.moves) {
+    threatArrows = movesToArrows(res.moves, "yellow", 11);
+    drawArrows();
   }
 }
 
@@ -299,7 +356,9 @@ function updateStatus() {
     $("ret").onclick = returnToReview;
   } else {
     el.className = "status";
-    const g = timeline[cur] ? classGlyph(timeline[cur].classification) : "";
+    // Grade the move under review (the mistake's own move at an anchor, else the last move played).
+    const mv = reviewedMoveNode();
+    const g = mv >= 0 && timeline[mv] ? classGlyph(timeline[mv].classification) : "";
     el.innerHTML = g + escapeHtml(currentPrompt || nodeLabel(cur));
   }
 }
@@ -309,9 +368,16 @@ function gotoNode(n) {
   exploring = false;
   cur = clamp(n, 0, timeline.length - 1);
   evalShapes = [];
-  // chat context: the game node's own position (before its move) + the move played there
-  chatFen = timeline[cur] ? timeline[cur].fen : null;
-  chatMove = timeline[cur] ? timeline[cur].move_san || null : null;
+  // chat context: the "move in question" is the reviewed move for this cursor (the mistake's own
+  // move at an anchor, else the move that just landed us here). chatFen is where it was played from.
+  const mv = reviewedMoveNode();
+  if (mv >= 0 && timeline[mv] && timeline[mv].move_san) {
+    chatFen = timeline[mv].fen;
+    chatMove = timeline[mv].move_san;
+  } else {
+    chatFen = timeline[cur] ? timeline[cur].fen : null;
+    chatMove = null;
+  }
   chess.load(timeline[cur].fen);
   renderBoard();
   setEvalBar(timeline[cur].win_white);
@@ -341,6 +407,14 @@ function toggleBestArrows() {
   const box = $("best-toggle");
   box.checked = !box.checked;
   bestArrowOn = box.checked;
+  refreshBestMoves();
+}
+
+// Toggle the yellow "Show threats" arrows from the keyboard (hotkey `t`), keeping the checkbox in sync.
+function toggleThreatArrows() {
+  const box = $("threat-toggle");
+  box.checked = !box.checked;
+  threatArrowOn = box.checked;
   refreshBestMoves();
 }
 
@@ -400,6 +474,7 @@ async function onUserMove(orig, dest) {
     updateStatus();
     updateNav();
     renderGraph();
+    highlightCurrentMove();
     refreshBestMoves();
     return;
   }
@@ -586,9 +661,13 @@ function renderMistakeList() {
 }
 
 async function selectMistake(i) {
+  const myGen = chatGen;
   const pos = await fetch(`/api/position/${i}`).then((r) => r.json());
+  if (myGen !== chatGen) return; // a different game opened while we were fetching
   currentMistake = i;
   currentPrompt = pos.error ? "" : pos.prompt;
+  // Land on the position BEFORE the mistake (you're on the move) so the engine's best-move arrow
+  // and any move you try are for YOUR side; the grey arrow still shows the move you actually played.
   anchorNode = mistakes[i].node_index;
   [...$("mistakes").children].forEach((li) =>
     li.classList.toggle("active", Number(li.dataset.index) === i)
@@ -678,7 +757,7 @@ function plyCell(nd) {
 function onMoveClick(i) {
   const nd = timeline[i];
   if (nd && nd.mistake_index != null) selectMistake(nd.mistake_index);
-  else gotoNode(i);
+  else gotoNode(i + 1); // show the position with the clicked move just completed
 }
 
 // Highlight the move at the current node and keep it scrolled into view (works in compact mode).
@@ -687,7 +766,8 @@ function highlightCurrentMove() {
   if (!ol) return;
   let active = null;
   ol.querySelectorAll(".ply[data-node]").forEach((el) => {
-    const on = Number(el.dataset.node) === cur;
+    // Highlight the move under review: the mistake's own move at an anchor, else the last move.
+    const on = Number(el.dataset.node) === reviewedMoveNode();
     el.classList.toggle("active", on);
     if (on) active = el;
   });
@@ -865,7 +945,7 @@ function setCoachAI(state, text) {
   } else if (state === "pending") {
     el.hidden = false;
     el.className = "coach-ai pending";
-    el.textContent = "Snowie is barking up a full game summary…";
+    el.textContent = "Snowie is writing up a full game summary…";
   } else if (state === "error") {
     el.hidden = false;
     el.className = "coach-ai err";
@@ -954,11 +1034,14 @@ async function loadAll() {
     appMode = !!cfg.app_mode;
     appUsername = (cfg.lichess_username || "").trim();
     chesscomUsername = (cfg.chesscom_username || "").trim();
+    chesscomSync = cfg.chesscom_sync !== false; // default on
+    chesscomSyncMax = Number(cfg.chesscom_sync_max) || 5;
     coachAiAuto = !!cfg.coach_ai_auto;
     personalizeHistory = cfg.personalize_history !== false; // default on
     puzzleAnimations = cfg.puzzle_animations !== false; // default on
   } catch (_) {}
   if (appUsername) $("lichess-user").placeholder = appUsername;
+  if (chesscomUsername) $("chesscom-user").placeholder = chesscomUsername;
   if (appMode) startHeartbeat(); // so closing this tab quits the standalone app
   // Reveal the Analyze/Puzzles switch only when puzzle data is available. Awaited (not fire-and-
   // forget) so we know before touching the board whether to resume puzzle mode after a reload.
@@ -975,7 +1058,11 @@ async function loadAll() {
   checkUpdates(); // surface an "update available" banner in app mode (fire-and-forget)
   checkOnline(); // surface a banner if there's no internet (network features unavailable)
 
+  // If the user opens a game while this startup load is still in flight (beginProvisional bumps
+  // chatGen), abandon it — otherwise the stale session/timeline would clobber the new game's state.
+  const myGen = chatGen;
   const session = await fetch("/api/session").then((r) => r.json());
+  if (myGen !== chatGen) return;
   if (session.empty) {
     if (wantPuzzle) {
       await setPuzzleMode(true, { resume: true });
@@ -989,6 +1076,7 @@ async function loadAll() {
   }
   applySession(session);
   const tl = await fetch("/api/timeline").then((r) => r.json());
+  if (myGen !== chatGen) return;
   applyTimeline(tl);
   // Skip the analysis board navigation when we're about to resume puzzle mode (it would clobber the
   // puzzle position); the game data is still loaded for when the user switches back to Analyze.
@@ -1204,21 +1292,72 @@ function startHeartbeat() {
   });
 }
 
-// App-mode empty board: auto-load the configured Lichess user's latest game; for a chess.com-only
-// user (no autoloadable handle) skip straight to Paste / Upload; otherwise prompt for a username.
+// App-mode empty board: first try the chess.com auto-sync (new games found -> the board shows the
+// first of them while the rest analyze); else auto-load the configured user's latest game
+// (Lichess, then chess.com); otherwise prompt for a username.
 async function maybeAutoload() {
+  if (chesscomSync && (await syncChesscom(true))) return true;
   if (appUsername) await autoOpenLatest(appUsername);
-  else if (chesscomUsername) openPastePanel(`Paste or upload ${chesscomUsername}'s games to analyze them.`);
+  else if (chesscomUsername) await autoOpenLatestChesscom(chesscomUsername);
   else showFirstRun("");
   return true;
 }
 
-// Reveal the Games panel on the Paste-PGN tab (the entry point for chess.com / any-source games).
-function openPastePanel(metaMsg) {
-  document.body.classList.remove("history-hidden"); // make sure the panel is visible
-  setMode("paste");
-  $("paste-pgn").focus();
-  if (metaMsg) $("game-meta").textContent = metaMsg;
+// Auto-sync: ask the server to fetch the configured chess.com user's newest games and analyze the
+// ones history hasn't seen. Returns true when a sync batch was started (the board shows its first
+// game). `quiet` suppresses the "nothing new" message (used on app launch).
+async function syncChesscom(quiet) {
+  if (!chesscomUsername) return false;
+  if (!quiet) $("history-status").textContent = "Syncing chess.com games…";
+  let res;
+  try {
+    res = await fetch("/api/sync/chesscom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then((r) => r.json());
+  } catch (_) {
+    if (!quiet) $("history-status").textContent = "Could not reach Chess.com.";
+    return false;
+  }
+  if (!res || res.error || !res.new_games) {
+    if (!quiet)
+      $("history-status").textContent =
+        res && res.error ? res.error : "chess.com is up to date — no new games.";
+    return false;
+  }
+  const n = res.new_games;
+  batchInfo = { total: n, self_handle: res.self_handle, lastDone: -1 };
+  $("history-status").textContent =
+    `Syncing ${n} new chess.com game${n === 1 ? "" : "s"} → they'll appear in My games.`;
+  beginProvisional(
+    res.first_pgn,
+    res.first_side,
+    `Syncing ${n} new chess.com game${n === 1 ? "" : "s"}… you can step through this one now.`
+  );
+  startPolling();
+  return true;
+}
+
+// Open the configured chess.com user's most recent game (autoload for chess.com-only users).
+async function autoOpenLatestChesscom(username) {
+  $("game-meta").textContent = `Loading ${username}'s most recent chess.com game…`;
+  const q = new URLSearchParams({ username, max: "1" });
+  let data;
+  try {
+    data = await fetch("/api/chesscom/games?" + q.toString()).then((r) => r.json());
+  } catch (_) {
+    $("game-meta").textContent = "Could not reach Chess.com — pick a game from the Games panel.";
+    return;
+  }
+  if (data.error || !(data.games || []).length) {
+    $("game-meta").textContent = data.error
+      ? data.error
+      : `No chess.com games found for ${username} — pick one from the Games panel.`;
+    return;
+  }
+  const g = data.games[0];
+  openGame(g.pgn, sideForUser(g, username));
 }
 
 // Persist both handles server-side (Lichess + chess.com) in one write and reflect them locally.
@@ -1322,9 +1461,12 @@ function buildProvisionalTimeline(pgn) {
 
 function setAnalyzingUI(on) {
   $("best-toggle").disabled = on; // engine pool is busy with the sweep
+  $("threat-toggle").disabled = on;
   if (on) {
     bestArrowOn = false;
     $("best-toggle").checked = false;
+    threatArrowOn = false;
+    $("threat-toggle").checked = false;
   }
   const box = $("analysis-progress");
   if (box) box.hidden = !on;
@@ -1508,7 +1650,10 @@ function stopPolling() {
 }
 
 async function onAnalysisReady() {
-  const prevCur = cur;
+  // Where the user navigated during phase 1 — only meaningful if a provisional timeline existed
+  // for THIS game (when the PGN couldn't be replayed client-side, `cur` is a stale index from the
+  // previous game and honouring it would land on an arbitrary move with no mistake selected).
+  const prevCur = timeline.length ? cur : 0;
   const session = await fetch("/api/session").then((r) => r.json());
   const tl = await fetch("/api/timeline").then((r) => r.json());
   if (session.empty) return; // superseded/cleared
@@ -1557,6 +1702,7 @@ async function loadHistory(doneMsg) {
   historyCount = HISTORY_PAGE; // a fresh fetch resets paging back to the first page
   renderMyGames();
   $("history-status").textContent = historyGames.length ? doneMsg || "" : "No analyzed games yet.";
+  loadInsights(); // the aggregate reflects whatever just landed in history
 }
 
 // Render the current page of "My games" into the (fixed-height, scrollable) list, with a
@@ -1612,6 +1758,40 @@ async function loadLichess(username) {
   }
 }
 
+async function loadChesscom(username) {
+  chesscomUser = username;
+  $("history-status").textContent = "Fetching from Chess.com…";
+  const q = new URLSearchParams();
+  if (username) q.set("username", username);
+  q.set("max", String(chesscomCount));
+  let data;
+  try {
+    data = await fetch("/api/chesscom/games?" + q.toString()).then((r) => r.json());
+  } catch (_) {
+    $("history-status").textContent = "Could not reach Chess.com.";
+    return;
+  }
+  if (data.error) {
+    $("history-status").textContent = data.error;
+    $("history-list").innerHTML = "";
+    return;
+  }
+  const games = data.games || [];
+  const who = (username || chesscomUsername || "").toLowerCase();
+  renderHistory(games, "lichess", who); // same remote-games rendering as the Lichess tab
+  $("history-status").textContent = games.length ? "" : "No games found.";
+  if (games.length >= chesscomCount) {
+    const li = document.createElement("li");
+    li.className = "load-more";
+    li.textContent = "Load more";
+    li.addEventListener("click", () => {
+      chesscomCount += LICHESS_PAGE;
+      loadChesscom(chesscomUser);
+    });
+    $("history-list").appendChild(li);
+  }
+}
+
 const resultClass = (r) => (r === "win" ? "win" : r === "loss" ? "loss" : r === "draw" ? "draw" : "");
 const resultWord = (r) => ({ win: "Won", loss: "Lost", draw: "Drew" }[r] || "");
 
@@ -1662,13 +1842,91 @@ function renderHistory(games, mode, who) {
   }
 }
 
+// --- insights panel --------------------------------------------------------
+// Cross-game themes + stats for the configured user over a chosen time window, aggregated
+// server-side from the analyzed-games history (GET /api/insights). Refreshed whenever the
+// history list reloads (i.e. as new games are analyzed) and when the period changes.
+let insightsDays = 30;
+
+async function loadInsights() {
+  const body = $("insights-body");
+  if (!body) return;
+  let data;
+  try {
+    data = await fetch(`/api/insights?days=${insightsDays}`).then((r) => r.json());
+  } catch (_) {
+    body.innerHTML = `<p class="muted">Could not load insights.</p>`;
+    return;
+  }
+  renderInsights(data);
+}
+
+function renderInsights(d) {
+  const body = $("insights-body");
+  if (!d || d.error) {
+    body.innerHTML = `<p class="muted">${escapeHtml((d && d.error) || "No data.")}</p>`;
+    return;
+  }
+  if (!d.games) {
+    body.innerHTML = `<p class="muted">No analyzed games in this period yet.</p>`;
+    return;
+  }
+  const r = d.results || {};
+  const mt = d.mistake_totals || {};
+  const parts = [];
+  parts.push(
+    `<div class="ins-stat"><b>${d.games}</b> game${d.games === 1 ? "" : "s"} · ` +
+      `${r.win || 0}W–${r.loss || 0}L–${r.draw || 0}D` +
+      (d.avg_accuracy != null ? ` · <b>${d.avg_accuracy}%</b> avg accuracy` : "") +
+      `</div>`
+  );
+  parts.push(
+    `<div class="ins-stat muted">${mt.blunder || 0} blunders · ${mt.mistake || 0} mistakes · ` +
+      `${mt.inaccuracy || 0} inaccuracies</div>`
+  );
+  const motifs = (d.top_motifs || []).slice(0, 5);
+  if (motifs.length) {
+    parts.push(
+      `<h3>Recurring themes</h3><ul class="ins-list">` +
+        motifs
+          .map(
+            (m) =>
+              `<li>${escapeHtml(m.label || m.motif)} <span class="muted">×${m.count}</span></li>`
+          )
+          .join("") +
+        `</ul>`
+    );
+  }
+  if (d.weakest_phase) {
+    parts.push(`<div class="ins-stat">Weakest phase: <b>${escapeHtml(d.weakest_phase)}</b></div>`);
+  }
+  const ops = (d.openings || []).slice(0, 3);
+  if (ops.length) {
+    parts.push(
+      `<h3>Most played openings</h3><ul class="ins-list">` +
+        ops
+          .map(
+            (o) =>
+              `<li>${escapeHtml(o.opening)} <span class="muted">×${o.games}` +
+              (o.avg_accuracy != null ? ` · ${o.avg_accuracy}%` : "") +
+              `</span></li>`
+          )
+          .join("") +
+        `</ul>`
+    );
+  }
+  body.innerHTML = parts.join("");
+}
+
 // Just the tab chrome (active button + which form/list is shown), no data fetch.
 function activateTab(mode) {
   historyMode = mode;
   $("mode-normal").classList.toggle("active", mode === "normal");
   $("mode-lichess").classList.toggle("active", mode === "lichess");
+  $("mode-chesscom").classList.toggle("active", mode === "chesscom");
   $("mode-paste").classList.toggle("active", mode === "paste");
   $("lichess-form").style.display = mode === "lichess" ? "flex" : "none";
+  $("chesscom-form").style.display = mode === "chesscom" ? "flex" : "none";
   $("paste-form").style.display = mode === "paste" ? "flex" : "none";
   $("history-list").style.display = mode === "paste" ? "none" : "";
 }
@@ -1761,6 +2019,11 @@ function eloTier(elo) {
   return label;
 }
 
+// Show/hide the "how many recent games to check" field to match the auto-sync checkbox.
+function updateChesscomSyncUI() {
+  $("chesscom-sync-max-field").hidden = !$("set-chesscom-sync").checked;
+}
+
 // Show/hide the slider to match the checkbox and refresh the readout.
 function updateSkillUI() {
   const auto = $("set-skill-auto").checked;
@@ -1784,6 +2047,9 @@ async function openSettings() {
   const s = data.settings || {};
   $("set-username").value = s.username || "";
   $("set-chesscom").value = s.chesscom_username || "";
+  $("set-chesscom-sync").checked = s.chesscom_sync !== false; // auto-sync new games (default on)
+  $("set-chesscom-sync-max").value = s.chesscom_sync_max || "5";
+  updateChesscomSyncUI();
   $("set-aliases").value = s.aliases || "";
   $("set-token").value = s.lichess_token || "";
   // Coaching memory: load the raw windows into the Advanced fields, then point the
@@ -1871,6 +2137,8 @@ async function saveSettings(e) {
   const patch = {
     username: $("set-username").value.trim(),
     chesscom_username: $("set-chesscom").value.trim(),
+    chesscom_sync: $("set-chesscom-sync").checked,
+    chesscom_sync_max: $("set-chesscom-sync-max").value.trim(),
     aliases: $("set-aliases").value.trim(),
     lichess_token: $("set-token").value.trim(),
     stockfish_path: $("set-stockfish").value.trim(),
@@ -1910,6 +2178,8 @@ async function saveSettings(e) {
   coachAiAuto = !!(res.settings && res.settings.coach_ai_auto);
   personalizeHistory = !(res.settings && res.settings.personalize_history === false);
   puzzleAnimations = !(res.settings && res.settings.puzzle_animations === false);
+  chesscomSync = !(res.settings && res.settings.chesscom_sync === false);
+  chesscomSyncMax = Number(res.settings && res.settings.chesscom_sync_max) || 5;
   const card = $("coach-ai");
   const busy = card && !card.hidden && !card.classList.contains("err");
   if (timeline.length && !busy) {
@@ -1929,6 +2199,9 @@ function setMode(mode) {
   } else if (mode === "lichess") {
     lichessCount = LICHESS_PAGE; // fresh search starts at the first page
     loadLichess($("lichess-user").value.trim());
+  } else if (mode === "chesscom") {
+    chesscomCount = LICHESS_PAGE;
+    loadChesscom($("chesscom-user").value.trim());
   } else {
     // paste: nothing to fetch; just a hint until they submit.
     updatePasteHint();
@@ -2725,6 +2998,10 @@ function init() {
     bestArrowOn = e.target.checked;
     refreshBestMoves(); // starts the live search when on, clears arrows when off
   });
+  $("threat-toggle").addEventListener("change", (e) => {
+    threatArrowOn = e.target.checked;
+    refreshBestMoves();
+  });
   $("graph").addEventListener("click", onGraphClick);
   $("movelist-expand").addEventListener("click", toggleMoveList);
   $("coach-ai-btn").addEventListener("click", fetchCoachAI);
@@ -2735,6 +3012,7 @@ function init() {
   $("history-collapse").addEventListener("click", toggleHistory);
   $("mode-normal").addEventListener("click", () => setMode("normal"));
   $("mode-lichess").addEventListener("click", () => setMode("lichess"));
+  $("mode-chesscom").addEventListener("click", () => setMode("chesscom"));
   $("mode-paste").addEventListener("click", () => setMode("paste"));
   // Paste-PGN: analyze any PGN (e.g. Chess.com), single or multi-game, without the Lichess fetch.
   $("paste-upload").addEventListener("click", () => $("paste-file").click());
@@ -2759,6 +3037,19 @@ function init() {
     lichessCount = LICHESS_PAGE; // a new lookup starts fresh
     loadLichess($("lichess-user").value.trim());
   });
+  $("chesscom-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    chesscomCount = LICHESS_PAGE;
+    loadChesscom($("chesscom-user").value.trim());
+  });
+  // Manual "Sync new games": fetch + analyze anything history hasn't seen for the configured user.
+  $("chesscom-sync").addEventListener("click", () => {
+    if (!chesscomUsername) {
+      $("history-status").textContent = "Set your chess.com username in ⚙ Settings first.";
+      return;
+    }
+    syncChesscom(false);
+  });
   // "Set as my account": make the looked-up Lichess handle your unified identity.
   $("set-as-me").addEventListener("click", async () => {
     const u = ($("lichess-user").value.trim() || lichessUser || "").trim();
@@ -2767,8 +3058,8 @@ function init() {
     reflectSetAsMe((u || "").toLowerCase());
     loadHistory(); // "My games" now resolves to this account
   });
-  // First-run prompt (no configured account): two fields, fill in either. Save both, then open the
-  // Lichess user's latest game if given, else route the chess.com user to Paste / Upload PGN.
+  // First-run prompt (no configured account): two fields, fill in either. Save both, then sync +
+  // open the user's latest game (chess.com sync first, else the Lichess/chess.com autoload).
   $("firstrun-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const lichess = $("firstrun-user").value.trim();
@@ -2776,8 +3067,12 @@ function init() {
     if (!lichess && !chesscom) return;
     await saveIdentity(lichess, chesscom);
     $("firstrun").hidden = true;
-    if (lichess) autoOpenLatest(lichess);
-    else openPastePanel(`Paste or upload ${chesscom}'s games to analyze them.`);
+    maybeAutoload();
+  });
+  // Insights panel: re-aggregate when the time period changes.
+  $("insights-period").addEventListener("change", (e) => {
+    insightsDays = Number(e.target.value) || 0;
+    loadInsights();
   });
   // Puzzle mode: top-level Analyze/Puzzles switch + the rail controls.
   $("mode-analyze").addEventListener("click", () => setPuzzleMode(false));
@@ -2799,6 +3094,7 @@ function init() {
   $("set-recent").addEventListener("input", syncProfileModeFromFields);
   $("set-lifetime").addEventListener("input", syncProfileModeFromFields);
   $("set-skill-auto").addEventListener("change", updateSkillUI);
+  $("set-chesscom-sync").addEventListener("change", updateChesscomSyncUI);
   $("set-elo").addEventListener("input", updateSkillUI);
   $("set-ollama-detect").addEventListener("click", detectOllama);
   $("set-ollama-model-select").addEventListener("change", (e) => {
@@ -2833,6 +3129,9 @@ function init() {
     } else if (e.key === "l" || e.key === "L") {
       e.preventDefault();
       toggleBestArrows(); // l = toggle best-move arrows (Lichess: local engine)
+    } else if (e.key === "t" || e.key === "T") {
+      e.preventDefault();
+      toggleThreatArrows(); // t = toggle threat arrows
     } else if (e.key === "n" || e.key === "N") {
       e.preventDefault();
       if (currentMistake < mistakes.length - 1) selectMistake(currentMistake + 1); // next mistake
