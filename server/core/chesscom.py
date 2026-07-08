@@ -156,12 +156,21 @@ def fetch_user_games(
         cutoff = datetime.datetime.now(tz=datetime.timezone.utc).timestamp() - since_days * 86400
 
     base = config.CHESSCOM_API_BASE
+    # A 404 on the archives *index* means the username really doesn't exist; let it propagate.
     archives = _get_json(f"{base}/pub/player/{name}/games/archives").get("archives", [])
     games: list[GameSummary] = []
     for archive_url in reversed(archives):  # newest month first
+        # Chess.com sometimes lists a monthly archive URL that itself 404s (a phantom/empty
+        # future month). That's a quirk of their index, not a bad username, so skip the month
+        # rather than aborting the whole fetch — otherwise a single bad newest-month archive
+        # would hide every earlier month's games.
+        try:
+            month_games = _get_json(archive_url).get("games", [])
+        except ChesscomError:
+            continue
         month = [
             _summary_from_json(g)
-            for g in _get_json(archive_url).get("games", [])
+            for g in month_games
             if g.get("pgn") and g.get("rules", "chess") == "chess"
         ]
         month.sort(key=lambda g: g.end_time, reverse=True)
