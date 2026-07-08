@@ -32,7 +32,69 @@ def test_next_returns_a_solvable_puzzle_without_the_solution(client):
     assert "moves" not in nx  # the solution is never sent to the client
 
 
-def test_solve_flow_updates_rating(client):
+def test_has_engine_detects_a_windows_style_managed_path(monkeypatch):
+    """On Windows the managed engine is C:\\...\\stockfish.exe (backslashes); the old '/'-only check
+    read that as "no engine" and disabled From-your-games + interleave. Simulate a Windows path."""
+    from server.web import routes_puzzles as rp
+
+    win_path = r"C:\Users\me\AppData\Roaming\Tintin\data\engine\stockfish.exe"
+    monkeypatch.setattr(rp.shutil, "which", lambda p: None)  # not resolvable on PATH
+    monkeypatch.setattr(rp.os, "sep", "\\")
+    monkeypatch.setattr(rp.os, "altsep", "/")
+    monkeypatch.setattr(rp.os.path, "exists", lambda p: p == win_path)
+    monkeypatch.setattr(rp.config, "STOCKFISH_PATH", win_path)
+    assert rp._has_engine() is True
+
+
+def test_has_engine_falls_back_to_existing_path_on_this_os(monkeypatch, tmp_path):
+    from server.web import routes_puzzles as rp
+
+    engine = tmp_path / "stockfish"
+    engine.write_text("")  # exists but not executable / not on PATH
+    monkeypatch.setattr(rp.shutil, "which", lambda p: None)
+    monkeypatch.setattr(rp.config, "STOCKFISH_PATH", str(engine))
+    assert rp._has_engine() is True
+
+
+def test_interleave_can_swap_in_a_mistake_puzzle(client, monkeypatch):
+    """With interleave on + a mistake puzzle available, a tactics request can serve an own-game
+    position instead — carrying the played move for the grey "you played" arrow."""
+    from server.web import routes_puzzles as rp
+
+    fake = {"id": "g1:white:3", "key": "g1:white:3", "source": "your_games",
+            "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "side_to_move": "white", "motifs": [],
+            "played_uci": "e2e4", "played_san": "e4", "best_uci": "d2d4"}
+    monkeypatch.setattr(rp, "_has_engine", lambda: True)
+    monkeypatch.setattr(rp.puzzle_mistakes, "next_mistake_puzzle", lambda *a, **k: dict(fake))
+    monkeypatch.setattr(config, "PUZZLE_MISTAKE_INTERLEAVE", True)
+    monkeypatch.setattr(config, "PUZZLE_MISTAKE_INTERLEAVE_PROB", 1.0)  # force the swap
+    nx = client.get("/api/puzzle/next").json()
+    assert nx["source"] == "your_games"
+    assert nx["played_uci"] == "e2e4"  # surfaced for the grey played-move arrow
+
+
+def test_interleave_off_serves_curated_tactics(client, monkeypatch):
+    monkeypatch.setattr(config, "PUZZLE_MISTAKE_INTERLEAVE", False)
+    nx = client.get("/api/puzzle/next").json()
+    assert nx.get("source") != "your_games" and nx["id"]
+
+
+def test_interleave_toggle_roundtrips_through_settings_route(client):
+    """Guards the whole toggle path: the SettingsPatch field, KEYS persistence, and live apply
+    (a missing SettingsPatch field would silently drop the toggle)."""
+    assert "puzzle_mistake_interleave" in client.get("/api/settings").json()["settings"]
+    r = client.post("/api/settings", json={"puzzle_mistake_interleave": False}).json()
+    assert r["settings"]["puzzle_mistake_interleave"] is False
+    assert config.PUZZLE_MISTAKE_INTERLEAVE is False
+    r = client.post("/api/settings", json={"puzzle_mistake_interleave": True}).json()
+    assert r["settings"]["puzzle_mistake_interleave"] is True
+
+
+def test_solve_flow_updates_rating(client, monkeypatch):
+    # The fresh state uses a RANDOM user_seed, so the picked puzzle varies run-to-run; a small slice
+    # of the baseline has rd>=PUZZLE_MAX_RD (unrated). Force every solved puzzle to count so this
+    # exercises the Glicko path deterministically.
+    monkeypatch.setattr(config, "PUZZLE_MAX_RD", 9999)
     nx = client.get("/api/puzzle/next").json()
     puzzle = puzzles_mod.get_puzzle(nx["id"])
     moves = puzzle["moves"]
@@ -79,3 +141,40 @@ def test_current_resumes_in_progress_puzzle(client):
 def test_move_without_active_puzzle_is_a_conflict(client):
     r = client.post("/api/puzzle/move", json={"id": "nope", "uci": "e2e4"})
     assert r.status_code == 409
+
+
+# --- Puzzle storm (timed rush) over the HTTP surface -------------------------------------------
+
+def test_storm_start_serves_a_puzzle_and_scoreboard(client):
+    view = client.post("/api/puzzle/storm/start").json()
+    assert view["active"] is True and view["ended"] is False
+    assert view["score"] == 0 and view["remaining"] > 0
+    assert view["puzzle"]["id"] and view["puzzle"]["side_to_move"] in ("white", "black")
+    assert "moves" not in view["puzzle"]  # never leak the solution
+    st = client.get("/api/puzzle/storm/state").json()
+    assert st["active"] is True and "high" in st
+
+
+def test_storm_full_solve_scores_then_next(client):
+    view = client.post("/api/puzzle/storm/start").json()
+    moves = puzzles_mod.get_puzzle(view["puzzle"]["id"])["moves"]
+    last = None
+    for i in range(1, len(moves), 2):
+        last = client.post("/api/puzzle/storm/move", json={"uci": moves[i]}).json()
+        if last.get("puzzle_done"):
+            break
+    assert last["solved"] is True and last["score"] == 1
+    nxt = client.post("/api/puzzle/storm/start")  # a fresh run resets the score
+    assert nxt.json()["score"] == 0
+
+
+def test_storm_wrong_move_records_a_miss(client):
+    client.post("/api/puzzle/storm/start")
+    res = client.post("/api/puzzle/storm/move", json={"uci": "a1a1"}).json()
+    assert res["correct"] is False and res["misses"] == 1
+
+
+def test_storm_end_persists_and_clears(client):
+    client.post("/api/puzzle/storm/start")
+    assert client.post("/api/puzzle/storm/end").json()["ended"] is True
+    assert client.get("/api/puzzle/storm/state").json()["active"] is False

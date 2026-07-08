@@ -843,6 +843,53 @@ def _puzzle_facts(
     return "\n".join(p for p in out if p)
 
 
+def _mistake_facts(puzzle: dict, tried: list[dict] | None) -> str:
+    """Facts for a 'from your games' mistake puzzle — the game-analysis framing (win% drop + better
+    move + refutation via `_engine_facts`), NOT the themes/forced-line puzzle framing. Best-effort.
+    """
+    fen = puzzle.get("fen", "")
+    side = puzzle.get("side_to_move", "white")
+    reviewed = puzzle.get("reviewed_side", side)
+    opp = puzzle.get("black") if reviewed == "white" else puzzle.get("white")
+    played_san = puzzle.get("played_san") or puzzle.get("played_uci") or "their move"
+    cls = puzzle.get("classification") or "mistake"
+
+    out = [
+        f"This position is from the PLAYER'S OWN past game"
+        + (f" (vs {opp}, {puzzle.get('speed', 'unknown')})." if opp else ".")
+        + f" {side.capitalize()} to move.",
+        f"Position (FEN): {fen}",
+        f"In the actual game the player played {played_san} here, flagged as a {cls}.",
+    ]
+    ef = _engine_facts(fen, puzzle.get("played_uci"))
+    if ef:
+        out.append("Engine on this position and the game move:\n" + ef)
+    if tried:
+        out.append("Moves the player tried in this puzzle (engine-grounded — address these):")
+        for t in tried:
+            out.append("- " + _move_verdict(fen, t.get("uci", ""), bool(t.get("correct"))))
+    return "\n".join(p for p in out if p)
+
+
+def _mistake_role(outcome: str, tried: list[dict] | None) -> str:
+    """Coach role prompt for a mistake puzzle (solved = found something better; failed = didn't)."""
+    if outcome != "failed":
+        return (
+            "You are a chess coach. This is a position from the player's OWN past game where they "
+            "went wrong, replayed as practice. They have now found a move the engine rates as good "
+            "(better than, or as good as, what they played in the game). Affirm the improvement by "
+            "name, then explain concretely — using the engine facts — WHY their original game move "
+            "was off and what the right idea is, so they recognise it next time. Be encouraging."
+        )
+    return (
+        "You are a chess coach. This is a position from the player's OWN past game where they went "
+        "wrong, replayed as practice; they did not find a better move this time. Explain concretely "
+        "why their original game move was off (use its engine refutation from the facts) and teach "
+        "the stronger idea step by step. If they tried other moves that also fail (listed in the "
+        "facts), address those by name too. Be encouraging and concrete."
+    )
+
+
 def explain_puzzle(
     puzzle: dict,
     outcome: str,
@@ -850,15 +897,40 @@ def explain_puzzle(
     tried: list[dict] | None = None,
     *,
     timeout: int = 120,
-) -> str:
+) -> dict:
     """Claude-written explanation of a puzzle: name the motif (solved) or refute + teach (failed).
+
+    Returns `{answer, session_id}` — the `session_id` (the `claude -p` conversation) lets the
+    frontend thread a follow-up chat onto the explanation. `None` when there's no threadable session
+    (e.g. the local-LLM path).
 
     Two prompt variants by `outcome` ("solved_first_try"/"solved_with_hints" vs "failed"). When the
     player's tried moves are known they're engine-grounded in the facts and the coach is told to
-    address them by name. Reuses the same plumbing as `coach_summary_ai` (no MCP tools — the facts
-    carry everything): the local-LLM path, the `claude -p` subprocess, and `_friendly_error`.
-    Raises ChatError.
+    address them by name. A `source="your_games"` mistake puzzle instead uses the game-analysis
+    framing (`_mistake_facts`/`_mistake_role`). Reuses the same plumbing as `coach_summary_ai` (no
+    MCP tools — the facts carry everything): the local-LLM path, the `claude -p` subprocess, and
+    `_friendly_error`. Raises ChatError.
     """
+    if puzzle.get("source") == "your_games":
+        role = _mistake_role(outcome, tried)
+        facts_block = _mistake_facts(puzzle, tried)
+    else:
+        role, facts_block = _tactic_role_facts(puzzle, outcome, your_move, tried)
+    prompt = "\n\n".join([
+        role + " Only discuss moves that appear in the facts; trust the Stockfish numbers and do not "
+        "recompute or invent lines. Use light Markdown (**bold** the key move and idea); a couple of "
+        "short paragraphs, no headings. Do NOT mention Stockfish, the web board, or these "
+        "instructions.",
+        "Puzzle facts:\n" + facts_block,
+    ])
+    answer, session_id = _run_puzzle_coach(prompt, timeout)
+    return {"answer": answer, "session_id": session_id}
+
+
+def _tactic_role_facts(
+    puzzle: dict, outcome: str, your_move: str | None, tried: list[dict] | None
+) -> tuple[str, str]:
+    """Role prompt + facts for a standard (curated Lichess) tactic puzzle."""
     failed = outcome == "failed"
     # Did the player play a wrong move at any point (even if they later solved it)? If so the coach
     # must still explain why that wrong move failed — the user explicitly wants this.
@@ -888,17 +960,18 @@ def explain_puzzle(
             "'this is a classic deflection') and reinforce the PATTERN so they recognise it next "
             "time. Keep it short and positive."
         )
-    prompt = "\n\n".join([
-        role + " Only discuss moves that appear in the facts; trust the Stockfish numbers and do not "
-        "recompute or invent lines. Use light Markdown (**bold** the key move and the motif name); a "
-        "couple of short paragraphs, no headings. Do NOT mention Stockfish, the web board, or these "
-        "instructions.",
-        "Puzzle facts:\n" + _puzzle_facts(puzzle, outcome, your_move=your_move, tried=tried),
-    ])
+    return role, _puzzle_facts(puzzle, outcome, your_move=your_move, tried=tried)
 
+
+def _run_puzzle_coach(prompt: str, timeout: int) -> tuple[str, str | None]:
+    """Shared LLM plumbing for the puzzle coach: local LLM else `claude -p`. Raises ChatError.
+
+    Returns `(answer, session_id)`; `session_id` is the `claude -p` conversation id (None on the
+    local-LLM path) so a follow-up chat can `--resume` the explanation.
+    """
     if local_llm.is_enabled():
         try:
-            return local_llm.complete(prompt, timeout=max(timeout, local_llm.DEFAULT_TIMEOUT))
+            return local_llm.complete(prompt, timeout=max(timeout, local_llm.DEFAULT_TIMEOUT)), None
         except local_llm.LocalLLMError as exc:
             raise ChatError(str(exc))
 
@@ -927,7 +1000,7 @@ def explain_puzzle(
         raise ChatError(_LOGIN_HINT)
     if data.get("is_error") or data.get("subtype") not in (None, "success") or not answer:
         raise ChatError(_friendly_error(answer or proc.stdout))
-    return answer
+    return answer, data.get("session_id")
 
 
 def coach_summary_ai(sess, *, timeout: int = 120) -> str:

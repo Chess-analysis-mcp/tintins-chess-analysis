@@ -108,6 +108,8 @@ let puzzleBusy = false; // true while animating a forced reply (ignore input)
 let puzzleShapes = []; // solution/refutation arrows shown after the fact
 let puzzleLastMove = null; // [from, to] of the last move, for the square-blink
 let puzzleStreak = 0; // server streak number (clean solves in a row)
+let puzzleDailyStreak = 0; // consecutive days practiced (from the server)
+let puzzleBestDaily = 0;
 // Last few puzzle outcomes THIS session (true = solved clean/green, false = missed/red), shown as
 // colour-coded pips beside the streak. Mirrored to sessionStorage so a reload keeps them.
 let puzzleResults = [];
@@ -115,6 +117,36 @@ let puzzleResults = [];
 // and bails after each await if it changed, so a stale callback from the PREVIOUS puzzle can never
 // leak its result (or a forced reply) onto the puzzle now on the board.
 let puzzleGen = 0;
+// P3/P3.5 selection prefs. `puzzleSource` + the puzzle/analyze mode are persisted in localStorage
+// (keyed to this host:port origin), so closing the app and reopening it via ANY launcher
+// (.app/.command/.bat) returns to where you left off — the mode AND the sub-tab.
+const PZ_MODE_KEY = "pzLastMode"; // "1" = was in puzzle mode
+const PZ_SOURCE_KEY = "pzSource"; // "lichess" | "your_games"
+function lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+let puzzleSource = lsGet(PZ_SOURCE_KEY) || "lichess"; // "lichess" curated tactics | "your_games" own-game mistakes
+let puzzleDifficulty = null; // null | "easier" | "harder"
+let puzzleWeakness = false; // bias curated tactics toward the player's weak themes
+// Follow-up chat after "Explain why": only exists once explain has run. Threads onto the
+// explanation's claude session so questions have its context.
+let puzzleChatSession = null; // claude -p session id from the explanation, for --resume
+let puzzleChatFen = null; // the position the follow-up chat grounds on (the puzzle solve position)
+let puzzleChatBusy = false;
+// When set, the next analysis to become ready jumps to this timeline node (a "replay in full game"
+// from a mistake puzzle). Consumed once in onAnalysisReady.
+let pendingGotoPly = null;
+
+// --- puzzle storm (timed rush) ---
+// A sub-mode of puzzle mode: `stormShown` = the storm scoreboard is on screen (vs the Solve
+// trainer); `stormRunning` = a run is live (routes board moves to onStormMove + ticks the clock).
+let stormShown = false;
+let stormRunning = false;
+let stormPuzzle = null; // {id, fen, side_to_move, themes}
+let stormBusy = false; // true while validating a move / animating a reply
+let stormGen = 0; // bumped per storm puzzle, so a stale async handler bails
+let stormTimerId = null;
+let stormDeadline = 0; // client-side ms wall-clock the run ends at (server remaining is authoritative)
+let stormScore = 0, stormCombo = 0;
 
 const $ = (id) => document.getElementById(id);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -456,6 +488,7 @@ async function syncExplore() {
 
 // --- user moves ----------------------------------------------------------
 async function onUserMove(orig, dest) {
+  if (stormRunning) return onStormMove(orig, dest);
   if (puzzleMode) return onPuzzleMove(orig, dest);
   const moverColor = turnColor();
   const fenBefore = chess.fen();
@@ -920,12 +953,42 @@ function applySession(session) {
 }
 
 // Free, engine-grounded templated blurb (rides on /api/session) — always shown when present.
+// The templated quick summary + whether the user has manually expanded it while an AI summary is up.
+let quickSummaryHasText = false;
+let quickSummaryUserExpanded = false;
+let coachAiReady = false;
+
 function renderCoach(session) {
   const el = $("coach");
   if (!el) return;
-  const text = session && session.coach_summary;
-  el.textContent = text || "";
-  el.hidden = !text;
+  const text = (session && session.coach_summary) || "";
+  el.textContent = text;
+  quickSummaryHasText = !!text;
+  quickSummaryUserExpanded = false;
+  syncQuickSummary();
+}
+
+// Collapse the templated quick summary behind a toggle once the fuller AI (Snowie) summary is on
+// screen — the AI one is the richer version, so the quick summary is redundant but kept one click
+// away. With no AI summary the quick summary shows outright (no toggle).
+function syncQuickSummary() {
+  const el = $("coach");
+  const toggle = $("coach-toggle");
+  if (!el || !toggle) return;
+  if (!quickSummaryHasText) {
+    el.hidden = true;
+    toggle.hidden = true;
+    return;
+  }
+  if (!coachAiReady) {
+    el.hidden = false;
+    toggle.hidden = true;
+    return;
+  }
+  // AI summary present: default to collapsed, expandable on demand.
+  toggle.hidden = false;
+  el.hidden = !quickSummaryUserExpanded;
+  toggle.textContent = quickSummaryUserExpanded ? "▾ Hide quick summary" : "▸ Show quick summary";
 }
 
 // Claude-written summary (board column, bottom). The card shows its state; the button offers
@@ -963,6 +1026,10 @@ function setCoachAI(state, text) {
     const rb = $("coach-ai-refresh");
     if (rb) rb.addEventListener("click", () => fetchCoachAI(true));
   }
+  // Only a finished AI summary supersedes the templated quick one; while it's pending/errored the
+  // quick summary stays visible so there's never a gap with no overview.
+  coachAiReady = state === "ready";
+  syncQuickSummary();
 }
 
 // Set up the AI-summary UI for the freshly-loaded game: show an already-saved summary outright,
@@ -1051,7 +1118,7 @@ async function loadAll() {
     if (cfg && cfg.enabled) {
       puzzleConfigCache = cfg;
       $("mode-switch").hidden = false;
-      wantPuzzle = sessionStorage.getItem("pzMode") === "1";
+      wantPuzzle = lsGet(PZ_MODE_KEY) === "1"; // persisted across full app restarts
     }
   } catch (_) {}
   checkSetup(); // surface a banner if Stockfish / the claude CLI is missing (fire-and-forget)
@@ -1071,7 +1138,7 @@ async function loadAll() {
     // App mode: try to auto-load the user's most recent Lichess game instead of an empty board.
     if (appMode && (await maybeAutoload())) return;
     $("game-meta").textContent =
-      "No game analysed yet — pick one from the Games panel, or run analyze_game.";
+      "Waiting to open a game — pick one from the Games panel, or run analyze_game.";
     return;
   }
   applySession(session);
@@ -1514,7 +1581,11 @@ function beginProvisional(pgn, side, metaText) {
   setAnalyzingUI(true);
   renderMistakeList();
   $("scoreboard").hidden = true; // stale until the new game's stats land in phase-2
+  quickSummaryHasText = false;
+  quickSummaryUserExpanded = false;
+  coachAiReady = false;
   $("coach").hidden = true;
+  $("coach-toggle").hidden = true;
   coachAiToken++; // invalidate any in-flight AI summary from the previous game
   setCoachAI("hidden");
   showCoachButton(false);
@@ -1661,8 +1732,13 @@ async function onAnalysisReady() {
   setAnalyzingUI(false); // hides the progress bar
   applySession(session);
   applyTimeline(tl);
+  // "Replay in full game" from a mistake puzzle wins: land on the exact position of the mistake.
+  if (pendingGotoPly != null) {
+    gotoNode(clamp(pendingGotoPly, 0, timeline.length - 1));
+    pendingGotoPly = null;
+  }
   // Keep the user where they were navigating; if they hadn't moved, jump to the first mistake.
-  if (prevCur === 0 && mistakes.length) selectMistake(session.current_index ?? 0);
+  else if (prevCur === 0 && mistakes.length) selectMistake(session.current_index ?? 0);
   else gotoNode(clamp(prevCur, 0, timeline.length - 1));
   restoreChat(); // repopulate this game's in-memory Q&A (if we've chatted about it this session)
   prepareCoachAI(session); // timeline is set now → show saved summary, auto-generate, or offer button
@@ -2071,6 +2147,7 @@ async function openSettings() {
   $("set-coach-ai-persist").checked = s.coach_ai_persist !== false; // remember summaries (default on)
   $("set-personalize").checked = s.personalize_history !== false; // personalize chat (default on)
   $("set-puzzle-animations").checked = s.puzzle_animations !== false; // solve animations (default on)
+  $("set-puzzle-interleave").checked = s.puzzle_mistake_interleave !== false; // mix in own-game mistakes (default on)
   $("set-sf-status").textContent = data.stockfish_ok
     ? "Stockfish engine found ✓"
     : "Stockfish not found — analysis won't run until this points at the engine.";
@@ -2148,6 +2225,7 @@ async function saveSettings(e) {
     coach_ai_persist: $("set-coach-ai-persist").checked,
     personalize_history: $("set-personalize").checked,
     puzzle_animations: $("set-puzzle-animations").checked,
+    puzzle_mistake_interleave: $("set-puzzle-interleave").checked,
   };
   // The Advanced fields are the source of truth (the dropdowns just fill them).
   patch.profile_recent = $("set-recent").value.trim();
@@ -2547,6 +2625,9 @@ function renderPuzzleBoard(movable) {
     orientation: orient,
     turnColor: color,
     check: chess.inCheck(),
+    // Explicitly drive the yellow last-move highlight: because we set the FEN directly (rather than
+    // via ground.move), chessground doesn't infer it, so without this it flickered on and off.
+    lastMove: puzzleLastMove || undefined,
     movable: {
       color: movable ? color : undefined,
       dests: movable ? computeDests() : new Map(),
@@ -2579,6 +2660,73 @@ function renderPuzzlePips() {
   el.innerHTML = html;
 }
 
+// Day-over-day practice streak, shown as a quiet flame chip (brightens past a day).
+function renderDailyStreak(streak, best) {
+  if (streak != null) puzzleDailyStreak = streak;
+  if (best != null) puzzleBestDaily = best;
+  const el = $("pz-daily");
+  if (!el) return;
+  const n = puzzleDailyStreak || 0;
+  if (n < 1) { el.hidden = true; el.textContent = ""; return; }
+  el.classList.toggle("hot", n >= 2);
+  el.innerHTML = `🔥 <b>${n}</b> day${n === 1 ? "" : "s"}`;
+  el.title = `Practised ${n} day${n === 1 ? "" : "s"} in a row` +
+    (puzzleBestDaily > n ? ` · best ${puzzleBestDaily}` : "");
+  el.hidden = false;
+}
+
+// The rating progress is COLLAPSED by default: the rail shows only "Rating" + your current number.
+// Pressing the header expands a quiet white line curve (styled like the analysis win% plot) of your
+// recent rated attempts — no colour-coding, just the trend line at the top of where the bars were.
+let ratingCurveExpanded = false;
+
+function renderRatingCurve(history) {
+  const el = $("pz-progress");
+  if (!el) return;
+  const pts = (history || [])
+    .filter((h) => h && h.rated && typeof h.rating_after === "number")
+    .map((h) => h.rating_after);
+  if (pts.length < 2) { el.hidden = true; el.innerHTML = ""; return; }
+  const win = pts.slice(-24); // keep it compact
+  const current = Math.round(win[win.length - 1]);
+  const min = Math.min(...win), max = Math.max(...win);
+  const span = Math.max(1, max - min);
+  const net = Math.round(win[win.length - 1] - win[0]);
+  const netCls = net > 0 ? "up" : net < 0 ? "down" : "flat";
+  const netStr = (net > 0 ? "+" : "") + net;
+
+  // White trend line (+ faint fill under it) over a dark panel — same visual language as renderGraph.
+  const W = 260, H = 48, PAD = 4;
+  const xAt = (i) => (i / (win.length - 1)) * W;
+  const yAt = (r) => H - PAD - ((r - min) / span) * (H - 2 * PAD);
+  const seq = win.map((r, i) => `${xAt(i).toFixed(1)},${yAt(r).toFixed(1)}`);
+  const line = seq.map((p, i) => `${i === 0 ? "M" : "L"}${p}`).join(" ");
+  const area = `M0,${H} L${seq.join(" L")} L${W},${H} Z`;
+  const svg =
+    `<svg class="pz-curve" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">` +
+    `<rect x="0" y="0" width="${W}" height="${H}" fill="#14130f"/>` +
+    `<path d="${area}" fill="rgba(236,234,228,0.12)"/>` +
+    `<path d="${line}" fill="none" stroke="#e8e6e3" stroke-width="1.5" vector-effect="non-scaling-stroke"/>` +
+    `</svg>`;
+
+  el.classList.toggle("open", ratingCurveExpanded);
+  el.innerHTML =
+    `<button type="button" class="pz-progress-head" aria-expanded="${ratingCurveExpanded}">` +
+    `<span class="pz-progress-title">Rating <b>${current}</b></span>` +
+    `<span class="pz-progress-caret">▸</span></button>` +
+    `<div class="pz-progress-body">` +
+    `<div class="pz-progress-sub"><span class="pz-progress-net ${netCls}">${netStr} · last ${win.length}</span></div>` +
+    svg +
+    `</div>`;
+  el.hidden = false;
+  const head = el.querySelector(".pz-progress-head");
+  if (head) head.onclick = () => {
+    ratingCurveExpanded = !ratingCurveExpanded;
+    el.classList.toggle("open", ratingCurveExpanded);
+    head.setAttribute("aria-expanded", String(ratingCurveExpanded));
+  };
+}
+
 function loadPuzzleResults() {
   try {
     puzzleResults = JSON.parse(sessionStorage.getItem("pzResults") || "[]");
@@ -2602,10 +2750,12 @@ async function setPuzzleMode(on, opts = {}) {
   document.body.classList.toggle("puzzle-mode", on);
   $("mode-analyze").classList.toggle("active", !on);
   $("mode-puzzles").classList.toggle("active", on);
+  // The mode swap hides/shows elements around the board, shifting its on-screen position; chessground
+  // caches its bounding rect, so without a redraw grabs land offset from the cursor. Recompute bounds
+  // after the layout settles (next frame).
+  requestAnimationFrame(() => { if (ground) ground.redrawAll(); });
   if (on) {
-    try {
-      sessionStorage.setItem("pzMode", "1"); // so a browser reload returns here
-    } catch (_) {}
+    lsSet(PZ_MODE_KEY, "1"); // remember across reloads AND full app restarts (any launcher)
     closeHistoryDrawer();
     evalShapes = [];
     bestArrows = [];
@@ -2613,15 +2763,36 @@ async function setPuzzleMode(on, opts = {}) {
     if (!puzzleConfigCache) {
       puzzleConfigCache = await fetch("/api/puzzle/config").then((r) => r.json()).catch(() => null);
     }
-    if (puzzleConfigCache) updatePuzzleStats(puzzleConfigCache.your_rating, puzzleConfigCache.streak);
+    // "From your games" needs the engine (it validates moves live); disable the segment otherwise.
+    const hasEngine = !!(puzzleConfigCache && puzzleConfigCache.has_engine);
+    const mineBtn = $("pz-src-mine");
+    mineBtn.disabled = !hasEngine;
+    mineBtn.title = hasEngine
+      ? "Practice positions from your own analysed games"
+      : "Needs the chess engine (Stockfish) — unavailable";
+    if (!hasEngine && puzzleSource === "your_games") puzzleSource = "lichess";
+    syncSourceUI();
+    if (puzzleConfigCache) {
+      updatePuzzleStats(puzzleConfigCache.your_rating, puzzleConfigCache.streak);
+      renderDailyStreak(puzzleConfigCache.daily_streak, puzzleConfigCache.best_daily_streak);
+    }
+    loadPuzzleStatCard(); // daily streak + discrete rating curve (quiet, under the rail)
     // On a reload, resume the in-progress puzzle at the same spot; otherwise start a fresh one.
     if (opts.resume && (await resumeCurrentPuzzle())) return;
     await loadNextPuzzle();
   } else {
-    try {
-      sessionStorage.removeItem("pzMode");
-    } catch (_) {}
+    lsSet(PZ_MODE_KEY, "0"); // back in analyze mode -> next open lands on analyze
+    // Leaving puzzles entirely: bank + drop any storm run and reset the sub-mode to Solve.
+    if (stormShown) {
+      endStormRun({ abandon: true });
+      stormShown = false;
+      $("pz-solve").hidden = false;
+      $("pz-storm").hidden = true;
+      $("pz-mode-solve").classList.add("active");
+      $("pz-mode-storm").classList.remove("active");
+    }
     // Restore the analysis board to wherever the game cursor was.
+    puzzleChatReset();
     puzzleData = null;
     puzzleShapes = [];
     if (timeline.length) gotoNode(cur);
@@ -2644,19 +2815,32 @@ async function resumeCurrentPuzzle() {
   }
   if (myGen !== puzzleGen) return true; // superseded; caller should not load another
   if (!cur || !cur.active || cur.finished) return false;
+  const isMine = cur.source === "your_games";
   puzzleData = {
     id: cur.id,
+    source: cur.source || "lichess",
     side_to_move: cur.side_to_move,
     themes: cur.themes || [],
     rating: cur.rating,
     your_rating: cur.your_rating,
+    game_id: cur.game_id,
+    reviewed_side: cur.reviewed_side,
+    ply: cur.ply,
+    badge: cur.badge,
+    game_url: cur.game_url,
+    fen: cur.fen,
+    solve_fen: cur.fen,
+    played_uci: cur.played_uci,
+    played_san: cur.played_san,
   };
+  puzzleSource = puzzleData.source;
   puzzleDone = false;
   puzzleFailed = !!cur.failed;
   puzzleHinted = !!cur.hinted;
   puzzleMissRating = null;
   puzzleBusy = false;
-  puzzleShapes = [];
+  puzzleChatReset();
+  puzzleShapes = mistakePlayedShape(puzzleData); // grey "you played" arrow for mistake puzzles
   puzzleSolveColor = cur.side_to_move || "white";
   orient = puzzleSolveColor;
   $("pz-result").hidden = true;
@@ -2664,6 +2848,9 @@ async function resumeCurrentPuzzle() {
   $("pz-prompt").hidden = false;
   $("pz-ghosts").hidden = false;
   $("pz-prompt-line").textContent = (puzzleSolveColor === "white" ? "White" : "Black") + " to move";
+  $("pz-prompt-sub").textContent = isMine ? "Find a better move than you played" : "Find the best move";
+  renderPuzzleBadge(isMine ? puzzleData : null);
+  syncSourceUI();
   updatePuzzleStats(cur.your_rating, puzzleStreak);
   chess.load(cur.fen);
   renderPuzzleBoard(true);
@@ -2676,7 +2863,11 @@ async function loadNextPuzzle(opts = {}) {
   puzzleBusy = true; // lock the board until the new puzzle is in place
   pzStatus("Loading…");
   const q = new URLSearchParams();
-  if (opts.difficulty) q.set("difficulty", opts.difficulty);
+  const src = opts.source !== undefined ? opts.source : puzzleSource;
+  if (src && src !== "lichess") q.set("source", src);
+  const diff = opts.difficulty !== undefined ? opts.difficulty : puzzleDifficulty;
+  if (diff) q.set("difficulty", diff);
+  if (puzzleWeakness && src === "lichess") q.set("weakness", "1");
   let p;
   try {
     p = await fetch("/api/puzzle/next?" + q.toString()).then((r) => r.json());
@@ -2702,7 +2893,11 @@ function applyPuzzle(p) {
   puzzleHinted = false;
   puzzleMissRating = null;
   puzzleBusy = true;
-  puzzleShapes = [];
+  // Mistake puzzles: seed with a grey "you played" arrow of the move the player actually made in
+  // that game, so they can see what to improve on (curated tactics have no such move to show).
+  puzzleShapes = mistakePlayedShape(p);
+  puzzleLastMove = null; // no carry-over highlight from the previous puzzle
+  puzzleChatReset(); // a new puzzle drops any follow-up chat thread
   puzzleSolveColor = p.side_to_move || "white";
   orient = puzzleSolveColor;
   pzStatus("");
@@ -2715,6 +2910,9 @@ function applyPuzzle(p) {
   $("pz-ghosts").hidden = false;
   $("pz-explain").disabled = false;
   $("pz-prompt-line").textContent = (puzzleSolveColor === "white" ? "White" : "Black") + " to move";
+  const isMine = p.source === "your_games";
+  $("pz-prompt-sub").textContent = isMine ? "Find a better move than you played" : "Find the best move";
+  renderPuzzleBadge(isMine ? p : null);
   if (puzzleConfigCache) updatePuzzleStats(p.your_rating, puzzleConfigCache.streak);
   else updatePuzzleStats(p.your_rating, null);
 
@@ -2725,6 +2923,7 @@ function applyPuzzle(p) {
     orientation: orient,
     turnColor: turnColor(),
     check: chess.inCheck(),
+    lastMove: undefined, // clear any highlight carried over from the previous puzzle
     movable: { color: undefined, dests: new Map() },
     animation: { enabled: true },
   });
@@ -2740,6 +2939,82 @@ function applyPuzzle(p) {
     renderPuzzleBoard(true);
     puzzleBusy = false;
   }, 430);
+}
+
+// Grey "you played" arrow for a mistake puzzle: the move the player actually made in that game, so
+// they can see what to beat. Curated tactics (or a puzzle missing the data) get no arrow -> [].
+function mistakePlayedShape(p) {
+  if (!p || p.source !== "your_games" || !p.played_uci) return [];
+  const u = p.played_uci;
+  return [{ orig: u.slice(0, 2), dest: u.slice(2, 4), brush: "grey" }];
+}
+
+// --- puzzle follow-up chat (revealed only after "Explain why") -----------------------------------
+
+// Drop any follow-up chat thread + hide the panel (called on each new/resumed puzzle).
+function puzzleChatReset() {
+  puzzleChatSession = null;
+  puzzleChatFen = null;
+  const box = $("pz-chat-messages");
+  if (box) box.innerHTML = "";
+  const chat = $("pz-chat");
+  if (chat) chat.hidden = true;
+  const input = $("pz-chat-input");
+  if (input) input.value = "";
+}
+
+function pzChatMsg(cls, text) {
+  const d = document.createElement("div");
+  d.className = `chat-msg ${cls}`;
+  if (cls === "bot") d.innerHTML = renderMarkdown(text); // only the final answer is markdown
+  else d.textContent = text;
+  const box = $("pz-chat-messages");
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+  return d;
+}
+
+async function sendPuzzleChat(ev) {
+  ev.preventDefault();
+  if (puzzleChatBusy || !puzzleData) return;
+  const input = $("pz-chat-input");
+  const q = input.value.trim() || "Can you explain that a bit more?";
+  input.value = "";
+  pzChatMsg("user", q);
+  puzzleChatBusy = true;
+  $("pz-chat-send").disabled = true;
+  const pending = pzChatMsg("bot pending", "Snowie is sniffing around (thinking)");
+  // The move to reason about: for a mistake puzzle it's the move played in the game; for a tactic
+  // it's whatever wrong move they tried (if any). The chat grounds on the puzzle's solve position.
+  const moveInQuestion =
+    puzzleData.source === "your_games" ? puzzleData.played_uci : puzzleData._yourMove || null;
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question: q,
+        fen: puzzleChatFen || puzzleData.solve_fen || puzzleData.fen || null,
+        last_move: moveInQuestion,
+        session_id: puzzleChatSession,
+        use_profile: personalizeHistory,
+      }),
+    }).then((r) => r.json());
+    pending.remove();
+    if (res.error) {
+      pzChatMsg("bot err", res.error);
+    } else {
+      pzChatMsg("bot", res.answer || "(no answer)");
+      if (res.session_id) puzzleChatSession = res.session_id;
+    }
+  } catch (e) {
+    pending.remove();
+    pzChatMsg("bot err", "Request failed: " + e);
+  } finally {
+    puzzleChatBusy = false;
+    $("pz-chat-send").disabled = false;
+    input.focus();
+  }
 }
 
 async function onPuzzleMove(orig, dest) {
@@ -2794,13 +3069,21 @@ async function onPuzzleMove(orig, dest) {
     chess.undo();
     puzzleLastMove = null;
     puzzleFailed = true;
+    // Mistake puzzles: show the engine's refutation of the move they tried, as red arrows.
+    if (res.source === "your_games" && (res.refutation_uci || []).length) {
+      puzzleShapes = res.refutation_uci
+        .slice(0, 3)
+        .map((u) => ({ orig: u.slice(0, 2), dest: u.slice(2, 4), brush: "red" }));
+    }
     renderPuzzleBoard(true);
     if (res.rating) {
       puzzleMissRating = res.rating; // remember the applied loss for the final card
       updatePuzzleStats(res.rating.rating_after, res.rating.streak);
     }
     pzStatus(
-      res.rating && res.rating.rated
+      res.source === "your_games"
+        ? "Still drops too much — try another move, or press Show solution."
+        : res.rating && res.rating.rated
         ? "Not quite — that cost some rating. Try again, or press Show solution."
         : "Not quite — try again, or press Show solution."
     );
@@ -2834,6 +3117,382 @@ async function onPuzzleMove(orig, dest) {
   puzzleBusy = false;
 }
 
+// --- puzzle storm (timed rush) -----------------------------------------------------------------
+
+// Switch the rail between the per-puzzle "Solve" trainer and the "Storm" scoreboard. Ending an
+// in-progress run when we leave storm is handled by the caller (setStormMode(false)).
+function setStormMode(on) {
+  if (on === stormShown) return;
+  stormShown = on;
+  $("pz-mode-solve").classList.toggle("active", !on);
+  $("pz-mode-storm").classList.toggle("active", on);
+  $("pz-solve").hidden = on;
+  $("pz-storm").hidden = !on;
+  if (on) {
+    // Leaving the Solve trainer: cancel any in-flight puzzle handler + clear its board state.
+    puzzleGen++;
+    puzzleData = null;
+    puzzleShapes = [];
+    puzzleDone = false;
+    pzStatus("");
+    renderStormBests();
+    stormResetBoard();
+    stormShowStart(false);
+  } else {
+    endStormRun({ abandon: true });
+    // Back to the Solve trainer: reload a puzzle (we cleared puzzleData on entering storm).
+    if (puzzleMode) loadNextPuzzle();
+  }
+}
+
+// A calm, empty board with the run stats reset — the between-runs resting state.
+function stormResetBoard() {
+  chess.reset();
+  puzzleLastMove = null;
+  puzzleShapes = [];
+  ground.set({
+    fen: chess.fen(),
+    orientation: orient,
+    lastMove: undefined,
+    movable: { color: undefined, dests: new Map() },
+    animation: { enabled: false },
+  });
+  drawArrows();
+}
+
+function fmtClock(secs) {
+  secs = Math.max(0, Math.ceil(secs));
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return m + ":" + String(s).padStart(2, "0");
+}
+
+// Show the "start / play again" button + the intro/game-over message (vs the live clock).
+function stormShowStart(gameOver, view) {
+  const btn = $("pz-storm-start");
+  btn.hidden = false;
+  btn.textContent = gameOver ? "↻ Play again" : "⚡ Start storm";
+  setStormSide(null); // no live puzzle on the start / game-over screen
+  const clockEl = $("pz-storm-clock");
+  const cfg = puzzleConfigCache || {};
+  const dur = (view && view.duration) || cfg.storm_duration || 180;
+  clockEl.classList.remove("low");
+  const msg = $("pz-storm-msg");
+  if (gameOver && view) {
+    clockEl.textContent = "0:00";
+    $("pz-storm-score").textContent = view.score;
+    const nh = view.new_high ? ` <span class="pz-storm-nh">new best!</span>` : "";
+    msg.innerHTML =
+      `Time! You solved <b>${view.score}</b>` +
+      (view.misses ? ` · ${view.misses} missed` : "") +
+      (view.best_combo ? ` · best combo ${view.best_combo}` : "") +
+      nh;
+  } else {
+    clockEl.textContent = fmtClock(dur);
+    $("pz-storm-score").textContent = "0";
+    $("pz-storm-combo").hidden = true;
+    $("pz-storm-results").innerHTML = "";
+    msg.innerHTML =
+      "Solve as many as you can before the clock runs out. A combo earns bonus time; a wrong move costs time.";
+  }
+  renderStormBests();
+}
+
+function renderStormBests() {
+  const el = $("pz-storm-bests");
+  if (!el) return;
+  const cfg = puzzleConfigCache || {};
+  const high = cfg.storm_high || 0;
+  const combo = cfg.storm_best_combo || 0;
+  el.innerHTML = high || combo
+    ? `Best: <b>${high}</b> solved` + (combo ? ` · combo ${combo}` : "")
+    : "";
+}
+
+async function startStorm() {
+  const btn = $("pz-storm-start");
+  btn.hidden = true;
+  pzStatus("");
+  let view;
+  try {
+    view = await fetch("/api/puzzle/storm/start", { method: "POST" }).then((r) => r.json());
+  } catch (_) {
+    pzStatus("Couldn't start storm.");
+    btn.hidden = false;
+    return;
+  }
+  if (!view || view.error || !view.puzzle) {
+    pzStatus((view && view.error) || "No puzzles available.");
+    btn.hidden = false;
+    return;
+  }
+  stormRunning = true;
+  stormScore = 0;
+  stormCombo = 0;
+  applyStormState(view);
+  startStormClock();
+  applyStormPuzzle(view.puzzle);
+}
+
+function startStormClock() {
+  stopStormClock();
+  stormTimerId = setInterval(() => {
+    const remaining = (stormDeadline - Date.now()) / 1000;
+    const el = $("pz-storm-clock");
+    el.textContent = fmtClock(remaining);
+    el.classList.toggle("low", remaining <= 10);
+    if (remaining <= 0) {
+      stopStormClock();
+      stormTimeUp();
+    }
+  }, 250);
+}
+
+function stopStormClock() {
+  if (stormTimerId) {
+    clearInterval(stormTimerId);
+    stormTimerId = null;
+  }
+}
+
+// The client clock hit zero: ask the server for the final (it finishes a run whose time is up).
+async function stormTimeUp() {
+  if (!stormRunning) return;
+  let view;
+  try {
+    view = await fetch("/api/puzzle/storm/next").then((r) => r.json());
+  } catch (_) {
+    view = { ended: true, score: stormScore };
+  }
+  finishStorm(view);
+}
+
+// Update the live scoreboard from a server view (authoritative remaining/score/combo).
+function applyStormState(view) {
+  if (typeof view.remaining === "number") stormDeadline = Date.now() + view.remaining * 1000;
+  if (typeof view.score === "number") {
+    stormScore = view.score;
+    $("pz-storm-score").textContent = stormScore;
+  }
+  if (typeof view.combo === "number") {
+    stormCombo = view.combo;
+    const el = $("pz-storm-combo");
+    if (stormCombo >= 2) {
+      el.hidden = false;
+      el.textContent = "🔥 " + stormCombo + " combo";
+    } else {
+      el.hidden = true;
+    }
+  }
+  if (view.results) {
+    $("pz-storm-results").innerHTML = view.results
+      .slice(-16)
+      .map((ok) => `<span class="pz-pip ${ok ? "ok" : "bad"}"></span>`)
+      .join("");
+  }
+  const clockEl = $("pz-storm-clock");
+  const remaining = (stormDeadline - Date.now()) / 1000;
+  clockEl.textContent = fmtClock(remaining);
+  clockEl.classList.toggle("low", remaining <= 10);
+}
+
+// Load a storm puzzle onto the board. Storm serves the solve position directly (no setup-move
+// animation), so we just render it and hand the move to the solver.
+function applyStormPuzzle(pz) {
+  const myGen = ++stormGen;
+  stormPuzzle = pz;
+  stormBusy = false;
+  puzzleShapes = [];
+  puzzleLastMove = null;
+  puzzleSolveColor = pz.side_to_move || "white";
+  orient = puzzleSolveColor;
+  chess.load(pz.fen);
+  renderPuzzleBoard(true);
+  setStormSide(puzzleSolveColor);
+  return myGen;
+}
+
+// Show which side the solver plays for the current storm puzzle (the board also flips to it, but
+// the explicit label removes any doubt in a fast-paced run). Hidden when no puzzle is on the board.
+function setStormSide(color) {
+  const el = $("pz-storm-side");
+  if (!el) return;
+  if (!color) {
+    el.hidden = true;
+    return;
+  }
+  const white = color === "white";
+  el.innerHTML = `<span class="pz-storm-side-dot ${white ? "w" : "b"}"></span>You play ${white ? "White" : "Black"}`;
+  el.hidden = false;
+}
+
+async function stormServeNext() {
+  let view;
+  try {
+    view = await fetch("/api/puzzle/storm/next").then((r) => r.json());
+  } catch (_) {
+    pzStatus("Couldn't load the next puzzle.");
+    return;
+  }
+  if (!stormRunning) return;
+  if (view.ended || !view.puzzle) {
+    finishStorm(view);
+    return;
+  }
+  applyStormState(view);
+  applyStormPuzzle(view.puzzle);
+}
+
+async function onStormMove(orig, dest) {
+  if (stormBusy || !stormRunning) {
+    renderPuzzleBoard(!stormBusy);
+    return;
+  }
+  const promo = isPromotion(orig, dest) ? "q" : undefined;
+  const uci = orig + dest + (promo ?? "");
+  const mv = chess.move({ from: orig, to: dest, promotion: promo });
+  if (!mv) {
+    renderPuzzleBoard(true);
+    return;
+  }
+  puzzleLastMove = [orig, dest];
+  stormBusy = true;
+  const myGen = stormGen;
+  renderPuzzleBoard(false);
+
+  let res;
+  try {
+    res = await fetch("/api/puzzle/storm/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uci }),
+    }).then((r) => r.json());
+  } catch (_) {
+    if (myGen !== stormGen) return;
+    chess.undo();
+    renderPuzzleBoard(true);
+    stormBusy = false;
+    return;
+  }
+  if (myGen !== stormGen || !stormRunning) return;
+
+  if (res.error || res.ended) {
+    finishStorm(res);
+    return;
+  }
+  applyStormState(res);
+
+  if (!res.correct) {
+    // Wrong move: red flash, undo, and move straight on to the next puzzle (storm never retries).
+    blinkSquare(dest, "bad");
+    shakeBoard();
+    await sleep(360);
+    if (myGen !== stormGen || !stormRunning) return;
+    chess.undo();
+    puzzleLastMove = null;
+    stormBusy = false;
+    stormServeNext();
+    return;
+  }
+
+  if (res.puzzle_done && res.solved) {
+    // Storm is a race, so a clean solve jumps straight to the next puzzle — no green-tile blink or
+    // pause (they'd bleed onto the puzzle that's already replaced them, looking janky). The clock
+    // bonus still floats over the clock, which is off-board and doesn't delay anything.
+    if (res.time_bonus) floatBonus("+" + Math.round(res.time_bonus) + "s");
+    stormBusy = false;
+    stormServeNext();
+    return;
+  }
+
+  // Correct but more to come: play the forced reply, keep the same puzzle.
+  await sleep(220);
+  if (myGen !== stormGen || !stormRunning) return;
+  const reply = res.opponent_reply_uci;
+  if (reply) {
+    chess.move({ from: reply.slice(0, 2), to: reply.slice(2, 4), promotion: reply.slice(4) || undefined });
+    puzzleLastMove = [reply.slice(0, 2), reply.slice(2, 4)];
+  }
+  renderPuzzleBoard(true);
+  stormBusy = false;
+}
+
+// A brief floating "+5s" over the clock when a combo grants bonus time.
+function floatBonus(text) {
+  const clockEl = $("pz-storm-clock");
+  if (!clockEl) return;
+  const b = document.createElement("span");
+  b.className = "pz-storm-bonus";
+  b.textContent = text;
+  clockEl.appendChild(b);
+  setTimeout(() => b.remove(), 900);
+}
+
+// The run ended (time up or server-finished). Show the game-over card + refresh personal bests.
+function finishStorm(view) {
+  stormRunning = false;
+  stormBusy = false;
+  stopStormClock();
+  stormResetBoard();
+  if (view) {
+    if (view.new_high || typeof view.high === "number") {
+      if (puzzleConfigCache) {
+        puzzleConfigCache.storm_high = Math.max(puzzleConfigCache.storm_high || 0, view.high || view.score || 0);
+        if (view.best_combo) {
+          puzzleConfigCache.storm_best_combo = Math.max(puzzleConfigCache.storm_best_combo || 0, view.best_combo);
+        }
+      }
+    }
+    stormShowStart(true, view);
+  } else {
+    stormShowStart(false);
+  }
+}
+
+// End the run when leaving storm mode entirely (tell the server so the highscore is banked).
+function endStormRun({ abandon } = {}) {
+  stopStormClock();
+  if (stormRunning && abandon) {
+    fetch("/api/puzzle/storm/end", { method: "POST" }).catch(() => {});
+  }
+  stormRunning = false;
+  stormBusy = false;
+  stormPuzzle = null;
+}
+
+// The amber "From your game" badge for a mistake puzzle (null hides it for curated tactics).
+function renderPuzzleBadge(p) {
+  const el = $("pz-source-badge");
+  if (!p) { el.hidden = true; el.textContent = ""; return; }
+  const b = p.badge || {};
+  const opp = p.reviewed_side === "white" ? b.black : b.white;
+  const bits = ["From your game"];
+  if (opp) bits.push("vs " + opp);
+  if (b.speed && b.speed !== "unknown") bits.push(b.speed);
+  if (b.date) bits.push(b.date);
+  el.textContent = bits.join(" · ");
+  el.hidden = false;
+}
+
+// "Replay in full game": leave puzzle mode and open the source game at the mistake position. Needs
+// the game's PGN, which the history list carries; falls back to the external game link if absent.
+async function replayMistake(p) {
+  let row = null;
+  try {
+    const rows = await fetch("/api/history").then((r) => r.json());
+    row = (rows || []).find(
+      (r) => r.game_id === p.game_id && r.reviewed_side === p.reviewed_side && r.has_pgn && r.pgn
+    );
+  } catch (_) {}
+  if (row) {
+    pendingGotoPly = p.ply != null ? p.ply - 1 : null; // land on the position BEFORE the played move
+    await setPuzzleMode(false);
+    openGame(row.pgn, row.reviewed_side);
+  } else if (p.game_url) {
+    window.open(p.game_url, "_blank", "noopener");
+  }
+}
+
 function finishPuzzle(outcome, ratingSummary, yourMove) {
   puzzleDone = true;
   $("pz-prompt").hidden = true;
@@ -2842,41 +3501,98 @@ function finishPuzzle(outcome, ratingSummary, yourMove) {
 
   const solved = outcome !== "failed";
   const clean = solved && !puzzleFailed; // green only when solved with no wrong move
+  const isMine = puzzleData.source === "your_games";
   const verdict = $("pz-verdict");
   // Three states, so a correct final attempt never wears the same red as a genuine failure:
   //   green  = solved first try, orange = solved after a miss (still a win!), red = solution shown.
   verdict.className = "pz-verdict " + (!solved ? "bad" : clean ? "ok" : "part");
-  let head = solved ? (clean ? "✓ Solved!" : "✓ Solved (after a miss)") : "Solution shown";
-  // The rating may have been applied on the FIRST wrong move (Lichess-style), so the completion
-  // itself returns no fresh summary. Fall back to that stored miss summary so a solve-after-miss
-  // still shows the rating already moved — otherwise it looks like the miss cost nothing.
-  const applied =
-    ratingSummary && ratingSummary.rated
-      ? ratingSummary
-      : puzzleMissRating && puzzleMissRating.rated
-      ? puzzleMissRating
-      : null;
-  if (applied) {
-    const sign = applied.delta >= 0 ? "+" : "";
-    head += `  ${applied.rating_before} → ${applied.rating_after} (${sign}${applied.delta})`;
-    updatePuzzleStats(applied.rating_after, applied.streak);
-  } else if (ratingSummary || puzzleMissRating) {
-    const su = ratingSummary || puzzleMissRating;
-    head += "  (unrated)";
-    updatePuzzleStats(su.rating_after, su.streak);
+  let head;
+  if (isMine) {
+    // Coaching tone: these are the player's own past positions, not pass/fail tactics, and unrated.
+    head = solved
+      ? clean ? "✓ Better than your game move!" : "✓ Better move found (after a try)"
+      : "Solution shown";
+  } else {
+    head = solved ? (clean ? "✓ Solved!" : "✓ Solved (after a miss)") : "Solution shown";
+    // The rating may have been applied on the FIRST wrong move (Lichess-style), so the completion
+    // itself returns no fresh summary. Fall back to that stored miss summary so a solve-after-miss
+    // still shows the rating already moved — otherwise it looks like the miss cost nothing.
+    const applied =
+      ratingSummary && ratingSummary.rated
+        ? ratingSummary
+        : puzzleMissRating && puzzleMissRating.rated
+        ? puzzleMissRating
+        : null;
+    if (applied) {
+      const sign = applied.delta >= 0 ? "+" : "";
+      head += `  ${applied.rating_before} → ${applied.rating_after} (${sign}${applied.delta})`;
+      updatePuzzleStats(applied.rating_after, applied.streak);
+    } else if (ratingSummary || puzzleMissRating) {
+      const su = ratingSummary || puzzleMissRating;
+      head += "  (unrated)";
+      updatePuzzleStats(su.rating_after, su.streak);
+    }
   }
   verdict.textContent = head;
 
-  // Record the session pip (green = clean solve, red = missed / solution shown).
-  recordPuzzleResult(clean);
+  // Session pips track curated-tactic outcomes only (mistake puzzles are unrated practice).
+  if (!isMine) recordPuzzleResult(clean);
 
-  const themes = (puzzleData.themes || []).filter((t) => !/^mateIn\d|^oneMove$|^short$|^long$/.test(t));
-  $("pz-theme").innerHTML = themes.length ? "Theme: <b>" + themes.slice(0, 3).join(", ") + "</b>" : "";
+  if (isMine) {
+    $("pz-theme").innerHTML = "";
+    const replay = $("pz-replay");
+    replay.hidden = false;
+    replay.onclick = (e) => { e.preventDefault(); replayMistake(puzzleData); };
+  } else {
+    const themes = (puzzleData.themes || []).filter((t) => !/^mateIn\d|^oneMove$|^short$|^long$/.test(t));
+    $("pz-theme").innerHTML = themes.length ? "Theme: <b>" + themes.slice(0, 3).join(", ") + "</b>" : "";
+    $("pz-replay").hidden = true;
+  }
 
   // Stash for the Explain call.
   puzzleData._outcome = outcome;
   puzzleData._yourMove = yourMove || null;
   $("pz-explain").hidden = !(puzzleConfigCache && puzzleConfigCache.has_llm);
+  loadPuzzleStatCard();
+}
+
+// Weakest-theme stats card, from /api/puzzle/state (quiet; hidden when there's nothing to show).
+async function loadPuzzleStatCard() {
+  const card = $("pz-statcard");
+  if (!card) return;
+  let st;
+  try {
+    st = await fetch("/api/puzzle/state").then((r) => r.json());
+  } catch (_) {
+    return;
+  }
+  // Daily streak + the discrete rating curve ride on the same state fetch.
+  renderDailyStreak(st && st.daily_streak, st && st.best_daily_streak);
+  renderRatingCurve(st && st.history);
+  // The server already filters to trainable motifs (no metadata tags like master/oneMove) and
+  // ranks them worst-first, so the card just renders what it's given.
+  const weak = (st && st.weak_themes) || [];
+  if (!weak.length) { card.hidden = true; card.innerHTML = ""; return; }
+  // Collapsed by default to keep the rail quiet: just a "Work on" toggle. Click reveals the themes
+  // (the open/closed choice is remembered).
+  const open = lsGet("pzWorkOnOpen") === "1";
+  card.innerHTML =
+    `<button type="button" class="pz-statcard-toggle" aria-expanded="${open}">` +
+      `Work on <span class="pz-statcard-caret">${open ? "▾" : "▸"}</span></button>` +
+    `<div class="pz-statcard-body"${open ? "" : " hidden"}>` +
+      weak
+        .map((x) => `<span class="pz-weak-theme">${x.theme} <b>${Math.round(x.rate * 100)}%</b></span>`)
+        .join("") +
+    `</div>`;
+  card.hidden = false;
+  card.querySelector(".pz-statcard-toggle").addEventListener("click", () => {
+    const body = card.querySelector(".pz-statcard-body");
+    const nowOpen = body.hidden; // about to open
+    body.hidden = !nowOpen;
+    card.querySelector(".pz-statcard-caret").textContent = nowOpen ? "▾" : "▸";
+    card.querySelector(".pz-statcard-toggle").setAttribute("aria-expanded", String(nowOpen));
+    lsSet("pzWorkOnOpen", nowOpen ? "1" : "0");
+  });
 }
 
 // "Show solution": reveal + play out the remaining solution line, then end the puzzle.
@@ -2917,7 +3633,7 @@ async function puzzleExplain() {
   const out = $("pz-explain-out");
   btn.disabled = true;
   out.hidden = false;
-  out.innerHTML = '<p class="muted">Thinking…</p>';
+  out.innerHTML = '<p class="muted">Snowie is sniffing around (thinking)</p>';
   let res;
   try {
     res = await fetch("/api/puzzle/explain", {
@@ -2938,6 +3654,10 @@ async function puzzleExplain() {
     out.innerHTML = renderMarkdown(res.error);
   } else {
     out.innerHTML = renderMarkdown(res.answer || "");
+    // Reveal the follow-up chat, threaded onto this explanation so questions have its context.
+    puzzleChatSession = res.session_id || null;
+    puzzleChatFen = res.chat_fen || puzzleData.solve_fen || puzzleData.fen || null;
+    $("pz-chat").hidden = false;
   }
   btn.disabled = false;
 }
@@ -2960,6 +3680,30 @@ async function puzzleHint() {
     drawArrows();
     pzStatus("Hint: move the piece on " + res.from_square + " (this attempt is now unrated).");
   }
+}
+
+// Reflect the current source in the segmented control + show difficulty/weakness only for tactics.
+function syncSourceUI() {
+  const mine = puzzleSource === "your_games";
+  $("pz-src-tactics").classList.toggle("active", !mine);
+  $("pz-src-mine").classList.toggle("active", mine);
+  $("pz-controls").style.display = mine ? "none" : "";
+}
+
+function setPuzzleSource(src) {
+  if (src === puzzleSource) return;
+  if (src === "your_games" && !(puzzleConfigCache && puzzleConfigCache.has_engine)) return;
+  puzzleSource = src;
+  lsSet(PZ_SOURCE_KEY, src); // remember the sub-tab across reloads + full app restarts
+  syncSourceUI();
+  loadNextPuzzle();
+}
+
+function setPuzzleDifficulty(which) {
+  puzzleDifficulty = puzzleDifficulty === which ? null : which; // click again to clear
+  $("pz-easier").classList.toggle("active", puzzleDifficulty === "easier");
+  $("pz-harder").classList.toggle("active", puzzleDifficulty === "harder");
+  loadNextPuzzle();
 }
 
 function init() {
@@ -3005,6 +3749,10 @@ function init() {
   $("graph").addEventListener("click", onGraphClick);
   $("movelist-expand").addEventListener("click", toggleMoveList);
   $("coach-ai-btn").addEventListener("click", fetchCoachAI);
+  $("coach-toggle").addEventListener("click", () => {
+    quickSummaryUserExpanded = !quickSummaryUserExpanded;
+    syncQuickSummary();
+  });
   $("chat-form").addEventListener("submit", sendChat);
 
   // Games panel: collapse toggle, mode slider, lichess lookup.
@@ -3082,6 +3830,15 @@ function init() {
   $("pz-hint").addEventListener("click", puzzleHint);
   $("pz-solution").addEventListener("click", puzzleShowSolution);
   $("pz-explain").addEventListener("click", puzzleExplain);
+  $("pz-chat-form").addEventListener("submit", sendPuzzleChat);
+  $("pz-src-tactics").addEventListener("click", () => setPuzzleSource("lichess"));
+  $("pz-src-mine").addEventListener("click", () => setPuzzleSource("your_games"));
+  $("pz-weakness").addEventListener("change", (e) => { puzzleWeakness = e.target.checked; loadNextPuzzle(); });
+  $("pz-easier").addEventListener("click", () => setPuzzleDifficulty("easier"));
+  $("pz-harder").addEventListener("click", () => setPuzzleDifficulty("harder"));
+  $("pz-mode-solve").addEventListener("click", () => setStormMode(false));
+  $("pz-mode-storm").addEventListener("click", () => setStormMode(true));
+  $("pz-storm-start").addEventListener("click", startStorm);
 
   // Settings panel.
   $("settings-toggle").addEventListener("click", openSettings);

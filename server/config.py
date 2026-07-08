@@ -279,6 +279,13 @@ def _parse_int(name: str, default: int) -> int:
         return default
 
 
+def _parse_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
 # Coaching profile is a HYBRID of two views so it adapts as a player improves:
 #   - "recent form" = the last CHESS_PROFILE_RECENT games (a sliding window; <=0 means all games).
 #   - "lifetime"    = CHESS_PROFILE_LIFETIME: unset/"all" -> all history (default); a positive N ->
@@ -392,6 +399,22 @@ PUZZLE_SHARD_TAG: str = os.environ.get("CHESS_PUZZLE_SHARD_TAG", "puzzles-v1").s
 PUZZLE_CACHE_MAX: int = _parse_int("CHESS_PUZZLE_CACHE_MAX", 12)
 # Allow the background shard fetch (P3). 0 = baseline-only / fully offline.
 PUZZLE_DOWNLOAD: bool = os.environ.get("CHESS_PUZZLE_DOWNLOAD", "1") != "0"
+# How long (seconds) a cached puzzle manifest.json is trusted before re-fetching from the data-repo
+# release (P3), mirroring UPDATE_CHECK_INTERVAL. Best-effort; a failed refresh keeps the stale copy.
+PUZZLE_MANIFEST_INTERVAL: int = _parse_int("CHESS_PUZZLE_MANIFEST_INTERVAL", 6 * 3600)
+# RD-aware cache width (P3): pre-fetch the user's rating band +/- ceil(rd / this) neighbouring bands
+# (clamped ~2..6). Elo swings hundreds of points while Glicko calibrates (seed rd=350), so a fresh
+# high-RD user warms a wider neighbouring-Elo spread; a settled low-RD user contracts to the tight
+# window. Lower = wider spread per RD point.
+PUZZLE_RD_PER_BAND: int = _parse_int("CHESS_PUZZLE_RD_PER_BAND", 100)
+# Occasionally mix "from your own games" mistake puzzles (P3.5) into the main tactic stream. Default
+# ON: a small fraction of tactics are replaced by a position from one of your own games, so the
+# trainer surfaces your real weaknesses without you having to switch to the "From your games" source.
+# A Settings toggle turns it off. Needs the engine (mistake puzzles validate live) + analysed games.
+PUZZLE_MISTAKE_INTERLEAVE: bool = os.environ.get("CHESS_PUZZLE_MISTAKE_INTERLEAVE", "1") != "0"
+# Probability (0..1) that a curated-tactic request is swapped for an own-game mistake puzzle when
+# interleave is on. 0.2 = ~1 in 5, occasional enough not to derail a tactics session.
+PUZZLE_MISTAKE_INTERLEAVE_PROB: float = _parse_float("CHESS_PUZZLE_MISTAKE_INTERLEAVE_PROB", 0.2)
 # Only let an attempt move the Glicko rating when the puzzle's own RatingDeviation is below this
 # (mirrors Lichess: well-established puzzles only). Higher-RD puzzles still play, but unrated.
 # Kept generous: Glicko already down-weights a high-RD puzzle in the update, so a low gate here
@@ -400,6 +423,10 @@ PUZZLE_MAX_RD: int = _parse_int("CHESS_PUZZLE_MAX_RD", 130)
 # Show the solve/miss board animations (square flash, ripple ring, confetti, shake). Off = the
 # result is conveyed by the verdict text colour alone (green / orange / red). Settings toggle.
 PUZZLE_ANIMATIONS: bool = os.environ.get("CHESS_PUZZLE_ANIMATIONS", "1") != "0"
+# "Puzzle storm" timed rush (P4): solve as many as you can before the clock runs out. Base clock in
+# seconds; a combo run grants a small time bonus and a wrong move costs time (see puzzle_storm.py).
+# Unrated by design (fast, ramping difficulty) - it only tracks a best-score highscore in state.json.
+PUZZLE_STORM_DURATION: int = _parse_int("CHESS_PUZZLE_STORM_DURATION", 180)
 
 
 def _puzzle_dir() -> str:

@@ -39,7 +39,7 @@
         <button id="mode-analyze" class="mode-seg active" type="button">Analyze</button>
         <button id="mode-puzzles" class="mode-seg" type="button">Puzzles</button>
       </div>
-      <div id="game-meta" class="muted">Loading…</div>
+      <div id="game-meta" class="muted">Waiting to open a game…</div>
       <button id="settings-toggle" class="hist-toggle" title="Settings"
         aria-label="Settings">⚙ Settings</button>
       <button id="history-toggle" class="hist-toggle" title="Show / hide the games panel"
@@ -94,6 +94,9 @@
           <label class="toggle" title="Toggle best-move arrows (l)">
             <input type="checkbox" id="best-toggle" /> Show best move
           </label>
+          <label class="toggle" title="Toggle threat arrows (t) — what the side that just moved is threatening, in yellow">
+            <input type="checkbox" id="threat-toggle" /> Show threats
+          </label>
           <button id="flip-review" type="button" hidden
             title="Re-analyse this same game from the other player's perspective (in case the wrong side was picked)">↺ Review other side</button>
         </div>
@@ -107,12 +110,46 @@
       <aside class="puzzle-rail" id="puzzle-rail" hidden>
         <div class="pz-stats">
           <span class="pz-rating" id="pz-rating">Puzzle · 1500</span>
-          <span class="pz-streak" id="pz-streak"></span>
+          <span class="pz-stats-right">
+            <span class="pz-daily" id="pz-daily" hidden></span>
+            <span class="pz-streak" id="pz-streak"></span>
+          </span>
         </div>
+
+        <!-- Solve (per-puzzle trainer) vs Storm (timed rush). Switching to Storm hides the
+             per-puzzle controls and shows the storm scoreboard; the board is shared. -->
+        <div class="pz-mode-seg" id="pz-mode-seg" role="tablist" aria-label="Puzzle activity">
+          <button type="button" id="pz-mode-solve" class="pz-mode-btn active" role="tab">Solve</button>
+          <button type="button" id="pz-mode-storm" class="pz-mode-btn" role="tab" title="Timed rush: solve as many as you can before the clock runs out">⚡ Storm</button>
+        </div>
+
+        <!-- Everything below (down to the stat card) is the per-puzzle "Solve" trainer; hidden as a
+             block while a storm run is on so the scoreboard becomes the single focal point. -->
+        <div id="pz-solve">
+        <!-- Source: curated tactics vs the player's own past mistakes. "From your games" is
+             disabled (with a tooltip) when the engine is missing, since it validates moves live. -->
+        <div class="pz-source" id="pz-source" role="tablist" aria-label="Puzzle source">
+          <button type="button" id="pz-src-tactics" class="pz-src-seg active" role="tab">Tactics</button>
+          <button type="button" id="pz-src-mine" class="pz-src-seg" role="tab">From your games</button>
+        </div>
+
+        <!-- Difficulty + weakness bias. Kept low-emphasis so solve mode stays calm. -->
+        <div class="pz-controls" id="pz-controls">
+          <label class="pz-weakness" title="Bias puzzles toward the tactics you miss most (from your games + your puzzle history)">
+            <input type="checkbox" id="pz-weakness" /> Train my weaknesses
+          </label>
+          <div class="pz-diff">
+            <button type="button" id="pz-easier" class="pz-ghost" title="Slightly easier puzzles">◂ easier</button>
+            <button type="button" id="pz-harder" class="pz-ghost" title="Slightly harder puzzles">harder ▸</button>
+          </div>
+        </div>
+
+        <!-- "From your game" badge (mistake puzzles only); hidden for curated tactics. -->
+        <div class="pz-source-badge" id="pz-source-badge" hidden></div>
 
         <div class="pz-card" id="pz-prompt">
           <div class="pz-prompt-line" id="pz-prompt-line">Loading puzzle…</div>
-          <div class="pz-prompt-sub">Find the best move</div>
+          <div class="pz-prompt-sub" id="pz-prompt-sub">Find the best move</div>
         </div>
 
         <div class="pz-ghosts" id="pz-ghosts">
@@ -126,9 +163,41 @@
           <div class="pz-theme" id="pz-theme"></div>
           <div class="pz-actions">
             <button type="button" id="pz-explain" class="pz-explain">✨ Explain why</button>
+            <a href="#" id="pz-replay" class="pz-replay" hidden>↩ replay in full game</a>
             <button type="button" id="pz-next" class="pz-next">Next puzzle →</button>
           </div>
           <div class="pz-explain-out" id="pz-explain-out" hidden></div>
+          <!-- Follow-up chat: appears only after "Explain why", threaded on that explanation. -->
+          <div class="pz-chat" id="pz-chat" hidden>
+            <div id="pz-chat-messages" class="chat-messages"></div>
+            <form id="pz-chat-form" class="chat-form">
+              <input id="pz-chat-input" type="text" autocomplete="off"
+                placeholder="Ask a follow-up…" aria-label="Ask a follow-up question" />
+              <button type="submit" id="pz-chat-send" aria-label="Send" title="Send">→</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Rating progress from /api/puzzle/state: collapsed to "Rating <current>"; pressing the
+             header reveals a quiet white trend line. Hidden until there are >=2 rated points. -->
+        <div class="pz-progress" id="pz-progress" hidden></div>
+
+        <!-- Weakest themes from /api/puzzle/state, shown under the rail (quiet). -->
+        <div class="pz-statcard" id="pz-statcard" hidden></div>
+        </div><!-- /#pz-solve -->
+
+        <!-- Storm (timed rush) scoreboard: the hero while a run is on. Hidden in Solve mode. -->
+        <div class="pz-storm" id="pz-storm" hidden>
+          <div class="pz-storm-clock" id="pz-storm-clock">3:00</div>
+          <div class="pz-storm-line">
+            <span class="pz-storm-score"><b id="pz-storm-score">0</b> solved</span>
+            <span class="pz-storm-combo" id="pz-storm-combo" hidden></span>
+          </div>
+          <div class="pz-storm-side" id="pz-storm-side" hidden></div>
+          <div class="pz-storm-results" id="pz-storm-results"></div>
+          <div class="pz-storm-msg" id="pz-storm-msg">Solve as many as you can before the clock runs out. A combo earns bonus time; a wrong move costs time.</div>
+          <div class="pz-storm-bests" id="pz-storm-bests"></div>
+          <button type="button" id="pz-storm-start" class="pz-next">⚡ Start storm</button>
         </div>
 
         <div id="pz-status" class="pz-status"></div>
@@ -144,11 +213,13 @@
       </div>
 
       <aside class="side-col">
+        <!-- Templated "quick" summary. Once the fuller AI (Snowie) summary is on screen it's
+             collapsed behind this toggle, expandable on demand (syncQuickSummary in main.js). -->
+        <button id="coach-toggle" class="coach-toggle" type="button" hidden></button>
         <div id="coach" class="coach" hidden></div>
-        <!-- Current-move feedback + AI summary live in this scrolling column so the board column
-             stays short enough to pin (see .board-col position:sticky in styles.css). -->
-        <div id="comment" class="comment"></div>
-        <div id="verdict" class="verdict"></div>
+        <!-- AI summary lives in this scrolling column so the board column stays short enough to pin
+             (see .board-col position:sticky in styles.css). Per-move feedback (#comment / #verdict)
+             sits lower, between the Moves list and Mistakes. -->
         <div class="coach-ai-wrap">
           <button id="coach-ai-btn" class="coach-ai-btn" hidden
             title="Have Snowie write a fuller coaching summary of this game (uses your Claude subscription)">
@@ -163,6 +234,10 @@
           </div>
           <ol id="movelist" class="movelist compact"></ol>
         </section>
+        <!-- Per-move feedback: the mistake explanation (#comment) + technical verdict (#verdict),
+             between Moves and Mistakes. Both update as you step through the moves. -->
+        <div id="comment" class="comment"></div>
+        <div id="verdict" class="verdict"></div>
         <h2>Mistakes</h2>
         <ol id="mistakes" class="mistakes"></ol>
         <div class="chat-panel">
@@ -187,6 +262,7 @@
         <div class="seg" role="tablist">
           <button id="mode-normal" class="active" type="button">My games</button>
           <button id="mode-lichess" type="button">Lichess</button>
+          <button id="mode-chesscom" type="button">Chess.com</button>
           <button id="mode-paste" type="button">Paste PGN</button>
         </div>
         <form id="lichess-form" class="lichess-form" style="display:none">
@@ -197,6 +273,16 @@
           <button type="button" id="set-as-me" class="set-as-me"
             title="Make this your account: used for 'My games', your profile, and auto-open on launch">
             Set as my account
+          </button>
+        </form>
+        <form id="chesscom-form" class="lichess-form" style="display:none">
+          <div class="lichess-row">
+            <input id="chesscom-user" type="text" autocomplete="off" placeholder="chess.com username" />
+            <button type="submit">Load</button>
+          </div>
+          <button type="button" id="chesscom-sync" class="set-as-me"
+            title="Fetch your chess.com games and analyze any new games">
+            ⟳ Sync new games
           </button>
         </form>
         <form id="paste-form" class="paste-form" style="display:none">
@@ -219,12 +305,28 @@
         </form>
         <div id="history-status" class="hist-status"></div>
         <ol id="history-list" class="history"></ol>
+
+
+        <!-- Cross-game insights: recurring themes + stats aggregated from every analyzed game in
+             the chosen time window (GET /api/insights). Refreshes as new games are analyzed. -->
+        <section id="insights" class="insights">
+          <div class="insights-head">
+            <h2>Insights</h2>
+            <select id="insights-period" title="Time period" aria-label="Insights time period">
+              <option value="1">Today</option>
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="0">All time</option>
+            </select>
+          </div>
+          <div id="insights-body" class="insights-body"></div>
+        </section>
       </aside>
     </main>
 
     <!-- First-run prompt (app mode only): shown when there's no configured/saved account. Two
          fields — fill in either. A Lichess handle auto-opens your latest game; a Chess.com handle
-         (no public fetch API) just labels your pasted/uploaded games as "you". More accounts can be
+         auto-syncs your recent games on every launch. More accounts can be
          added later in ⚙ Settings → Advanced. -->
     <div id="firstrun" class="firstrun-overlay" hidden>
       <form id="firstrun-form" class="firstrun-card">
@@ -383,6 +485,16 @@
             <span class="set-hint">The square flash, ripple and confetti on a solve (and the shake on a
               miss). Turn off to just see the result as coloured text — green for a clean solve, orange
               after a miss, red for the shown solution.</span>
+          </label>
+          <label class="set-field set-check">
+            <span class="set-check-row">
+              <input id="set-puzzle-interleave" type="checkbox" />
+              <span class="set-label">Mix in positions from my games</span>
+            </span>
+            <span class="set-hint">Every so often (about 1 in 5) a tactics puzzle is replaced by a
+              position from one of your own analysed games, so training keeps surfacing your real
+              weaknesses. Turn off to see curated tactics only. (The dedicated “From your games”
+              source is always available regardless.)</span>
           </label>
         </div>
 

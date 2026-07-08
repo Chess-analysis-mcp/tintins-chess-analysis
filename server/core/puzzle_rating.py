@@ -17,6 +17,7 @@ import math
 import os
 import random
 import time
+from datetime import datetime
 from typing import Optional
 
 from .. import config
@@ -143,8 +144,24 @@ def _default_state() -> dict:
         "solved_ids": [],
         "streak": 0,
         "best_streak": 0,
+        # Day-over-day practice streak: consecutive UTC days on which at least one puzzle was
+        # completed (any source, solved or failed). `last_active_date` is the last counted day.
+        "daily_streak": 0,
+        "best_daily_streak": 0,
+        "last_active_date": "",
         "history": [],
         "by_theme": {},
+        # Spaced-repetition state for "from your games" mistake puzzles (P3.5), keyed by
+        # "<game_id>:<side>:<ply>": {"last": iso, "successes": n}. Retired after enough clean
+        # solves; a failure resurfaces the position. Kept out of the Glicko path (mistake puzzles
+        # never move the rating).
+        "practiced": {},
+        # Recently-served mistake-puzzle keys (capped), so consecutive picks/skips stay varied.
+        "mistake_recent": [],
+        # "Puzzle storm" timed-rush bests (P4). Unrated: only the personal highscore + best combo
+        # are kept, never the Glicko rating.
+        "storm_high": 0,
+        "storm_best_combo": 0,
     }
 
 
@@ -184,6 +201,38 @@ def save_state(state: dict, data_dir: Optional[str] = None) -> None:
         pass
 
 
+def _utc_date() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _days_between(earlier: str, later: str) -> Optional[int]:
+    """Whole days from `earlier` to `later` (both 'YYYY-MM-DD'), or None if unparseable."""
+    try:
+        e = datetime.strptime(earlier, "%Y-%m-%d").date()
+        l = datetime.strptime(later, "%Y-%m-%d").date()
+        return (l - e).days
+    except (ValueError, TypeError):
+        return None
+
+
+def touch_daily_streak(state: dict) -> None:
+    """Advance the day-over-day practice streak on the first completed puzzle of a new UTC day.
+
+    Idempotent within a day: repeat calls the same day are no-ops. A consecutive day extends the
+    streak; any gap (or a first/unparseable date) restarts it at 1. Caller persists.
+    """
+    today = _utc_date()
+    last = state.get("last_active_date") or ""
+    if last == today:
+        return  # already counted today
+    if _days_between(last, today) == 1:
+        state["daily_streak"] = state.get("daily_streak", 0) + 1
+    else:
+        state["daily_streak"] = 1
+    state["last_active_date"] = today
+    state["best_daily_streak"] = max(state.get("best_daily_streak", 0), state["daily_streak"])
+
+
 def mark_seen(state: dict, puzzle_id: str) -> None:
     """Record a puzzle as served (so a failed one isn't re-served either). Caller persists."""
     if puzzle_id and puzzle_id not in state["seen_ids"]:
@@ -208,6 +257,9 @@ def record_result(
     """
     rating_before = state["rating"]
     solved = score >= 1.0
+
+    # A completed puzzle (solved or failed) counts as a day of practice.
+    touch_daily_streak(state)
 
     if rated:
         new_rating, new_rd, new_vol = glicko2_update(

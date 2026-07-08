@@ -15,54 +15,205 @@ with opponent replies forced at the even indices.
 from __future__ import annotations
 
 import functools
+import glob
 import gzip
 import json
+import os
 import random
 from pathlib import Path
 from typing import Iterable, Optional
 
 import chess
 
+from .. import config
+from . import puzzle_shards
+
 _BASELINE = Path(__file__).resolve().parent.parent / "data" / "puzzles" / "baseline.jsonl.gz"
 
 # Selection: start with a tight band around the user's rating and widen until we have enough.
 _BAND = 100
 _MIN_POOL = 12
+# "Train my weaknesses" only kicks in once there's enough signal to trust — otherwise the very first
+# game or puzzle skews the whole stream (the user explicitly asked not to be biased that early).
+_MIN_HISTORY_GAMES = 5  # analysed games before game-motif weaknesses drive selection
+_MIN_PUZZLE_ATTEMPTS = 10  # total puzzle attempts before in-app theme stats drive selection
+# Fallback Glicko deviation for the shard warm-up when a caller doesn't pass one (new-player seed).
+_DEFAULT_RD = 350.0
+
+# Map a game-history motif (history.tag_motifs) onto a puzzle theme tag, so "train my weaknesses"
+# can bias selection toward the tactics the player actually misses in real games. None = no clean
+# puzzle-theme equivalent (e.g. a pawn grab isn't a curated tactic motif).
+# Lichess tags every puzzle with THEME tags, but many are metadata, not trainable skills: the
+# puzzle's length ("oneMove"), where it came from ("master"), the game phase, or the resulting eval
+# ("crushing"). Surfacing "master 0%" or "oneMove 0%" in the "Work on" card is noise — only real
+# tactical/mate motifs are actionable. Everything here is excluded from the weakness card + bias.
+_NON_MOTIF_THEMES: frozenset[str] = frozenset({
+    "oneMove", "short", "long", "veryLong",          # puzzle length
+    "master", "masterVsMaster", "superGM",           # puzzle origin
+    "opening", "middlegame", "endgame",              # game phase
+    "crushing", "advantage", "equality", "mate",     # resulting eval / generic goal
+})
 
 
-@functools.lru_cache(maxsize=1)
-def _baseline() -> list[dict]:
-    """All vendored baseline puzzles. Built once, lazily. Missing/corrupt -> [] (degrade)."""
-    puzzles: list[dict] = []
-    if not _BASELINE.is_file():
-        return puzzles
+def is_trainable_theme(theme: str) -> bool:
+    """Is this a real tactical/mate motif a player can drill, vs. a Lichess metadata tag?"""
+    return bool(theme) and theme not in _NON_MOTIF_THEMES
+
+
+def weak_theme_stats(by_theme: dict, *, min_seen: int = 4, max_rate: float = 0.7,
+                     limit: int = 3) -> list[dict]:
+    """The "Work on" list: trainable themes with enough attempts and a poor solve rate, worst first.
+
+    Returns `[{theme, seen, solved, rate}]` (rate 0..1). Meta tags are excluded so the card only
+    ever suggests genuine motifs (fork, pin, backRankMate, ...), never "master"/"oneMove".
+    """
+    out = []
+    for theme, stat in (by_theme or {}).items():
+        if not is_trainable_theme(theme):
+            continue
+        seen = int((stat or {}).get("seen", 0) or 0)
+        solved = int((stat or {}).get("solved", 0) or 0)
+        if seen >= min_seen and (solved / seen) < max_rate:
+            out.append({"theme": theme, "seen": seen, "solved": solved, "rate": solved / seen})
+    out.sort(key=lambda x: x["rate"])  # worst solve rate first
+    return out[:limit]
+
+
+_MOTIF_TO_THEME: dict[str, Optional[str]] = {
+    "missed_fork": "fork",
+    "allowed_fork": "fork",
+    "back_rank": "backRankMate",
+    "hung_piece": "hangingPiece",
+    "missed_capture": "hangingPiece",
+    "missed_mate": "mateIn2",
+    "allowed_mate": "mateIn2",
+    "pawn_grab": None,
+}
+
+
+def _load_jsonl_gz(path: str) -> list[dict]:
+    """Parse a gzip-JSONL puzzle shard. Missing/corrupt -> [] (degrade); bad lines skipped."""
+    out: list[dict] = []
     try:
-        with gzip.open(_BASELINE, "rt", encoding="utf-8") as fh:
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    puzzles.append(json.loads(line))
+                    out.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
     except OSError:
         return []
-    return puzzles
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def _baseline() -> list[dict]:
+    """All vendored baseline puzzles. Built once, lazily. Missing/corrupt -> [] (degrade)."""
+    if not _BASELINE.is_file():
+        return []
+    return _load_jsonl_gz(str(_BASELINE))
+
+
+@functools.lru_cache(maxsize=1)
+def _downloaded_pool() -> list[dict]:
+    """All puzzles from downloaded dense band shards under <DATA_DIR>/puzzles (P3).
+
+    Cached; `puzzle_shards.ensure_band` clears this cache (via `_invalidate_pool`) when a new shard
+    lands, so the next selection sees it. Empty when nothing has been downloaded yet."""
+    out: list[dict] = []
+    try:
+        pattern = os.path.join(config._puzzle_dir(), "band_*.jsonl.gz")
+        for path in glob.glob(pattern):
+            out.extend(_load_jsonl_gz(path))
+    except OSError:
+        return []
+    return out
+
+
+def _merged_pool() -> list[dict]:
+    """Baseline + downloaded shards, de-duplicated by id (a downloaded copy wins). The baseline is
+    always the guaranteed floor; downloaded bands just deepen it around the user's rating."""
+    dl = _downloaded_pool()
+    base = _baseline()
+    if not dl:
+        return base
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for p in (*dl, *base):
+        pid = p.get("id")
+        if pid in seen:
+            continue
+        seen.add(pid)
+        merged.append(p)
+    return merged
 
 
 def available_themes() -> list[str]:
     """Sorted distinct theme tags present in the loaded pool (for the frontend theme picker)."""
     seen: set[str] = set()
-    for p in _baseline():
+    for p in _merged_pool():
         for t in p.get("themes", []):
             seen.add(t)
     return sorted(seen)
 
 
+def weakness_themes(state: dict) -> list[str]:
+    """Puzzle themes the player is weak on, blending their game history and in-app puzzle stats.
+
+    (a) Game history: recurring motifs from the coaching profile (history.get_profile recent
+        top_motifs, count>=2) mapped through `_MOTIF_TO_THEME`.
+    (b) Puzzle self-stats: themes with a poor solve rate in `state['by_theme']` (already puzzle
+        theme tags, no mapping needed).
+    Union, capped, best-effort — either half degrading to empty is fine. Returns [] when there's no
+    signal (caller then falls back to normal rating-band selection)."""
+    themes: list[str] = []
+
+    # (a) game-history motifs -> themes. Only once we've analysed enough games that the recurring
+    # motifs mean something (not just whatever the single most-recent game happened to contain).
+    try:
+        from . import history
+        profile = history.get_profile() or {}
+        recent = profile.get("recent") or {}
+        if int(recent.get("games", 0) or 0) >= _MIN_HISTORY_GAMES:
+            for entry in recent.get("top_motifs") or []:
+                if entry.get("count", 0) < 2:
+                    continue
+                mapped = _MOTIF_TO_THEME.get(entry.get("motif", ""))
+                if mapped and mapped not in themes:
+                    themes.append(mapped)
+    except Exception:  # noqa: BLE001 - weakness bias must never break selection
+        pass
+
+    # (b) in-app puzzle per-theme weakness (worst solve rate first, min sample size). Held back until
+    # the player has attempted enough puzzles overall, so the first puzzle's theme can't dominate.
+    try:
+        by_theme = state.get("by_theme", {}) or {}
+        total_attempts = sum(int((s or {}).get("seen", 0) or 0) for s in by_theme.values())
+        if total_attempts >= _MIN_PUZZLE_ATTEMPTS:
+            scored = []
+            for theme, stat in by_theme.items():
+                if not is_trainable_theme(theme):  # skip metadata tags (master/oneMove/phase/…)
+                    continue
+                seen = int(stat.get("seen", 0) or 0)
+                solved = int(stat.get("solved", 0) or 0)
+                if seen >= 4:
+                    scored.append((solved / seen, theme))
+            scored.sort()  # worst rate first
+            for rate, theme in scored:
+                if rate < 0.6 and theme not in themes:
+                    themes.append(theme)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return themes[:4]
+
+
 def _candidates(rating: float, themes: Optional[Iterable[str]]) -> list[dict]:
     """Puzzles within a rating band around `rating`, widened until the pool is usable."""
-    pool = _baseline()
+    pool = _merged_pool()
     if not pool:
         return []
     want = set(themes) if themes else None
@@ -70,6 +221,11 @@ def _candidates(rating: float, themes: Optional[Iterable[str]]) -> list[dict]:
         pool = [p for p in pool if want & set(p.get("themes", []))]
     if not pool:
         return []
+    # Only serve well-established puzzles that will actually move the Glicko rating. The ~5% with a
+    # high RatingDeviation play "unrated", which confuses users ("why didn't my rating change?"), so
+    # drop them from selection — falling back to the unfiltered pool only if that empties it.
+    rated_pool = [p for p in pool if float(p.get("rd", 999)) < config.PUZZLE_MAX_RD]
+    pool = rated_pool or pool
     band = _BAND
     while band <= 1200:
         near = [p for p in pool if abs(float(p.get("rating", 1500)) - rating) <= band]
@@ -86,17 +242,24 @@ def next_puzzle(
     exclude: Optional[set[str]] = None,
     seed: Optional[int] = None,
     difficulty: Optional[str] = None,
+    rd: Optional[float] = None,
 ) -> Optional[dict]:
     """Pick a puzzle near `rating`, theme-filtered + not in `exclude`, via a per-user seeded shuffle.
 
-    `difficulty` of "easier"/"harder" shifts the target rating by one band. Returns the parsed
-    puzzle (with a derived `side_to_move`) or None when nothing is available.
+    `difficulty` of "easier"/"harder" shifts the target rating by one band. `rd` (the Glicko
+    deviation) drives the background shard warm-up: this call serves from whatever is cached now, and
+    the RD-scaled neighbouring bands are fetched for next time. Returns the parsed puzzle (with a
+    derived `side_to_move`) or None when nothing is available.
     """
     target = float(rating)
     if difficulty == "easier":
         target -= _BAND
     elif difficulty == "harder":
         target += _BAND
+
+    # Fire-and-forget: warm the RD-scaled band window around the target so the pool deepens over
+    # time. Best-effort + non-blocking; a no-op offline or when the bands are already cached.
+    puzzle_shards.ensure_bands_around(target, rd if rd is not None else _DEFAULT_RD)
 
     candidates = _candidates(target, themes)
     exclude = exclude or set()
@@ -114,7 +277,7 @@ def next_puzzle(
 
 def get_puzzle(puzzle_id: str) -> Optional[dict]:
     """Look up a loaded puzzle by id (for /move and /explain after selection)."""
-    for p in _baseline():
+    for p in _merged_pool():
         if p.get("id") == puzzle_id:
             return _with_side(p)
     return None

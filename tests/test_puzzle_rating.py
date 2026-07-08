@@ -71,3 +71,38 @@ def test_failure_resets_streak(tmp_path):
     pr.record_result(state, puzzle_id="c", puzzle_rating=1200, puzzle_rd=40, themes=[], score=0.0, rated=True)
     assert state["streak"] == 0
     assert state["best_streak"] == 2  # best is remembered
+
+
+def test_daily_streak_counts_once_per_day_and_extends_on_consecutive_days():
+    state = pr._default_state()
+    # First completed puzzle of "day 1" starts the streak.
+    state["last_active_date"] = ""
+    pr.touch_daily_streak(state)
+    day1 = state["last_active_date"]
+    assert state["daily_streak"] == 1 and state["best_daily_streak"] == 1
+
+    # A second puzzle the same day is a no-op (idempotent within a day).
+    pr.touch_daily_streak(state)
+    assert state["daily_streak"] == 1
+
+    # Pretend the last active day was yesterday -> a consecutive day extends the streak.
+    from datetime import datetime, timedelta
+    d1 = datetime.strptime(day1, "%Y-%m-%d").date()
+    state["last_active_date"] = (d1 - timedelta(days=1)).strftime("%Y-%m-%d")
+    state["daily_streak"] = 4
+    pr.touch_daily_streak(state)
+    assert state["daily_streak"] == 5 and state["best_daily_streak"] == 5
+
+    # A gap of more than one day resets the streak to 1 (best is remembered).
+    state["last_active_date"] = (d1 - timedelta(days=3)).strftime("%Y-%m-%d")
+    state["daily_streak"] = 5
+    pr.touch_daily_streak(state)
+    assert state["daily_streak"] == 1 and state["best_daily_streak"] == 5
+
+
+def test_record_result_advances_daily_streak(tmp_path):
+    state = pr.load_state(data_dir=str(tmp_path))
+    assert state["daily_streak"] == 0
+    # Even a failed attempt counts as a day of practice.
+    pr.record_result(state, puzzle_id="a", puzzle_rating=1200, puzzle_rd=40, themes=[], score=0.0, rated=True)
+    assert state["daily_streak"] == 1 and state["last_active_date"]

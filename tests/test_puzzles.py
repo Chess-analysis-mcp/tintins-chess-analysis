@@ -6,7 +6,18 @@ for rating-band, theme, seen-exclusion and the per-user seeded-shuffle behaviour
 """
 from __future__ import annotations
 
+import pytest
+
+from server import config
 from server.core import puzzles
+
+
+@pytest.fixture(autouse=True)
+def _no_network_downloads(monkeypatch):
+    """next_puzzle now triggers a background shard warm-up; keep these unit tests network-free and
+    baseline-only (no downloaded pool) so selection behaviour is deterministic."""
+    monkeypatch.setattr(puzzles.puzzle_shards, "ensure_bands_around", lambda *a, **k: None)
+    monkeypatch.setattr(puzzles, "_downloaded_pool", lambda: [])
 
 
 # --- validate_step --------------------------------------------------------------------------
@@ -114,3 +125,110 @@ def test_side_to_move_is_after_the_setup_move(monkeypatch):
     p = puzzles.next_puzzle(1000, seed=0)
     # FEN is black-to-move; after ...Kg8 the solver (White) is on move.
     assert p["side_to_move"] == "white"
+
+
+# --- merged (baseline + downloaded) pool (P3) ------------------------------------------------
+
+def test_merged_pool_includes_downloaded_and_dedupes_by_id(monkeypatch):
+    monkeypatch.setattr(puzzles, "_baseline", lambda: _pool())
+    extra = {"id": "dl_new", "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "moves": ["a1a2"],
+             "rating": 1000, "rd": 50, "themes": ["fork"]}
+    dupe = dict(_pool()[0])  # same id as a baseline puzzle
+    monkeypatch.setattr(puzzles, "_downloaded_pool", lambda: [extra, dupe])
+    ids = [p["id"] for p in puzzles._merged_pool()]
+    assert "dl_new" in ids                 # downloaded puzzle surfaces
+    assert ids.count(dupe["id"]) == 1      # the duplicate id appears once
+
+
+# --- weakness themes (P3) --------------------------------------------------------------------
+
+def test_weakness_themes_from_puzzle_stats():
+    state = {"by_theme": {"fork": {"seen": 10, "solved": 3},   # 30% -> weak
+                          "pin": {"seen": 10, "solved": 9},    # 90% -> strong
+                          "skewer": {"seen": 2, "solved": 0}}}  # too few samples
+    themes = puzzles.weakness_themes(state)
+    assert "fork" in themes
+    assert "pin" not in themes and "skewer" not in themes
+
+
+def test_weakness_themes_maps_game_motifs(monkeypatch):
+    from server.core import history
+    monkeypatch.setattr(history, "get_profile", lambda *a, **k: {
+        "recent": {"games": 20,  # enough analysed games that motif weaknesses are trusted
+                   "top_motifs": [{"motif": "missed_fork", "count": 3},
+                                  {"motif": "back_rank", "count": 2},
+                                  {"motif": "pawn_grab", "count": 5}]}})  # pawn_grab -> None (dropped)
+    themes = puzzles.weakness_themes({})
+    assert "fork" in themes and "backRankMate" in themes
+    assert None not in themes
+
+
+def test_weakness_themes_held_back_until_enough_games(monkeypatch):
+    """A single early game must not skew the whole stream (the user asked not to be biased so soon)."""
+    from server.core import history
+    monkeypatch.setattr(history, "get_profile", lambda *a, **k: {
+        "recent": {"games": 1,  # below _MIN_HISTORY_GAMES -> no motif bias yet
+                   "top_motifs": [{"motif": "missed_fork", "count": 3}]}})
+    assert puzzles.weakness_themes({}) == []
+
+
+def test_weakness_themes_held_back_until_enough_puzzle_attempts(monkeypatch):
+    from server.core import history
+    monkeypatch.setattr(history, "get_profile", lambda *a, **k: {"recent": {"games": 0}})
+    # One weak theme, but too few total attempts for the puzzle-stat signal to kick in.
+    state = {"by_theme": {"fork": {"seen": 4, "solved": 0}}}
+    assert puzzles.weakness_themes(state) == []
+
+
+# --- "Work on" card: only trainable motifs, no metadata tags ---------------------------------
+
+def test_weak_theme_stats_excludes_metadata_tags():
+    by_theme = {
+        "master": {"seen": 10, "solved": 0},     # metadata (origin) -> excluded
+        "oneMove": {"seen": 10, "solved": 0},     # metadata (length) -> excluded
+        "middlegame": {"seen": 10, "solved": 0},  # metadata (phase) -> excluded
+        "fork": {"seen": 8, "solved": 2},         # real motif, weak (25%) -> kept
+        "pin": {"seen": 8, "solved": 7},          # real motif, strong -> dropped by rate
+        "skewer": {"seen": 2, "solved": 0},       # too few attempts -> dropped
+    }
+    weak = puzzles.weak_theme_stats(by_theme)
+    names = [w["theme"] for w in weak]
+    assert names == ["fork"]  # only the genuinely-weak trainable motif
+
+
+def test_is_trainable_theme():
+    assert puzzles.is_trainable_theme("fork")
+    assert puzzles.is_trainable_theme("backRankMate")
+    assert not puzzles.is_trainable_theme("master")
+    assert not puzzles.is_trainable_theme("oneMove")
+
+
+def test_weakness_bias_ignores_metadata_tags(monkeypatch):
+    from server.core import history
+    monkeypatch.setattr(history, "get_profile", lambda *a, **k: {"recent": {"games": 0}})
+    # Plenty of attempts, but the only weak "theme" is a metadata tag -> no bias.
+    state = {"by_theme": {"master": {"seen": 20, "solved": 0}}}
+    assert puzzles.weakness_themes(state) == []
+
+
+# --- high-RD (unrated) puzzles are kept out of selection -------------------------------------
+
+def test_candidates_exclude_high_rd_puzzles(monkeypatch):
+    fen = "8/8/8/8/8/8/8/8 w - - 0 1"
+    pool = []
+    for i in range(20):
+        pool.append({"id": f"lo{i}", "fen": fen, "rating": 1500, "rd": 60, "themes": []})
+        pool.append({"id": f"hi{i}", "fen": fen, "rating": 1500, "rd": 500, "themes": []})
+    monkeypatch.setattr(puzzles, "_merged_pool", lambda: pool)
+    monkeypatch.setattr(config, "PUZZLE_MAX_RD", 130)
+    cands = puzzles._candidates(1500, None)
+    assert cands and all(float(c["rd"]) < 130 for c in cands)  # no unrated (high-RD) puzzles served
+
+
+def test_candidates_fall_back_when_all_high_rd(monkeypatch):
+    fen = "8/8/8/8/8/8/8/8 w - - 0 1"
+    pool = [{"id": f"hi{i}", "fen": fen, "rating": 1500, "rd": 500, "themes": []} for i in range(20)]
+    monkeypatch.setattr(puzzles, "_merged_pool", lambda: pool)
+    monkeypatch.setattr(config, "PUZZLE_MAX_RD", 130)
+    # Better an unrated puzzle than none: the filter falls back when it would empty the pool.
+    assert puzzles._candidates(1500, None)

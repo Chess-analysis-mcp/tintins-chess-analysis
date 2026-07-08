@@ -9,8 +9,68 @@ This document is the build spec. It follows the same phase-by-phase shape as
 `chess_mcp_implementation_plan.md`: each phase has an **objective**, **tasks**, and **acceptance
 criteria**. Don't move on until the criteria pass.
 
-> **Status: NOT STARTED — this is a forward-looking design.** No puzzle code exists yet. The
-> existing app (phases 0–7) is the substrate we build on.
+> **Status: P0–P4 BUILT.** The last two P4 items are now done: the **MCP tool surface**
+> (`next_puzzle`/`solve_puzzle`, sharing the one `puzzle_session` with the board) and the timed
+> **"puzzle storm"** rush mode. P0–P2 committed as `54d3575`; **P3 (drift-aware downloads +
+> weakness targeting) and P3.5 (mistake puzzles from your own games) are now implemented** in the
+> working tree (branch `puzzle-mode`, uncommitted). **Two P4 polish items — the day-over-day daily
+> streak and a (deliberately discrete) rating-curve visualisation — are now built**, and the P3.5
+> mistake-puzzle **severity curve has been empirically calibrated** against real user data + the
+> Lichess rating distribution (see §9 P4 and §11.7). What's left in P4 is the optional MCP tool
+> surface (`next_puzzle`/`solve_puzzle`) and the optional timed "puzzle storm" mode. Per-phase
+> status is called out in §9. The existing app (phases 0–7) is the substrate this builds on.
+>
+> **Done so far:**
+> - **P0** — `scripts/build_puzzle_shards.py` (slices the CC0 Lichess DB into 100-pt, theme-
+>   stratified bands, ~10k/band; zstd decode → stdlib gzip); vendored offline baseline
+>   `server/data/puzzles/baseline.jsonl.gz` (3,450 puzzles, 150/band); dense shards + `manifest.json`
+>   published to the **separate** data repo `Chess-analysis-mcp/tintins-chess-puzzles`, release
+>   `puzzles-v1`.
+> - **P1** — `core/puzzles.py` (baseline load, `next_puzzle`, `validate_step` w/ mate-leaf
+>   tolerance), `core/puzzle_rating.py` (faithful Glicko-2 + `state.json`, RD-gate), `core/
+>   puzzle_session.py` (current-puzzle singleton), `web/routes_puzzles.py`
+>   (`config`/`next`/`move`/`hint`/`giveup`/`state`/`current`), and the frontend
+>   `[ Analyze | Puzzles ]` toggle + focused solve layout + square-blink/confetti feedback.
+> - **P2** — `claude_bridge.explain_puzzle` + `_puzzle_facts` + `_move_verdict`,
+>   `/api/puzzle/explain`, wired Explain button (three prompt variants: failed / solved-after-miss /
+>   clean solve).
+> - Post-P2 UX iteration (not in the original spec): tabbed Settings with a **Puzzles** tab, a
+>   solve-animation toggle (`CHESS_PUZZLE_ANIMATIONS`), 3-state verdict feedback, the RD-gate raised
+>   90 → 130, the first-miss rating loss surfaced on the final card, and reload-resume.
+> - **P3** — `server/core/puzzle_shards.py` (throttled `ensure_manifest`, `ensure_band` with sha256
+>   verify + atomic write, LRU `_prune`, RD-aware `bands_for`/`ensure_bands_around` warm-up),
+>   `puzzles._downloaded_pool`/`_merged_pool` (baseline + downloaded, deduped) + `weakness_themes`
+>   (game-motif→theme map ∪ puzzle `by_theme`), knobs `CHESS_PUZZLE_MANIFEST_INTERVAL` /
+>   `CHESS_PUZZLE_RD_PER_BAND`, `/api/puzzle/next?weakness=1`, and the rail's weakness toggle +
+>   easier/harder + weakest-theme stats card.
+> - **P3.5** — `server/core/puzzle_mistakes.py` (history-derived selection, skill-relative
+>   swing-percentile ordering, recurring-motif tie-break, spaced-rep `practiced` gating), the
+>   `source=your_games` discriminator across `/next`/`/move`/`/giveup`/`/current` (eval-threshold
+>   validation via `lines.engine_line`, **unrated**), the game-analysis coach branch in
+>   `claude_bridge.explain_puzzle` (`_mistake_facts`/`_mistake_role`), and the "From your games"
+>   frontend skin (source toggle gated on the engine, amber badge, replay-in-full-game link).
+> - **P4 (partial)** — two polish items shipped:
+>   - **Daily streak** — `puzzle_rating.touch_daily_streak` + state fields
+>     `daily_streak`/`best_daily_streak`/`last_active_date` (consecutive UTC days with ≥1 completed
+>     puzzle, any source, solved or failed; idempotent within a day). Advanced from **both** the
+>     tactics path (`record_result`) and the mistake path (`record_practice_result`), surfaced on
+>     `/api/puzzle/config` + `/api/puzzle/state`, and shown as a quiet 🔥 flame chip in the rail
+>     header.
+>   - **Discrete rating curve** — a minimal bar sparkline (one bar per *rated* attempt, green up /
+>     red down, +net label), rendered under the rail from the `history` the state endpoint already
+>     returns; hidden until ≥2 rated points. Deliberately discrete (not a continuous line) to keep
+>     solve mode calm per §7A.
+>   - **Severity-curve calibration (§11.7 resolved, "option B")** — the P3.5 mistake-puzzle
+>     `_target_percentile` band was retuned `0.90/0.25 → 0.95/0.35` after checking it against a real
+>     137-mistake user distribution (a ~1400 was targeting only ~p62 of their own swings; now ~p70).
+>     The skill clamp `800–2200` was **validated, not changed**: it ≈ the 2nd–98th percentile of the
+>     Lichess Rapid distribution (fits N(1500, σ≈335): p2≈812, p98≈2188).
+> - Tests: `test_puzzle_rating` (+daily-streak), `test_puzzles` (+merged-pool/weakness),
+>   `test_puzzle_coach`, `test_web_puzzles`, `test_puzzle_shards`, `test_mistake_puzzles` —
+>   **188 passed**, all fast, no network, no Stockfish. Live-verified: real-repo shard download +
+>   sha256 reject, a full mistake-puzzle solve (badge, engine-validated acceptance, Glicko
+>   untouched), the daily-streak advance across both sources, and the retuned severity band on real
+>   user data.
 
 ---
 
@@ -181,6 +241,8 @@ CHESS_PUZZLE_SHARD_REPO=...     # dedicated puzzle-data repo, e.g. <org>/tintins
 CHESS_PUZZLE_SHARD_TAG=puzzles-v1
 CHESS_PUZZLE_CACHE_MAX=12       # LRU band cap; 0 = unbounded
 CHESS_PUZZLE_DOWNLOAD=1         # allow background shard fetch; 0 = baseline-only/offline
+CHESS_PUZZLE_RD_PER_BAND=100    # RD-aware cache width: cache ±ceil(rd/this) neighbouring bands
+                                #   (clamped ~±2…±6) so high-RD calibration warms a wider Elo spread
 ```
 
 ---
@@ -191,10 +253,33 @@ The user's instinct — *"download a different subset once my rating or mistakes
 cleanly precisely because we control the shards. We already recompute rating + the coaching profile
 after each puzzle/game, so we hook those as events.
 
+**Source of truth = the separate data repo's release assets (required).** Every dense band shard
+and the `manifest.json` are fetched from the **`CHESS_PUZZLE_SHARD_REPO`** release
+(`CHESS_PUZZLE_SHARD_TAG`, default `Chess-analysis-mcp/tintins-chess-puzzles` / `puzzles-v1`) — the
+GitHub Releases CDN URL
+`https://github.com/<repo>/releases/download/<tag>/<band>.jsonl.gz` (and `.../manifest.json`),
+**not** the app repo and **not** any bundled data beyond the vendored baseline. `ensure_manifest()`
+pulls the manifest from that release; `ensure_band()` downloads the named band asset from the same
+release and verifies it against the manifest sha256 before use. (The knobs already exist in
+`config.py` — wire the download path to them.)
+
 - **On rating change:** if the Glicko rating crosses out of the central cached band (or the
   unseen pool in the current band drops below a threshold — see `seen_ids`, §2), background-fetch
-  the now-adjacent band (or another variant, if using variant shards). Always keep the user's band
-  **± 2 bands** (warm-up below, stretch above) cached.
+  the now-adjacent band(s) from the data-repo release. Always keep the user's band **± 2 bands**
+  cached as the steady-state floor (warm-up below, stretch above).
+
+- **Widen the cached window while the rating is still calibrating (required).** A brand-new user
+  seeds at `rating=1500, rd=350`, and the first ~10–20 puzzles swing the rating by hundreds of
+  points as Glicko homes in — so a tight ±2-band cache thrashes (download, jump two bands, re-
+  download). Instead, **scale the number of neighbouring bands fetched by the current RD**: while RD
+  is high (uncalibrated) pull a **wider spread** of neighbouring-Elo bands so the fast early jumps
+  land on already-cached puzzles; as RD settles toward its floor, contract back to the steady ±2.
+  A simple, faithful mapping (tune empirically): cache the user's band ± `ceil(rd / RD_PER_BAND)`
+  bands, clamped to a sane max (e.g. ±6) and never below ±2 — so a fresh `rd≈350` user warms a broad
+  band of neighbouring puzzles up front, and a settled `rd≈60` user only keeps the tight window.
+  This keeps early calibration smooth and offline-friendly without ever fetching the whole DB. The
+  `CHESS_PUZZLE_CACHE_MAX` LRU cap still bounds total disk, and everything stays throttled +
+  best-effort (a failed fetch just falls back to the vendored baseline).
 - **On weakness change:** when a new dominant theme emerges from the profile (`_dominant_motif` /
   `format_profile_for_prompt` already surface this), fetch a small **theme top-up** — biased toward
   that theme within the user's bands.
@@ -616,16 +701,26 @@ explanation refutes the user's actual move *and* teaches the solution; works wit
 (solution+themes only) and via the local-LLM path; no-`claude` degrades gracefully (amber banner
 pattern).
 
-### Phase P3 — Drift-aware downloads & weakness targeting
-**Objective:** the cached shard set follows the user's rating + weaknesses.
-**Tasks:** background `ensure_band`/`ensure_theme_topup` triggered on rating/profile change; LRU
-prune; "train my weaknesses" toggle wired to the coaching profile; theme/difficulty controls;
-stats card.
-**Acceptance:** crossing a band boundary triggers a background fetch of the adjacent band; a
-weakness theme biases selection; cache stays under the LRU cap; everything best-effort (network
-off → baseline still serves puzzles).
+### Phase P3 — Drift-aware downloads & weakness targeting  ✅ DONE
+**Objective:** the cached shard set follows the user's rating + weaknesses, pulled from the separate
+data-repo release.
+**Tasks:** `ensure_manifest()` + background `ensure_band`/`ensure_theme_topup` fetching band shards
++ `manifest.json` **from the `CHESS_PUZZLE_SHARD_REPO`/`_TAG` release** (verify each against the
+manifest sha256); `next_puzzle` reads downloaded bands, not just the vendored baseline; **RD-aware
+window width** — cache ± `ceil(rd / RD_PER_BAND)` bands (clamped ~±2…±6) so early, high-RD
+calibration warms a broad spread of neighbouring-Elo puzzles and contracts to ±2 as RD settles; LRU
+prune to `CHESS_PUZZLE_CACHE_MAX`; "train my weaknesses" toggle wired to the coaching profile;
+theme/difficulty controls; stats card. (Config knobs `CHESS_PUZZLE_DOWNLOAD` /
+`CHESS_PUZZLE_CACHE_MAX` / `CHESS_PUZZLE_SHARD_REPO` / `CHESS_PUZZLE_SHARD_TAG` already exist —
+currently unused; this phase wires them.)
+**Acceptance:** the manifest + a band shard are fetched from the **data-repo release** (not the app
+repo) and sha256-verified before use; crossing a band boundary triggers a background fetch of the
+adjacent band(s); a **fresh high-RD user caches a wider neighbouring-Elo spread** than a settled
+low-RD user (verifiable from the fetched band set); a weakness theme biases selection; cache stays
+under the LRU cap; everything best-effort (network off / bad checksum → the vendored baseline still
+serves puzzles).
 
-### Phase P3.5 — Mistake puzzles from the user's own games (§6A)
+### Phase P3.5 — Mistake puzzles from the user's own games (§6A)  ✅ DONE
 **Objective:** a second, engine-backed puzzle source drawn from the user's flagged mistakes.
 **Tasks:** `next_mistake_puzzle` (history-derived selection; **skill-relative severity ordering** —
 rating→swing-percentile band, skill proxy = puzzle Glicko → `_resolve_review_elo` fallback;
@@ -640,11 +735,37 @@ surfaces smaller-swing/high-criticality misses first); the explanation uses the 
 facts; re-solving retires it / failing resurfaces it; it does **not** change the Glicko rating; the
 replay link opens the source game.
 
-### Phase P4 (optional) — MCP tools + polish
+### Phase P4 (optional) — MCP tools + polish  ◐ PARTIAL
 **Objective:** terminal parity + rough-edge cleanup.
-**Tasks:** `next_puzzle`/`solve_puzzle` MCP tools; rating-curve visualisation; daily streak;
+**Tasks:** `next_puzzle`/`solve_puzzle` MCP tools; rating-curve visualisation ✅; daily streak ✅;
 optional "puzzle storm"/rush timed mode.
-**Acceptance:** puzzles drivable from Claude Code; board and tool share one `puzzle_session`.
+**Done:**
+- **Daily streak ✅** — `puzzle_rating.touch_daily_streak` (consecutive UTC days with ≥1 completed
+  puzzle; idempotent per day; extends on a consecutive day, resets after a gap), new state fields
+  `daily_streak`/`best_daily_streak`/`last_active_date`, advanced from both the tactics
+  (`record_result`) and mistake (`record_practice_result`) paths so unrated practice still counts,
+  exposed on `/config` + `/state`, rendered as a quiet 🔥 flame chip in the rail header
+  (`renderDailyStreak`).
+- **Rating-curve visualisation ✅ (discrete by design)** — `renderRatingCurve` draws a compact bar
+  sparkline, one bar per *rated* attempt (up=green/down=red, capped at the last ~24, with a net
+  delta label), from the `history` the `/state` endpoint already returns; hidden until ≥2 rated
+  points. Kept discrete (not a continuous line chart) so it doesn't compete with the solve, per the
+  §7A "one focal point" principle.
+- **MCP tools ✅** — `next_puzzle`/`solve_puzzle` in `mcp_server.py`, driven through a shared
+  `core/puzzle_flow.py` orchestration module so the board and the tools mutate the SAME
+  `puzzle_session` and rate an attempt by exactly one rule (`score_attempt`). `solve_puzzle` accepts
+  UCI or SAN, a single move or a whole line (opponent replies auto-played), supports curated +
+  `your_games` sources, and returns an engine-grounded `coach_facts` block for Claude Code to
+  narrate (no redundant `claude -p` subprocess, mirroring how `analyze_game` returns facts).
+- **Puzzle storm ✅** — `core/puzzle_storm.py` (a singleton timed run reusing tactic selection + the
+  shared session, injectable clock for tests), `/api/puzzle/storm/{start,move,next,state,end}`, and
+  a focused frontend sub-mode (`[ Solve | ⚡ Storm ]` switch, big countdown, score/combo pips,
+  bonus-time float, game-over card). **Unrated by design** — never touches Glicko; only a
+  `storm_high`/`storm_best_combo` in `state.json`. Base clock `CHESS_PUZZLE_STORM_DURATION` (180s),
+  combo milestones grant bonus time, a wrong move costs time and moves straight on.
+**Acceptance:** puzzles drivable from Claude Code, board + tool share one `puzzle_session` (verified
+by `test_mcp_puzzles.py`); a storm run scores solves, ramps difficulty, banks a highscore, and never
+moves the rating (verified by `test_puzzle_storm.py` + storm cases in `test_web_puzzles.py`).
 
 ---
 
@@ -653,7 +774,8 @@ optional "puzzle storm"/rush timed mode.
 All fast, no-network, no-Stockfish unit/mock tests, matching `tests/` conventions:
 
 - `test_puzzle_rating` — Glicko-2 update against a **published worked example** (exact numbers);
-  seed/persistence round-trip.
+  seed/persistence round-trip; **daily-streak** (idempotent within a UTC day, extends on a
+  consecutive day, resets after a gap, advanced by a completed puzzle even on a fail).
 - `test_puzzles` — `validate_step` on hand-built puzzles incl. the mate-in-1 leaf branch; selection
   respects rating band + theme filter + **`seen_ids` exclusion** (no repeats); the **`user_seed`
   shuffle is deterministic per seed but differs across seeds** (two seeds → different order on the
@@ -695,8 +817,16 @@ existing "verify any new detector empirically" rule.
    Never feeds Glicko. Queue order shifts the target win%-swing band down as the player's rating
    rises (beginners → big blunders; stronger players → nuanced, high-`_criticality` misses), using
    a percentile of the user's own swing distribution; skill proxy = standard-puzzle Glicko, falling
-   back to `_resolve_review_elo`. (Remaining sub-question: exact rating→percentile mapping curve —
-   tune empirically once there's real mistake data.)
+   back to `_resolve_review_elo`. **Sub-question RESOLVED (data-backed, "option B").** Calibrated
+   against a real 137-mistake user distribution: the percentile band was raised `0.90/0.25 →
+   0.95/0.35` (a ~1400 was targeting only ~p62 of their own swings — too subtle; now ~p70), and the
+   skill clamp `800–2200` was **validated** as ≈ the 2nd–98th percentile of the Lichess Rapid
+   distribution (fits N(1500, σ≈335): p2≈812, p98≈2188), so it was kept unchanged. **Known
+   limitation / future option C:** the map stays *percentile-linear*, so difficulty steps compress
+   at the high end (a skewed swing distribution means 1800 vs 2200 land on near-identical puzzles).
+   A *swing-value-space* interpolation (even difficulty steps, at the cost of pushing mid-skill
+   targets higher on a bottom-heavy distribution) would fix this; deferred as an opt-in curvature
+   knob rather than a default, to be A/B'd once there's multi-user data.
 8. **Mistake-puzzle acceptance band (§6A):** accept moves under the *inaccuracy* threshold, or a
    tighter custom band so near-misses still count as "not quite"? (Leaning: reuse the existing
    inaccuracy threshold for consistency with how games are graded.)

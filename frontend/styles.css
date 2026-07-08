@@ -22,7 +22,7 @@
   --board-size: var(--board-user, var(--board-default));
   /* Height reserved for the pinned (sticky) header, so the sticky board column starts below it
      instead of tucking underneath. */
-  --header-h: 52px;
+  --header-h: 64px;
   /* Full width of the board column = eval bar (20) + its gap (8) + the board. The win graph and
      the other under-board panels span this so their right edge lines up with the board's. */
   --col-width: calc(var(--board-size) + 28px);
@@ -38,11 +38,11 @@ body {
 }
 
 header {
-  padding: 12px 20px;
+  padding: 14px 20px;
   border-bottom: 1px solid #000;
   display: flex;
-  align-items: baseline;
-  gap: 16px;
+  align-items: center;
+  gap: 18px;
   /* Pinned so the ⚙ Settings / ☰ Games buttons stay reachable while you scroll the analysis
      column. Opaque background so content doesn't show through; z-index below the slide-in drawer
      (95) and the modal overlays (100) so those still layer on top. */
@@ -51,7 +51,7 @@ header {
   z-index: 90;
   background: var(--bg);
 }
-header h1 { font-size: 18px; margin: 0; }
+header h1 { font-size: 23px; font-weight: 700; margin: 0; }
 .muted { color: var(--muted); font-size: 13px; }
 
 /* keyboard-shortcuts help marker + hover/focus tooltip */
@@ -364,6 +364,7 @@ main {
   border-left: 3px solid var(--accent);
   border-radius: 4px;
   padding: 9px 11px;
+  margin-bottom: 12px;
 }
 .comment:empty { display: none; }
 
@@ -372,9 +373,12 @@ main {
   border-radius: 6px;
   padding: 10px 12px;
   min-height: 20px;
+  margin-top: 18px;
   font-size: 14px;
   max-width: var(--col-width);
 }
+/* De-emphasised at the bottom of the analysis column: no empty panel when there's no verdict. */
+.verdict:empty { display: none; }
 .verdict .tag,
 .status .tag {
   display: inline-block;
@@ -510,6 +514,19 @@ main {
   line-height: 1.5;
   color: var(--text);
 }
+/* Toggle that collapses the quick summary once the AI (Snowie) summary is shown. */
+.coach-toggle {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 2px 0;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.coach-toggle:hover { color: var(--text); }
+.coach-toggle[hidden] { display: none; }
 
 /* --- move list (clickable notation) ------------------------------------- */
 .movelist-panel { margin-bottom: 18px; }
@@ -948,16 +965,16 @@ body.history-hidden .history-col { display: none; }
   display: inline-flex;
   margin-right: 14px;
   border: 1px solid var(--panel2);
-  border-radius: 7px;
+  border-radius: 9px;
   overflow: hidden;
 }
 .mode-seg {
   background: var(--panel);
   color: var(--muted);
   border: 0;
-  padding: 5px 14px;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 8px 22px;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
 }
 .mode-seg:hover { color: var(--text); }
@@ -1052,6 +1069,7 @@ body.puzzle-mode .board-col > #status,
 body.puzzle-mode .side-col,
 body.puzzle-mode .history-col,
 body.puzzle-mode #col-resizer,
+body.puzzle-mode #game-meta,
 body.puzzle-mode #history-toggle { display: none !important; }
 body.puzzle-mode .puzzle-rail { display: flex; }
 /* The rail's panels set `display: flex`, which would otherwise beat the UA `[hidden]` rule (equal
@@ -1087,6 +1105,59 @@ body.puzzle-mode .puzzle-rail { display: flex; }
 .pz-pip.ok { background: var(--accent); }
 .pz-pip.bad { background: var(--blunder); }
 .pz-streak-n { margin-left: 4px; color: var(--muted); font-size: 13px; }
+.pz-stats-right { display: inline-flex; align-items: center; gap: 10px; }
+/* Day-over-day practice streak: a quiet flame chip, brightening once it's a real run. */
+.pz-daily {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pz-daily.hot { color: var(--mistake); }
+.pz-daily b { color: var(--text); font-weight: 600; }
+
+/* Rating progress: collapsed to just "Rating <current>" on the rail; a quiet white trend line
+   (styled like the analysis win% plot) reveals when the header dropdown is pressed. */
+.pz-progress { border-top: 1px solid var(--panel2); padding-top: 10px; }
+.pz-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pz-progress-title b { color: var(--text); font-weight: 700; margin-left: 4px; }
+.pz-progress-caret {
+  transition: transform 0.15s ease;
+  color: var(--muted);
+}
+.pz-progress.open .pz-progress-caret { transform: rotate(90deg); }
+.pz-progress-body { display: none; margin-top: 8px; }
+.pz-progress.open .pz-progress-body { display: block; }
+.pz-progress-sub {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.pz-progress-net.up { color: var(--accent); }
+.pz-progress-net.down { color: var(--blunder); }
+.pz-progress-net.flat { color: var(--muted); }
+.pz-curve {
+  display: block;
+  width: 100%;
+  height: 48px;
+  border-radius: 4px;
+}
 
 .pz-card {
   background: var(--panel);
@@ -1145,7 +1216,135 @@ body.puzzle-mode .puzzle-rail { display: flex; }
   padding-top: 10px;
 }
 .pz-explain-out p { margin: 0 0 8px; }
+/* Follow-up chat under the explanation (reuses .chat-messages / .chat-form / .chat-msg). */
+.pz-chat { margin-top: 10px; border-top: 1px solid var(--panel2); padding-top: 10px; }
+.pz-chat .chat-messages { max-height: 240px; }
 .pz-status { color: var(--muted); font-size: 13px; min-height: 18px; }
+
+/* Source segmented control (Tactics | From your games). */
+.pz-source { display: inline-flex; border: 1px solid var(--panel2); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.pz-src-seg {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pz-src-seg.active { background: var(--puzzle-accent); color: #fff; }
+.pz-src-seg:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Solve | Storm activity switch (peer to the source control, slightly more prominent). */
+.pz-mode-seg { display: inline-flex; border: 1px solid var(--panel2); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.pz-mode-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pz-mode-btn.active { background: var(--puzzle-accent); color: #fff; }
+
+/* Storm scoreboard (the hero while a timed run is on). */
+.pz-storm { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; padding: 6px 0; }
+.pz-storm-clock {
+  position: relative;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.pz-storm-clock.low { color: var(--blunder); animation: pz-clock-pulse 1s ease-in-out infinite; }
+@keyframes pz-clock-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.pz-storm-bonus {
+  position: absolute;
+  top: -6px; right: -44px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  animation: pz-bonus-float 0.9s ease-out forwards;
+}
+@keyframes pz-bonus-float { 0% { opacity: 0; transform: translateY(6px); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateY(-16px); } }
+.pz-storm-line { display: flex; align-items: center; gap: 12px; font-size: 15px; color: var(--muted); }
+.pz-storm-score b { color: var(--text); font-size: 20px; }
+.pz-storm-combo { color: var(--puzzle-partial); font-weight: 600; }
+.pz-storm-side { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--text); }
+.pz-storm-side-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--muted); }
+.pz-storm-side-dot.w { background: #f0f0f0; }
+.pz-storm-side-dot.b { background: #222; }
+.pz-storm-results { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; max-width: 220px; min-height: 8px; }
+.pz-storm-msg { font-size: 13px; color: var(--muted); line-height: 1.45; max-width: 260px; }
+.pz-storm-nh { color: var(--accent); font-weight: 700; }
+.pz-storm-bests { font-size: 12px; color: var(--muted); }
+.pz-storm-bests b { color: var(--text); }
+#pz-storm-start { align-self: center; padding: 9px 22px; }
+
+/* Difficulty + weakness controls (low-emphasis, so solve mode stays calm). */
+.pz-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pz-weakness { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.pz-diff { display: inline-flex; gap: 8px; }
+.pz-ghost.active { color: var(--text); border-color: var(--puzzle-accent); }
+
+/* "From your game" badge (mistake puzzles): warm amber to read as personal, not curated. */
+.pz-source-badge {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--puzzle-partial) 18%, transparent);
+  color: var(--puzzle-partial);
+  border: 1px solid color-mix(in srgb, var(--puzzle-partial) 45%, transparent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+/* When it's a mistake puzzle, tint the prompt card amber to match the badge. */
+.pz-source-badge:not([hidden]) ~ #pz-prompt { border-color: var(--puzzle-partial); border-left-color: var(--puzzle-partial); }
+
+.pz-replay {
+  color: var(--puzzle-partial);
+  font-size: 13px;
+  text-decoration: none;
+  align-self: center;
+}
+.pz-replay:hover { text-decoration: underline; }
+
+/* Weakest-theme stats card. */
+.pz-statcard {
+  border-top: 1px solid var(--panel2);
+  padding-top: 10px;
+}
+/* Collapsed by default: a quiet "Work on ▸" toggle, revealing the theme chips on click. */
+.pz-statcard-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pz-statcard-toggle:hover { color: var(--text); }
+.pz-statcard-caret { font-size: 10px; }
+.pz-statcard-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.pz-statcard-h { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.pz-weak-theme {
+  background: var(--panel2);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.pz-weak-theme b { color: var(--text); }
 
 @media (max-width: 900px) {
   .puzzle-rail { flex-basis: auto; width: 100%; }

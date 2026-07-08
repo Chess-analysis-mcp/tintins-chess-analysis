@@ -127,7 +127,8 @@ def test_explain_puzzle_uses_local_llm_when_enabled(monkeypatch):
     monkeypatch.setattr(claude_bridge.local_llm, "complete", _complete)
 
     out = claude_bridge.explain_puzzle(PUZZLE, "solved_first_try")
-    assert "back-rank" in out
+    assert "back-rank" in out["answer"]  # returns {answer, session_id} for the follow-up chat
+    assert out["session_id"] is None  # local-LLM path has no threadable session
     assert "backRankMate" in captured["prompt"]  # themes made it into the prompt
 
 
