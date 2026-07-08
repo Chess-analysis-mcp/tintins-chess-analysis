@@ -501,6 +501,15 @@ main {
 .coach-ai-refresh:hover { opacity: 1; transform: rotate(90deg); }
 
 .side-col { flex: 0 1 380px; width: 380px; min-width: 0; }
+/* Widen the analysis/chat column on wide windows (the board caps at --board-size, so there's dead
+   space to spare) — mirrors the puzzle-rail steps. It can still flex-shrink if the board + Games
+   column leave less room. */
+@media (min-width: 1500px) {
+  .side-col { flex-basis: 440px; width: 440px; }
+}
+@media (min-width: 1900px) {
+  .side-col { flex-basis: 520px; width: 520px; }
+}
 .side-col h2 { font-size: 15px; margin: 0 0 8px; }
 
 /* --- end-of-game coach blurb -------------------------------------------- */
@@ -1077,7 +1086,10 @@ body.puzzle-mode .puzzle-rail { display: flex; }
    wouldn't actually hide it. Make the hidden attribute win inside the rail. */
 .puzzle-rail [hidden] { display: none !important; }
 
-/* The rail. */
+/* The rail. Widens on wider windows (the board doesn't grow past --board-size, so on a big
+   screen there's dead space to the right) — the explanation/coach text is the main reason to
+   have room, and 320px reads cramped. Stays 320px on laptop-ish widths, stepping up past 1500px
+   and again past 1900px. */
 .puzzle-rail {
   flex: 0 1 320px;
   width: 320px;
@@ -1085,6 +1097,12 @@ body.puzzle-mode .puzzle-rail { display: flex; }
   flex-direction: column;
   gap: 14px;
   padding-top: 4px;
+}
+@media (min-width: 1500px) {
+  .puzzle-rail { flex-basis: 440px; width: 440px; }
+}
+@media (min-width: 1900px) {
+  .puzzle-rail { flex-basis: 560px; width: 560px; }
 }
 .pz-stats {
   display: flex;

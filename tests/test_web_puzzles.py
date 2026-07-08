@@ -16,6 +16,10 @@ from server.web import app as app_module
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    # No download: this suite runs on the vendored baseline only (per the module docstring). Leaving
+    # downloads on makes `/next` spawn a background shard-warm thread that hits the real GitHub
+    # manifest — a hidden network call that also races on the module-global manifest cache.
+    monkeypatch.setattr(config, "PUZZLE_DOWNLOAD", False)
     return TestClient(app_module.create_app())
 
 

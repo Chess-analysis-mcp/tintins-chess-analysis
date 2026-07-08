@@ -34,6 +34,7 @@ KEYS = (
     "coach_ai_persist",
     "personalize_history",
     "puzzle_animations",
+    "puzzle_auto_advance",
     "puzzle_mistake_interleave",
     "local_llm_base_url",
     "local_llm_model",
@@ -104,6 +105,8 @@ def apply(settings: dict) -> None:
         config.PERSONALIZE_HISTORY = bool(settings["personalize_history"])
     if "puzzle_animations" in settings:
         config.PUZZLE_ANIMATIONS = bool(settings["puzzle_animations"])
+    if "puzzle_auto_advance" in settings:
+        config.PUZZLE_AUTO_ADVANCE = bool(settings["puzzle_auto_advance"])
     if "puzzle_mistake_interleave" in settings:
         config.PUZZLE_MISTAKE_INTERLEAVE = bool(settings["puzzle_mistake_interleave"])
     if "local_llm_base_url" in settings:
@@ -136,6 +139,7 @@ def effective() -> dict:
         "coach_ai_persist": config.COACH_AI_PERSIST,
         "personalize_history": config.PERSONALIZE_HISTORY,
         "puzzle_animations": config.PUZZLE_ANIMATIONS,
+        "puzzle_auto_advance": config.PUZZLE_AUTO_ADVANCE,
         "puzzle_mistake_interleave": config.PUZZLE_MISTAKE_INTERLEAVE,
         "local_llm_base_url": config.LOCAL_LLM_BASE_URL or "",
         "local_llm_model": config.LOCAL_LLM_MODEL or "",

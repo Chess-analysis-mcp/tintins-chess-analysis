@@ -1,22 +1,22 @@
-"""Drift-aware dense-shard downloading for the puzzle trainer (P3).
+"""Dense-shard downloading for the puzzle trainer (P3).
 
 The vendored baseline (`server/data/puzzles/baseline.jsonl.gz`, ~150/band) always works offline, but
-it's thin. This module layers the dense per-band shards (~10k/band) on top, fetched **on demand**
-from the SEPARATE puzzle-data repo's release (`config.PUZZLE_SHARD_REPO` / `PUZZLE_SHARD_TAG`, i.e.
+it's thin. This module layers the dense per-band shards (~10k/band) on top, fetched from the SEPARATE
+puzzle-data repo's release (`config.PUZZLE_SHARD_REPO` / `PUZZLE_SHARD_TAG`, i.e.
 `Chess-analysis-mcp/tintins-chess-puzzles` / `puzzles-v1`) and cached under `<DATA_DIR>/puzzles/`.
+
+The whole set is small (~16 MB / 23 bands), so `ensure_all_bands()` just pulls **every** band in the
+background on first puzzle use and keeps it — no per-rating windowing, no LRU eviction, no opt-in.
 
 Everything is **best-effort and never raises**: a missing manifest, a network error, or a checksum
 mismatch just leaves the baseline in place. All writes land in `config._puzzle_dir()` (external,
-writable), NOT inside the read-only `.app` bundle — so App-mode users get downloads too.
-
-Mirrors two existing patterns: `updates.py` (throttled GitHub fetch + in-process/disk cache) and
-`analysis_cache._prune` (LRU-by-mtime cap + atomic `.tmp` -> os.replace write).
+writable), NOT inside the read-only `.app` bundle — so App-mode users get downloads too. Mirrors
+`updates.py`'s throttled GitHub fetch + in-process/disk cache + atomic `.tmp` -> os.replace write.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import threading
 import time
@@ -34,8 +34,6 @@ BAND_HI = 2900  # exclusive upper edge; the last band is 2800-2900
 _LOCK = threading.Lock()
 # Cached manifest: {"version", "band_width", "shards": [...], "checked_at": float}. None = not loaded.
 _MANIFEST_CACHE: Optional[dict] = None
-# Bands (lo, hi) whose download is currently in flight, so we don't spawn duplicate workers.
-_INFLIGHT: set[tuple[int, int]] = set()
 
 
 # --- paths ---------------------------------------------------------------------------------------
@@ -150,7 +148,7 @@ def _shard_entry(manifest: Optional[dict], lo: int, hi: int) -> Optional[dict]:
     return None
 
 
-# --- downloading + verification + LRU prune ------------------------------------------------------
+# --- downloading + verification ------------------------------------------------------------------
 
 def _sha256(path: str) -> str:
     h = hashlib.sha256()
@@ -160,43 +158,16 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def _prune() -> None:
-    """LRU-cap downloaded band shards by mtime (copy of analysis_cache._prune). Best-effort."""
-    cap = config.PUZZLE_CACHE_MAX
-    if cap <= 0:
-        return
-    try:
-        d = config._puzzle_dir()
-        entries = [
-            os.path.join(d, n)
-            for n in os.listdir(d)
-            if n.startswith("band_") and n.endswith(".jsonl.gz")
-        ]
-        if len(entries) <= cap:
-            return
-        entries.sort(key=lambda p: os.path.getmtime(p))
-        for p in entries[: len(entries) - cap]:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-    except OSError:
-        pass
-
-
 def ensure_band(lo: int, hi: int) -> Optional[str]:
     """Ensure the dense shard for band [lo, hi) is on disk; return its path or None.
 
-    A cache hit just marks the file hot (mtime) so the LRU keeps it. A miss downloads the release
-    asset, verifies sha256 against the manifest, atomically moves it into place, prunes, and
-    invalidates the in-memory downloaded-pool cache. Every failure mode -> None (baseline stays).
+    A cache hit returns immediately. A miss downloads the release asset, verifies sha256 against the
+    manifest, atomically moves it into place, and invalidates the in-memory downloaded-pool cache.
+    Every failure mode -> None (the vendored baseline stays in place). Downloaded bands persist —
+    the whole set is small (~16 MB), so there's no LRU eviction.
     """
     path = _band_path(lo, hi)
     if os.path.exists(path):
-        try:
-            os.utime(path, None)  # mark recently-used for the LRU
-        except OSError:
-            pass
         return path
     if not config.PUZZLE_DOWNLOAD:
         return None
@@ -241,7 +212,6 @@ def ensure_band(lo: int, hi: int) -> Optional[str]:
         _safe_remove(tmp)
         return None
 
-    _prune()
     _invalidate_pool()
     return path
 
@@ -262,50 +232,52 @@ def _invalidate_pool() -> None:
         pass
 
 
-# --- RD-aware warm-up ----------------------------------------------------------------------------
+# --- full-set warm-up ----------------------------------------------------------------------------
+# The whole shard set is small (~16 MB), so rather than windowing by rating we just pull EVERY band
+# in the background on first puzzle use and keep it — puzzle mode then works fully offline at any
+# rating with no per-user tuning. Best-effort: any failure leaves the vendored baseline in place.
 
-def bands_for(rating: float, rd: float) -> list[tuple[int, int]]:
-    """The band set to keep warm around `rating`, widened while RD is high (calibrating).
+_ALL_INFLIGHT = False  # a warm-up thread is currently running (don't spawn a duplicate)
+_ALL_COMPLETE = False  # every manifest band is on disk (nothing left to fetch this process)
 
-    n = clamp(ceil(rd / PUZZLE_RD_PER_BAND), 2, 6): a fresh rd~350 user warms a broad neighbouring
-    spread; a settled rd~60 user only the tight +/-2. Bands are clamped to the published range.
-    """
-    try:
-        per = max(1, config.PUZZLE_RD_PER_BAND)
-        n = max(2, min(6, math.ceil(max(0.0, rd) / per)))
-    except (TypeError, ValueError):
-        n = 2
-    lo, hi = band_bounds(rating)
+
+def _manifest_bands(manifest: Optional[dict]) -> list[tuple[int, int]]:
+    """Every (lo, hi) band listed in the manifest, in ascending order."""
     out: list[tuple[int, int]] = []
-    for k in range(-n, n + 1):
-        blo = lo + k * BAND_WIDTH
-        if BAND_LO <= blo <= BAND_HI - BAND_WIDTH:
-            out.append((blo, blo + BAND_WIDTH))
+    for shard in (manifest or {}).get("shards", []):
+        band = shard.get("band")
+        if isinstance(band, list) and len(band) == 2:
+            out.append((int(band[0]), int(band[1])))
+    out.sort()
     return out
 
 
-def _warm(bands: list[tuple[int, int]]) -> None:
-    for lo, hi in bands:
-        with _LOCK:
-            if (lo, hi) in _INFLIGHT:
-                continue
-            _INFLIGHT.add((lo, hi))
-        try:
-            ensure_band(lo, hi)
-        finally:
+def _download_all_worker() -> None:
+    global _ALL_INFLIGHT, _ALL_COMPLETE
+    try:
+        bands = _manifest_bands(ensure_manifest())
+        for lo, hi in bands:
+            ensure_band(lo, hi)  # best-effort; a miss just leaves that band un-downloaded
+        if bands and all(os.path.exists(_band_path(lo, hi)) for lo, hi in bands):
             with _LOCK:
-                _INFLIGHT.discard((lo, hi))
+                _ALL_COMPLETE = True
+    finally:
+        with _LOCK:
+            _ALL_INFLIGHT = False
 
 
-def ensure_bands_around(rating: float, rd: float) -> None:
-    """Fire-and-forget background warm-up of the RD-scaled band window. Best-effort, non-blocking.
+def ensure_all_bands() -> None:
+    """Fire-and-forget background download of the ENTIRE shard set. Best-effort, non-blocking.
 
-    Serves the CURRENT call from whatever is already cached; the fetch benefits the next call. A
-    no-op when downloads are disabled or every needed band is already present.
+    A no-op when downloads are disabled or the full set is already on disk. Runs at most one thread
+    at a time and retries on a later call if a previous attempt didn't complete (e.g. was offline),
+    so a user who comes online mid-session still fills in the set without a restart.
     """
+    global _ALL_INFLIGHT
     if not config.PUZZLE_DOWNLOAD:
         return
-    bands = [b for b in bands_for(rating, rd) if not os.path.exists(_band_path(*b))]
-    if not bands:
-        return
-    threading.Thread(target=_warm, args=(bands,), daemon=True).start()
+    with _LOCK:
+        if _ALL_INFLIGHT or _ALL_COMPLETE:
+            return
+        _ALL_INFLIGHT = True
+    threading.Thread(target=_download_all_worker, daemon=True).start()

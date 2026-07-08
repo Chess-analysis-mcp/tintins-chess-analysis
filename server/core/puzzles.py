@@ -37,8 +37,6 @@ _MIN_POOL = 12
 # game or puzzle skews the whole stream (the user explicitly asked not to be biased that early).
 _MIN_HISTORY_GAMES = 5  # analysed games before game-motif weaknesses drive selection
 _MIN_PUZZLE_ATTEMPTS = 10  # total puzzle attempts before in-app theme stats drive selection
-# Fallback Glicko deviation for the shard warm-up when a caller doesn't pass one (new-player seed).
-_DEFAULT_RD = 350.0
 
 # Map a game-history motif (history.tag_motifs) onto a puzzle theme tag, so "train my weaknesses"
 # can bias selection toward the tactics the player actually misses in real games. None = no clean
@@ -246,10 +244,10 @@ def next_puzzle(
 ) -> Optional[dict]:
     """Pick a puzzle near `rating`, theme-filtered + not in `exclude`, via a per-user seeded shuffle.
 
-    `difficulty` of "easier"/"harder" shifts the target rating by one band. `rd` (the Glicko
-    deviation) drives the background shard warm-up: this call serves from whatever is cached now, and
-    the RD-scaled neighbouring bands are fetched for next time. Returns the parsed puzzle (with a
-    derived `side_to_move`) or None when nothing is available.
+    `difficulty` of "easier"/"harder" shifts the target rating by one band. `rd` is accepted for
+    signature stability but no longer affects selection (the full shard set is downloaded in the
+    background regardless). Returns the parsed puzzle (with a derived `side_to_move`) or None when
+    nothing is available.
     """
     target = float(rating)
     if difficulty == "easier":
@@ -257,9 +255,9 @@ def next_puzzle(
     elif difficulty == "harder":
         target += _BAND
 
-    # Fire-and-forget: warm the RD-scaled band window around the target so the pool deepens over
-    # time. Best-effort + non-blocking; a no-op offline or when the bands are already cached.
-    puzzle_shards.ensure_bands_around(target, rd if rd is not None else _DEFAULT_RD)
+    # Fire-and-forget: pull the whole shard set (~16 MB) in the background on first use so the pool
+    # deepens over time. This call serves from whatever is cached now. Best-effort + non-blocking.
+    puzzle_shards.ensure_all_bands()
 
     candidates = _candidates(target, themes)
     exclude = exclude or set()

@@ -395,18 +395,12 @@ PUZZLE_SHARD_REPO: str = os.environ.get(
     "CHESS_PUZZLE_SHARD_REPO", "Chess-analysis-mcp/tintins-chess-puzzles"
 ).strip()
 PUZZLE_SHARD_TAG: str = os.environ.get("CHESS_PUZZLE_SHARD_TAG", "puzzles-v1").strip()
-# LRU cap on downloaded band shards under <DATA_DIR>/puzzles (P3); 0 = unbounded.
-PUZZLE_CACHE_MAX: int = _parse_int("CHESS_PUZZLE_CACHE_MAX", 12)
-# Allow the background shard fetch (P3). 0 = baseline-only / fully offline.
+# Allow the background shard fetch (P3). 0 = baseline-only / fully offline. On first puzzle use the
+# whole set (~16 MB / 23 bands) downloads in the background and is kept — no windowing, no LRU.
 PUZZLE_DOWNLOAD: bool = os.environ.get("CHESS_PUZZLE_DOWNLOAD", "1") != "0"
 # How long (seconds) a cached puzzle manifest.json is trusted before re-fetching from the data-repo
 # release (P3), mirroring UPDATE_CHECK_INTERVAL. Best-effort; a failed refresh keeps the stale copy.
 PUZZLE_MANIFEST_INTERVAL: int = _parse_int("CHESS_PUZZLE_MANIFEST_INTERVAL", 6 * 3600)
-# RD-aware cache width (P3): pre-fetch the user's rating band +/- ceil(rd / this) neighbouring bands
-# (clamped ~2..6). Elo swings hundreds of points while Glicko calibrates (seed rd=350), so a fresh
-# high-RD user warms a wider neighbouring-Elo spread; a settled low-RD user contracts to the tight
-# window. Lower = wider spread per RD point.
-PUZZLE_RD_PER_BAND: int = _parse_int("CHESS_PUZZLE_RD_PER_BAND", 100)
 # Occasionally mix "from your own games" mistake puzzles (P3.5) into the main tactic stream. Default
 # ON: a small fraction of tactics are replaced by a position from one of your own games, so the
 # trainer surfaces your real weaknesses without you having to switch to the "From your games" source.
@@ -423,6 +417,10 @@ PUZZLE_MAX_RD: int = _parse_int("CHESS_PUZZLE_MAX_RD", 130)
 # Show the solve/miss board animations (square flash, ripple ring, confetti, shake). Off = the
 # result is conveyed by the verdict text colour alone (green / orange / red). Settings toggle.
 PUZZLE_ANIMATIONS: bool = os.environ.get("CHESS_PUZZLE_ANIMATIONS", "1") != "0"
+# Auto-load the next puzzle a beat after a solve (flow-state grinding) instead of waiting for the
+# "Next puzzle" button. The frontend still holds long enough for the solve animations to finish
+# before advancing. Only fires on a solve, never after "Show solution". Settings toggle.
+PUZZLE_AUTO_ADVANCE: bool = os.environ.get("CHESS_PUZZLE_AUTO_ADVANCE", "1") != "0"
 # "Puzzle storm" timed rush (P4): solve as many as you can before the clock runs out. Base clock in
 # seconds; a combo run grants a small time bonus and a wrong move costs time (see puzzle_storm.py).
 # Unrated by design (fast, ramping difficulty) - it only tracks a best-score highscore in state.json.

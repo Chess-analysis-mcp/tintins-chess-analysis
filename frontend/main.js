@@ -100,6 +100,8 @@ let puzzleDone = false; // true once solved/failed/given-up (board locked, resul
 let puzzleFailed = false; // user played a wrong move
 let puzzleHinted = false;
 let puzzleAnimations = true; // Settings toggle: play the board solve/miss animations vs. text only
+let puzzleAutoAdvance = true; // Settings toggle: auto-load the next puzzle a beat after a solve
+let puzzleAdvanceTimer = null; // pending auto-advance timeout handle (cancelled on any nav/interaction)
 // The rating summary from the FIRST wrong move (which already applied the Glicko loss). Kept so the
 // final "Solved (after a miss)" card can surface that the rating already moved, rather than looking
 // like nothing happened. Reset on each new puzzle.
@@ -117,6 +119,11 @@ let puzzleResults = [];
 // and bails after each await if it changed, so a stale callback from the PREVIOUS puzzle can never
 // leak its result (or a forced reply) onto the puzzle now on the board.
 let puzzleGen = 0;
+// Snapshot of the last FINISHED puzzle (solved or solution-shown), so a "‹ Previous" button can
+// restore it in review mode. This exists because auto-advance yanks you onto the next puzzle a beat
+// after a solve, which otherwise strands you: the finished puzzle (and any "why?" you'd want to ask
+// about it) is gone. Single-level: restoring clears it; skipping an UNSOLVED puzzle clears it too.
+let prevPuzzleSnapshot = null;
 // P3/P3.5 selection prefs. `puzzleSource` + the puzzle/analyze mode are persisted in localStorage
 // (keyed to this host:port origin), so closing the app and reopening it via ANY launcher
 // (.app/.command/.bat) returns to where you left off — the mode AND the sub-tab.
@@ -1106,6 +1113,7 @@ async function loadAll() {
     coachAiAuto = !!cfg.coach_ai_auto;
     personalizeHistory = cfg.personalize_history !== false; // default on
     puzzleAnimations = cfg.puzzle_animations !== false; // default on
+    puzzleAutoAdvance = cfg.puzzle_auto_advance !== false; // default on
   } catch (_) {}
   if (appUsername) $("lichess-user").placeholder = appUsername;
   if (chesscomUsername) $("chesscom-user").placeholder = chesscomUsername;
@@ -1763,7 +1771,11 @@ function onAnalysisError(msg) {
 }
 
 // --- history / lichess panel ---------------------------------------------
-async function loadHistory(doneMsg) {
+// `resetPaging` collapses back to the first page + scrolls to top; callers pass it only on a
+// genuine identity change. The default preserves how far the user paged/scrolled, so refreshing
+// the list after opening/analyzing a game doesn't force them to press "Show more" and re-scroll
+// to find an older game they were looking at.
+async function loadHistory(doneMsg, { resetPaging = false } = {}) {
   $("history-status").textContent = "Loading…";
   let data;
   try {
@@ -1775,7 +1787,13 @@ async function loadHistory(doneMsg) {
   myPlayerId = data.player_id || myPlayerId;
   if (myPlayerId) $("lichess-user").placeholder = myPlayerId;
   historyGames = data.games || [];
-  historyCount = HISTORY_PAGE; // a fresh fetch resets paging back to the first page
+  if (resetPaging) {
+    historyCount = HISTORY_PAGE;
+    $("history-list").scrollTop = 0;
+  } else {
+    // Keep the current page count (clamped to the list) so an expanded list stays expanded.
+    historyCount = Math.min(Math.max(historyCount, HISTORY_PAGE), Math.max(historyGames.length, HISTORY_PAGE));
+  }
   renderMyGames();
   $("history-status").textContent = historyGames.length ? doneMsg || "" : "No analyzed games yet.";
   loadInsights(); // the aggregate reflects whatever just landed in history
@@ -1784,6 +1802,8 @@ async function loadHistory(doneMsg) {
 // Render the current page of "My games" into the (fixed-height, scrollable) list, with a
 // "Show more" row when there are extra games beyond what's shown. No refetch — pages a cached list.
 function renderMyGames() {
+  const box = $("history-list");
+  const prevScroll = box.scrollTop; // rebuilding the list resets scroll; restore it below
   renderHistory(historyGames.slice(0, historyCount), "normal");
   const remaining = historyGames.length - historyCount;
   if (remaining > 0) {
@@ -1794,8 +1814,9 @@ function renderMyGames() {
       historyCount += HISTORY_PAGE;
       renderMyGames();
     });
-    $("history-list").appendChild(li);
+    box.appendChild(li);
   }
+  box.scrollTop = prevScroll;
 }
 
 async function loadLichess(username) {
@@ -2147,6 +2168,7 @@ async function openSettings() {
   $("set-coach-ai-persist").checked = s.coach_ai_persist !== false; // remember summaries (default on)
   $("set-personalize").checked = s.personalize_history !== false; // personalize chat (default on)
   $("set-puzzle-animations").checked = s.puzzle_animations !== false; // solve animations (default on)
+  $("set-puzzle-auto-advance").checked = s.puzzle_auto_advance !== false; // auto-next after solve (default on)
   $("set-puzzle-interleave").checked = s.puzzle_mistake_interleave !== false; // mix in own-game mistakes (default on)
   $("set-sf-status").textContent = data.stockfish_ok
     ? "Stockfish engine found ✓"
@@ -2225,6 +2247,7 @@ async function saveSettings(e) {
     coach_ai_persist: $("set-coach-ai-persist").checked,
     personalize_history: $("set-personalize").checked,
     puzzle_animations: $("set-puzzle-animations").checked,
+    puzzle_auto_advance: $("set-puzzle-auto-advance").checked,
     puzzle_mistake_interleave: $("set-puzzle-interleave").checked,
   };
   // The Advanced fields are the source of truth (the dropdowns just fill them).
@@ -2256,6 +2279,7 @@ async function saveSettings(e) {
   coachAiAuto = !!(res.settings && res.settings.coach_ai_auto);
   personalizeHistory = !(res.settings && res.settings.personalize_history === false);
   puzzleAnimations = !(res.settings && res.settings.puzzle_animations === false);
+  puzzleAutoAdvance = !(res.settings && res.settings.puzzle_auto_advance === false);
   chesscomSync = !(res.settings && res.settings.chesscom_sync === false);
   chesscomSyncMax = Number(res.settings && res.settings.chesscom_sync_max) || 5;
   const card = $("coach-ai");
@@ -2746,6 +2770,7 @@ function recordPuzzleResult(ok) {
 
 async function setPuzzleMode(on, opts = {}) {
   if (on === puzzleMode) return;
+  cancelAutoAdvance(); // don't let a queued advance fire after switching activities
   puzzleMode = on;
   document.body.classList.toggle("puzzle-mode", on);
   $("mode-analyze").classList.toggle("active", !on);
@@ -2859,6 +2884,12 @@ async function resumeCurrentPuzzle() {
 }
 
 async function loadNextPuzzle(opts = {}) {
+  // Remember the puzzle we're leaving so "‹ Previous" can bring it back — but only if it was
+  // finished (a solve or a shown solution is worth revisiting; a skipped, unsolved one isn't, and
+  // can't be re-rendered in review mode anyway, so leaving it just drops any stale snapshot).
+  if (puzzleDone) capturePrevPuzzle();
+  else clearPrevPuzzle();
+  cancelAutoAdvance(); // supersede any pending auto-advance (also covers manual Next/Skip)
   const myGen = ++puzzleGen; // cancel any in-flight handler from the puzzle we're leaving
   puzzleBusy = true; // lock the board until the new puzzle is in place
   pzStatus("Loading…");
@@ -2939,6 +2970,7 @@ function applyPuzzle(p) {
     renderPuzzleBoard(true);
     puzzleBusy = false;
   }, 430);
+  updatePrevPuzzleButton(); // show "‹ Previous" if we just auto-advanced off a finished puzzle
 }
 
 // Grey "you played" arrow for a mistake puzzle: the move the player actually made in that game, so
@@ -2977,6 +3009,7 @@ function pzChatMsg(cls, text) {
 async function sendPuzzleChat(ev) {
   ev.preventDefault();
   if (puzzleChatBusy || !puzzleData) return;
+  cancelAutoAdvance(); // engaging with the coach means stay on this puzzle
   const input = $("pz-chat-input");
   const q = input.value.trim() || "Can you explain that a bit more?";
   input.value = "";
@@ -3123,6 +3156,7 @@ async function onPuzzleMove(orig, dest) {
 // in-progress run when we leave storm is handled by the caller (setStormMode(false)).
 function setStormMode(on) {
   if (on === stormShown) return;
+  cancelAutoAdvance(); // a solve-trainer auto-advance must not fire into the storm sub-mode
   stormShown = on;
   $("pz-mode-solve").classList.toggle("active", !on);
   $("pz-mode-storm").classList.toggle("active", on);
@@ -3493,6 +3527,118 @@ async function replayMistake(p) {
   }
 }
 
+// Cancel a pending auto-advance (manual nav, leaving puzzle mode, or the user chose to Explain/chat
+// about this puzzle — in which case yanking them to the next one would be rude).
+function cancelAutoAdvance() {
+  if (puzzleAdvanceTimer !== null) {
+    clearTimeout(puzzleAdvanceTimer);
+    puzzleAdvanceTimer = null;
+  }
+}
+
+// Show/hide the "‹ Previous" ghost button (only meaningful while a restorable snapshot exists).
+function updatePrevPuzzleButton() {
+  const btn = $("pz-prev");
+  if (btn) btn.hidden = !prevPuzzleSnapshot;
+}
+
+function clearPrevPuzzle() {
+  prevPuzzleSnapshot = null;
+  updatePrevPuzzleButton();
+}
+
+// Snapshot the current FINISHED puzzle (board + fully-rendered result card, incl. any Explain text
+// and follow-up chat) so restorePrevPuzzle can bring it back verbatim for review. Called as we leave
+// a done puzzle. Restoring is review-only (board stays locked), so we don't need server puzzle state;
+// Explain/chat re-ground on puzzleData.id + the stored fen.
+function capturePrevPuzzle() {
+  if (!puzzleDone || !puzzleData) return;
+  prevPuzzleSnapshot = {
+    data: puzzleData,
+    shapes: puzzleShapes,
+    failed: puzzleFailed,
+    hinted: puzzleHinted,
+    solveColor: puzzleSolveColor,
+    missRating: puzzleMissRating,
+    fen: chess.fen(),
+    lastMove: puzzleLastMove,
+    chatSession: puzzleChatSession,
+    chatFen: puzzleChatFen,
+    // Rendered result-card DOM so the verdict / theme / explanation / chat all survive intact.
+    verdictText: $("pz-verdict").textContent,
+    verdictClass: $("pz-verdict").className,
+    themeHTML: $("pz-theme").innerHTML,
+    replayHidden: $("pz-replay").hidden,
+    explainHidden: $("pz-explain").hidden,
+    explainDisabled: $("pz-explain").disabled,
+    explainOutHTML: $("pz-explain-out").innerHTML,
+    explainOutHidden: $("pz-explain-out").hidden,
+    chatHTML: $("pz-chat-messages").innerHTML,
+    chatHidden: $("pz-chat").hidden,
+  };
+  updatePrevPuzzleButton();
+}
+
+// Bring back the last finished puzzle in review mode: the board (locked) + its result card, so the
+// player can still press Explain / ask a follow-up about a puzzle auto-advance already moved past.
+function restorePrevPuzzle() {
+  const s = prevPuzzleSnapshot;
+  if (!s) return;
+  cancelAutoAdvance();
+  ++puzzleGen; // become the current puzzle; supersede any in-flight handler
+  prevPuzzleSnapshot = null; // single-level back; a later Next re-captures this one
+  puzzleBusy = false;
+  puzzleDone = true;
+  puzzleData = s.data;
+  puzzleShapes = s.shapes;
+  puzzleFailed = s.failed;
+  puzzleHinted = s.hinted;
+  puzzleSolveColor = s.solveColor;
+  puzzleMissRating = s.missRating;
+  puzzleLastMove = s.lastMove;
+  puzzleChatSession = s.chatSession;
+  puzzleChatFen = s.chatFen;
+  orient = puzzleSolveColor;
+  chess.load(s.fen);
+
+  // Restore the result card verbatim; hide the prompt/ghosts (it's a finished puzzle).
+  $("pz-prompt").hidden = true;
+  $("pz-ghosts").hidden = true;
+  $("pz-result").hidden = false;
+  $("pz-verdict").textContent = s.verdictText;
+  $("pz-verdict").className = s.verdictClass;
+  $("pz-theme").innerHTML = s.themeHTML;
+  $("pz-replay").hidden = s.replayHidden;
+  if (!s.replayHidden) $("pz-replay").onclick = (e) => { e.preventDefault(); replayMistake(puzzleData); };
+  $("pz-explain").hidden = s.explainHidden;
+  $("pz-explain").disabled = s.explainDisabled;
+  $("pz-explain-out").hidden = s.explainOutHidden;
+  $("pz-explain-out").innerHTML = s.explainOutHTML;
+  $("pz-chat").hidden = s.chatHidden;
+  $("pz-chat-messages").innerHTML = s.chatHTML;
+
+  renderPuzzleBoard(false); // locked (done): draws the stored solution/refutation arrows
+  pzStatus("Reviewing your previous puzzle — press Explain or ask below, then Next to continue.");
+  updatePrevPuzzleButton();
+}
+
+// After a solve, queue the next puzzle — but only once the solve animation has had time to play out,
+// per the §7A "let the green pulse be the reward" feel. Delay comfortably exceeds the confetti/ripple
+// (~1.1s); with animations off, a shorter beat so the result text is still readable first.
+function scheduleAutoAdvance() {
+  cancelAutoAdvance();
+  if (!puzzleAutoAdvance) return;
+  const myGen = puzzleGen;
+  const delay = puzzleAnimations ? 1900 : 1000;
+  puzzleAdvanceTimer = setTimeout(() => {
+    puzzleAdvanceTimer = null;
+    if (!puzzleMode || stormShown) return; // left the trainer while waiting
+    if (myGen !== puzzleGen) return; // a newer puzzle/nav superseded this one
+    if (!puzzleDone) return; // defensive: only advance from a finished puzzle
+    loadNextPuzzle();
+  }, delay);
+}
+
 function finishPuzzle(outcome, ratingSummary, yourMove) {
   puzzleDone = true;
   $("pz-prompt").hidden = true;
@@ -3554,6 +3700,10 @@ function finishPuzzle(outcome, ratingSummary, yourMove) {
   puzzleData._yourMove = yourMove || null;
   $("pz-explain").hidden = !(puzzleConfigCache && puzzleConfigCache.has_llm);
   loadPuzzleStatCard();
+
+  // Flow-state grinding: on a solve, roll straight into the next puzzle after the animation plays
+  // (opt-out in Settings). Never on "Show solution" (outcome "failed") — that's a study moment.
+  if (solved) scheduleAutoAdvance();
 }
 
 // Weakest-theme stats card, from /api/puzzle/state (quiet; hidden when there's nothing to show).
@@ -3629,6 +3779,7 @@ async function puzzleShowSolution() {
 }
 
 async function puzzleExplain() {
+  cancelAutoAdvance(); // the user wants to study this one — don't yank them to the next puzzle
   const btn = $("pz-explain");
   const out = $("pz-explain-out");
   btn.disabled = true;
@@ -3804,7 +3955,7 @@ function init() {
     if (!u) return;
     await saveUsername(u);
     reflectSetAsMe((u || "").toLowerCase());
-    loadHistory(); // "My games" now resolves to this account
+    loadHistory(undefined, { resetPaging: true }); // "My games" now resolves to this account
   });
   // First-run prompt (no configured account): two fields, fill in either. Save both, then sync +
   // open the user's latest game (chess.com sync first, else the Lichess/chess.com autoload).
@@ -3827,6 +3978,7 @@ function init() {
   $("mode-puzzles").addEventListener("click", () => setPuzzleMode(true));
   $("pz-next").addEventListener("click", () => loadNextPuzzle());
   $("pz-skip").addEventListener("click", () => loadNextPuzzle());
+  $("pz-prev").addEventListener("click", restorePrevPuzzle);
   $("pz-hint").addEventListener("click", puzzleHint);
   $("pz-solution").addEventListener("click", puzzleShowSolution);
   $("pz-explain").addEventListener("click", puzzleExplain);

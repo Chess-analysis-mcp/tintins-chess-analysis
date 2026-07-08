@@ -58,9 +58,13 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(config, "PUZZLE_DOWNLOAD", True)
     puzzle_shards._MANIFEST_CACHE = None
+    puzzle_shards._ALL_INFLIGHT = False
+    puzzle_shards._ALL_COMPLETE = False
     puzzles._downloaded_pool.cache_clear()
     yield
     puzzle_shards._MANIFEST_CACHE = None
+    puzzle_shards._ALL_INFLIGHT = False
+    puzzle_shards._ALL_COMPLETE = False
     puzzles._downloaded_pool.cache_clear()
 
 
@@ -70,17 +74,6 @@ def test_band_bounds_clamps_to_range():
     assert puzzle_shards.band_bounds(1234) == (1200, 1300)
     assert puzzle_shards.band_bounds(100) == (600, 700)     # below the floor
     assert puzzle_shards.band_bounds(9000) == (2800, 2900)  # above the ceiling
-
-
-def test_bands_for_widens_with_rd():
-    fresh = puzzle_shards.bands_for(1500, 350)   # calibrating -> wide
-    settled = puzzle_shards.bands_for(1500, 60)  # established -> tight
-    assert len(fresh) > len(settled)
-    # A fresh, high-RD player warms a strictly wider neighbouring-Elo set.
-    assert set(settled).issubset(set(fresh))
-    # Never narrower than +/-2 bands (5 total) nor wider than +/-6 (13 total).
-    assert 5 <= len(settled)
-    assert len(fresh) <= 13
 
 
 # --- manifest throttle --------------------------------------------------------------------------
@@ -133,28 +126,65 @@ def test_ensure_band_downloads_verifies_and_invalidates_pool(monkeypatch):
     assert any(p["id"] == "z1" for p in pool)
 
 
-# --- LRU prune ----------------------------------------------------------------------------------
+# --- full-set warm-up ---------------------------------------------------------------------------
 
-def test_prune_caps_to_max(monkeypatch):
-    monkeypatch.setattr(config, "PUZZLE_CACHE_MAX", 1)
+def _multi_manifest(sha: str) -> dict:
+    """A 3-band manifest (all pointing at the same test shard bytes) for the warm-up path."""
+    bands = [[1000, 1100], [1100, 1200], [1200, 1300]]
+    return {
+        "version": 1,
+        "band_width": 100,
+        "shards": [
+            {"band": b, "file": f"band_{b[0]}_{b[1]}.jsonl.gz",
+             "count": 1, "themes": {"fork": 1}, "bytes": len(BAND_BYTES), "sha256": sha}
+            for b in bands
+        ],
+    }
+
+
+def _run_threads_synchronously(monkeypatch):
+    """Make threading.Thread run its target inline, so the warm-up is deterministic in a test."""
+    monkeypatch.setattr(puzzle_shards.threading, "Thread",
+                        lambda target, daemon=None: type("T", (), {"start": lambda self: target()})())
+
+
+def test_ensure_all_bands_downloads_every_band(monkeypatch):
+    monkeypatch.setattr(puzzle_shards.httpx, "get",
+                        lambda *a, **k: _FakeResp(200, json_data=_multi_manifest(GOOD_SHA)))
+    monkeypatch.setattr(puzzle_shards.httpx, "stream",
+                        lambda *a, **k: _FakeResp(200, content=BAND_BYTES))
+    _run_threads_synchronously(monkeypatch)
+    puzzle_shards.ensure_all_bands()
+    on_disk = {n for n in os.listdir(config._puzzle_dir()) if n.startswith("band_")}
+    assert on_disk == {"band_1000_1100.jsonl.gz", "band_1100_1200.jsonl.gz", "band_1200_1300.jsonl.gz"}
+    # Marked complete -> a second call is a no-op (guarded), even if the network would now fail.
+    assert puzzle_shards._ALL_COMPLETE is True
+    monkeypatch.setattr(puzzle_shards.httpx, "get", lambda *a, **k: _FakeResp(404))
+    puzzle_shards.ensure_all_bands()  # no crash, no re-fetch
+
+
+def test_ensure_all_bands_noop_when_downloads_disabled(monkeypatch):
+    monkeypatch.setattr(config, "PUZZLE_DOWNLOAD", False)
+    called = {"n": 0}
+    monkeypatch.setattr(puzzle_shards.threading, "Thread",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1) or type(
+                            "T", (), {"start": lambda self: None})())
+    puzzle_shards.ensure_all_bands()
+    assert called["n"] == 0  # never even spawns the warm-up thread
+
+
+def test_ensure_all_bands_retries_after_a_failed_attempt(monkeypatch):
+    """An offline first attempt doesn't mark complete, so a later (online) call still fills the set."""
+    _run_threads_synchronously(monkeypatch)
+    monkeypatch.setattr(puzzle_shards.httpx, "get", lambda *a, **k: _FakeResp(404))  # offline
+    puzzle_shards.ensure_all_bands()
+    assert puzzle_shards._ALL_COMPLETE is False
     d = config._puzzle_dir()
-    os.makedirs(d, exist_ok=True)
-    old = os.path.join(d, "band_1000_1100.jsonl.gz")
-    new = os.path.join(d, "band_1200_1300.jsonl.gz")
-    for p in (old, new):
-        with open(p, "wb") as fh:
-            fh.write(BAND_BYTES)
-    os.utime(old, (1, 1))  # make `old` the least-recently-used
-    puzzle_shards._prune()
-    assert os.path.exists(new) and not os.path.exists(old)
-
-
-def test_prune_unbounded_when_zero(monkeypatch):
-    monkeypatch.setattr(config, "PUZZLE_CACHE_MAX", 0)
-    d = config._puzzle_dir()
-    os.makedirs(d, exist_ok=True)
-    for lo in (1000, 1100, 1200):
-        with open(os.path.join(d, f"band_{lo}_{lo + 100}.jsonl.gz"), "wb") as fh:
-            fh.write(BAND_BYTES)
-    puzzle_shards._prune()
-    assert len([n for n in os.listdir(d) if n.startswith("band_")]) == 3
+    assert not (os.path.isdir(d) and any(n.startswith("band_") for n in os.listdir(d)))
+    # Now "online": the retry completes the set.
+    monkeypatch.setattr(puzzle_shards.httpx, "get",
+                        lambda *a, **k: _FakeResp(200, json_data=_multi_manifest(GOOD_SHA)))
+    monkeypatch.setattr(puzzle_shards.httpx, "stream",
+                        lambda *a, **k: _FakeResp(200, content=BAND_BYTES))
+    puzzle_shards.ensure_all_bands()
+    assert puzzle_shards._ALL_COMPLETE is True

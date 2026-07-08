@@ -16,7 +16,7 @@ from server.core import puzzles
 def _no_network_downloads(monkeypatch):
     """next_puzzle now triggers a background shard warm-up; keep these unit tests network-free and
     baseline-only (no downloaded pool) so selection behaviour is deterministic."""
-    monkeypatch.setattr(puzzles.puzzle_shards, "ensure_bands_around", lambda *a, **k: None)
+    monkeypatch.setattr(puzzles.puzzle_shards, "ensure_all_bands", lambda *a, **k: None)
     monkeypatch.setattr(puzzles, "_downloaded_pool", lambda: [])
 
 

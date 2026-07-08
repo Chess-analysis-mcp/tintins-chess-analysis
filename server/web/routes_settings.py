@@ -39,6 +39,7 @@ class SettingsPatch(BaseModel):
     coach_ai_persist: bool | None = None
     personalize_history: bool | None = None
     puzzle_animations: bool | None = None
+    puzzle_auto_advance: bool | None = None
     puzzle_mistake_interleave: bool | None = None
     local_llm_base_url: str | None = None
     local_llm_model: str | None = None

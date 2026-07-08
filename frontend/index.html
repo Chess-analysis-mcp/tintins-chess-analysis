@@ -153,6 +153,10 @@
         </div>
 
         <div class="pz-ghosts" id="pz-ghosts">
+          <!-- Shown only right after an auto-advance: jumps back to the puzzle you just solved so you
+               can still ask "why?" once the trainer has already moved you on. -->
+          <button type="button" id="pz-prev" class="pz-ghost" hidden
+            title="Go back to the puzzle you just solved (to review it or ask why)">‹ Previous</button>
           <button type="button" id="pz-hint" class="pz-ghost">Hint</button>
           <button type="button" id="pz-solution" class="pz-ghost">Show solution</button>
           <button type="button" id="pz-skip" class="pz-ghost">Skip ›</button>
@@ -485,6 +489,15 @@
             <span class="set-hint">The square flash, ripple and confetti on a solve (and the shake on a
               miss). Turn off to just see the result as coloured text — green for a clean solve, orange
               after a miss, red for the shown solution.</span>
+          </label>
+          <label class="set-field set-check">
+            <span class="set-check-row">
+              <input id="set-puzzle-auto-advance" type="checkbox" />
+              <span class="set-label">Auto-start the next puzzle</span>
+            </span>
+            <span class="set-hint">After you solve a puzzle, load the next one automatically (after a short
+              pause so the solve animation plays out) instead of waiting for the “Next puzzle” button.
+              Only fires on a solve — “Show solution” always waits. Turn off to advance manually.</span>
           </label>
           <label class="set-field set-check">
             <span class="set-check-row">
