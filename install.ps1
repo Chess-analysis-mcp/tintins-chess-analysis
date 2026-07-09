@@ -21,8 +21,10 @@ function Progress($pct, $step) {
     $safe = ($step -replace '\\', '\\') -replace '"', '\"'
     $line = "window.__setInstallProgress && window.__setInstallProgress({ pct: $pct, step: `"$safe`" });"
     try {
+        # WriteAllText gives UTF-8 WITHOUT a BOM on both Windows PowerShell 5.1 and PS 7 (Set-Content
+        # -Encoding UTF8 emits a BOM on 5.1). tmp+Move keeps the splash from reading a half-written file.
         $tmp = "$($env:CHESS_INSTALL_PROGRESS).tmp"
-        Set-Content -Path $tmp -Value $line -Encoding UTF8 -NoNewline
+        [System.IO.File]::WriteAllText($tmp, $line, (New-Object System.Text.UTF8Encoding($false)))
         Move-Item -Force -Path $tmp -Destination $env:CHESS_INSTALL_PROGRESS
     } catch {}
 }
