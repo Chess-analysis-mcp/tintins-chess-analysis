@@ -104,6 +104,79 @@ def test_variants_and_pgnless_games_skipped(fake_api):
     assert [g.game_id for g in games] == ["ok"]
 
 
+_PGN_FALLBACK = (
+    '[Event "Live Chess"]\n[Site "Chess.com"]\n[Date "2026.06.26"]\n'
+    '[White "alice"]\n[Black "carol"]\n[WhiteElo "1700"]\n[BlackElo "1680"]\n'
+    '[TimeControl "600"]\n[Result "1-0"]\n'
+    '[ECOUrl "https://www.chess.com/openings/Scandinavian-Defense-Mieses-Kotrc-Variation"]\n'
+    '[EndDate "2026.06.26"]\n[EndTime "23:36:58"]\n'
+    '[Link "https://www.chess.com/game/live/999888777"]\n\n1. e4 d5 2. exd5 1-0\n'
+)
+
+
+class _StatusResp:
+    """A fake httpx response with a settable status_code/text/json."""
+
+    def __init__(self, status_code=200, text="", payload=None):
+        self.status_code = status_code
+        self.text = text
+        self._payload = payload
+
+    def json(self):
+        if self._payload is None:
+            import json as _json
+
+            raise _json.JSONDecodeError("no json", "", 0)
+        return self._payload
+
+
+def test_broken_archive_404_falls_back_to_pgn_export(monkeypatch):
+    """A real month whose JSON archive 404s with an internal-error body is served via /pgn."""
+    def fake_get(url, headers=None, timeout=None, follow_redirects=None):
+        if url.endswith("/games/archives"):
+            return _StatusResp(payload={"archives": ["https://api.chess.com/pub/player/alice/games/2026/06"]})
+        if url.endswith("/2026/06/pgn"):
+            return _StatusResp(text=_PGN_FALLBACK)
+        if url.endswith("/2026/06"):
+            return _StatusResp(status_code=404, text='{"code":0,"message":"An internal error has occurred."}')
+        raise AssertionError(f"unexpected URL {url}")
+
+    monkeypatch.setattr(chesscom.httpx, "get", fake_get)
+    games = chesscom.fetch_user_games("alice", max=5)
+    assert [g.game_id for g in games] == ["999888777"]
+    g = games[0]
+    assert g.white == "alice" and g.black == "carol"
+    assert g.white_elo == 1700 and g.result == "1-0"
+    assert g.speed == "rapid"  # 600s -> rapid, derived from TimeControl
+    assert g.opening == "Scandinavian Defense Mieses Kotrc Variation"
+    assert g.date == "2026.06.26"
+
+
+def test_phantom_future_month_404_is_skipped_not_fetched_via_pgn(monkeypatch):
+    """A 'Date cannot be set in the future' 404 is a real phantom month — no /pgn fallback."""
+    urls: list[str] = []
+
+    def fake_get(url, headers=None, timeout=None, follow_redirects=None):
+        urls.append(url)
+        if url.endswith("/games/archives"):
+            return _StatusResp(payload={
+                "archives": [
+                    "https://api.chess.com/pub/player/alice/games/2023/11",
+                    "https://api.chess.com/pub/player/alice/games/2027/01",
+                ]
+            })
+        if url.endswith("/2027/01"):
+            return _StatusResp(status_code=404, text='{"code":0,"message":"Date cannot be set in the future"}')
+        if url.endswith("/2023/11"):
+            return _StatusResp(payload={"games": [_game("real", 1_700_000_000)]})
+        raise AssertionError(f"unexpected URL {url}")
+
+    monkeypatch.setattr(chesscom.httpx, "get", fake_get)
+    games = chesscom.fetch_user_games("alice", max=5)
+    assert [g.game_id for g in games] == ["real"]
+    assert not any(u.endswith("/2027/01/pgn") for u in urls)  # no wasted /pgn probe on a future month
+
+
 def test_result_mapping():
     draw = _game(white_result="agreed")
     draw["black"]["result"] = "agreed"

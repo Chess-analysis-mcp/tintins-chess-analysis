@@ -18,6 +18,8 @@ from dataclasses import asdict, dataclass
 import httpx
 
 from server import config
+from server.core import multipgn
+from server.core.evaluation import classify_speed
 
 
 class ChesscomError(RuntimeError):
@@ -129,6 +131,112 @@ def _summary_from_json(g: dict) -> GameSummary:
     )
 
 
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _epoch_from_pgn_headers(h: dict) -> int:
+    """UTC epoch seconds from a Chess.com PGN's End/UTC/Start date+time headers (0 if unreadable)."""
+    date = (h.get("EndDate") or h.get("UTCDate") or h.get("Date") or "").strip()
+    if not date:
+        return 0
+    time = (h.get("EndTime") or h.get("UTCTime") or h.get("StartTime") or "00:00:00").strip()
+    for fmt in ("%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M"):
+        try:
+            dt = datetime.datetime.strptime(f"{date} {time}", fmt)
+            return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp())
+        except ValueError:
+            continue
+    return 0
+
+
+def _summary_from_pgn_game(game_pgn: str) -> GameSummary | None:
+    """Build a GameSummary from one game's PGN (the /pgn archive-export fallback path).
+
+    Chess.com's per-month JSON archive occasionally 404s with an internal-error body even though
+    the games exist; the `/pgn` export of the same month still works, so we parse its headers here.
+    """
+    h = multipgn.headers_of(game_pgn)
+    if not h:
+        return None
+    if (h.get("Variant") or "").strip():  # chess960 etc. — only standard chess is reviewable
+        return None
+    url = (h.get("Link") or h.get("Site") or "").strip()
+    end_time = _epoch_from_pgn_headers(h)
+    return GameSummary(
+        game_id=url.rstrip("/").rsplit("/", 1)[-1] or url,
+        url=url,
+        white=(h.get("White") or "?").strip() or "?",
+        black=(h.get("Black") or "?").strip() or "?",
+        white_elo=_int_or_none(h.get("WhiteElo")),
+        black_elo=_int_or_none(h.get("BlackElo")),
+        result=(h.get("Result") or "*").strip() or "*",
+        speed=classify_speed(h.get("TimeControl"), h.get("Event")),
+        opening=_opening_from_pgn(game_pgn),
+        date=_date_from(end_time) or (h.get("EndDate") or h.get("Date") or "").strip() or None,
+        pgn=game_pgn if game_pgn.endswith("\n") else game_pgn + "\n",
+        end_time=end_time,
+    )
+
+
+def _pgn_fallback_games(archive_url: str) -> list[GameSummary]:
+    """Fetch a month's games via the `/pgn` export endpoint (best-effort; [] on any failure)."""
+    try:
+        resp = httpx.get(
+            archive_url.rstrip("/") + "/pgn",
+            headers=_headers(),
+            timeout=config.CHESSCOM_TIMEOUT,
+            follow_redirects=True,
+        )
+    except httpx.HTTPError:
+        return []
+    text = getattr(resp, "text", "") or ""
+    if resp.status_code != 200 or not text.strip():
+        return []
+    out: list[GameSummary] = []
+    for game_pgn in multipgn.split_pgn(text):
+        summary = _summary_from_pgn_game(game_pgn)
+        if summary is not None:
+            out.append(summary)
+    return out
+
+
+def _fetch_month_games(archive_url: str) -> list[GameSummary]:
+    """One month's standard-chess games, newest-first. Never aborts the whole walk.
+
+    A monthly archive URL is listed in the index yet can still 404: either a genuinely-empty/
+    phantom future month (skip it), or Chess.com's own broken-archive error where the games
+    really exist (an "internal error" body) — for the latter the `/pgn` export still serves them,
+    so we fall back to it rather than silently dropping the (often newest) month.
+    """
+    try:
+        resp = httpx.get(
+            archive_url, headers=_headers(), timeout=config.CHESSCOM_TIMEOUT, follow_redirects=True
+        )
+    except httpx.HTTPError:
+        return []
+    if resp.status_code == 200:
+        try:
+            month_games = resp.json().get("games", [])
+        except json.JSONDecodeError:
+            return []
+        month = [
+            _summary_from_json(g)
+            for g in month_games
+            if g.get("pgn") and g.get("rules", "chess") == "chess"
+        ]
+    elif resp.status_code == 404 and "future" not in (getattr(resp, "text", "") or "").lower():
+        # Not a "Date cannot be set in the future" phantom month — a real archive that errored.
+        month = _pgn_fallback_games(archive_url)
+    else:
+        month = []  # phantom future month, or a transient error we skip rather than abort on
+    month.sort(key=lambda g: g.end_time, reverse=True)
+    return month
+
+
 def _resolve_username(username: str | None) -> str:
     name = (username or "").strip()
     if not name or name.lower() == "me":
@@ -160,20 +268,11 @@ def fetch_user_games(
     archives = _get_json(f"{base}/pub/player/{name}/games/archives").get("archives", [])
     games: list[GameSummary] = []
     for archive_url in reversed(archives):  # newest month first
-        # Chess.com sometimes lists a monthly archive URL that itself 404s (a phantom/empty
-        # future month). That's a quirk of their index, not a bad username, so skip the month
-        # rather than aborting the whole fetch — otherwise a single bad newest-month archive
-        # would hide every earlier month's games.
-        try:
-            month_games = _get_json(archive_url).get("games", [])
-        except ChesscomError:
-            continue
-        month = [
-            _summary_from_json(g)
-            for g in month_games
-            if g.get("pgn") and g.get("rules", "chess") == "chess"
-        ]
-        month.sort(key=lambda g: g.end_time, reverse=True)
+        # A listed monthly archive can still 404 — a phantom/empty future month, or Chess.com's
+        # own broken-archive error on a real month. `_fetch_month_games` skips the former and
+        # falls back to the `/pgn` export for the latter, and never aborts the whole walk (so a
+        # single bad newest-month archive can't hide every earlier month's games).
+        month = _fetch_month_games(archive_url)
         for g in month:
             if cutoff is not None and g.end_time and g.end_time < cutoff:
                 return games  # rest of history is older than the window
