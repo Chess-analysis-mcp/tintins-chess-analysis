@@ -47,6 +47,10 @@ class StormRun:
         self.best_combo = 0
         self.misses = 0
         self.results: list[bool] = []   # per resolved puzzle (True solved / False missed)
+        # One record per resolved puzzle so the run can be reviewed with the AI coach after time-up
+        # (id/fen/themes/rating + whether it was solved + the move the solver played). Kept until the
+        # run is cleared (leaving storm / starting a new run), so a post-run review is refresh-safe.
+        self.log: list[dict] = []
         self.run_seen: set[str] = set()  # ids served THIS run (not the global seen set - storm is casual)
         self.ended = False
 
@@ -63,6 +67,20 @@ _RUN: Optional[StormRun] = None
 
 def _now(now: Optional[float]) -> float:
     return time.time() if now is None else now
+
+
+def _log_entry(puzzle: dict, *, solved: bool, your_move: Optional[str]) -> dict:
+    """A compact, solution-free record of one resolved storm puzzle for the post-run AI review."""
+    themes = [t for t in (puzzle.get("themes") or []) if t]
+    return {
+        "id": puzzle.get("id"),
+        "fen": puzzle.get("solve_fen") or puzzle.get("fen"),  # the position the solver answered from
+        "side_to_move": puzzle.get("side_to_move", "white"),
+        "themes": themes,
+        "rating": int(round(float(puzzle.get("rating", 1500) or 1500))),
+        "solved": bool(solved),
+        "your_move": your_move,  # the solver's move (the wrong one on a miss) — grounds the coach
+    }
 
 
 def get_run() -> Optional[StormRun]:
@@ -144,6 +162,7 @@ def submit_move(state: dict, uci: str, *, now: Optional[float] = None) -> dict:
         run.combo = 0
         run.misses += 1
         run.results.append(False)
+        run.log.append(_log_entry(prog.puzzle, solved=False, your_move=uci))
         run.deadline -= _WRONG_PENALTY  # a wrong move costs time
         prog.finished = True
         out = {"correct": False, "puzzle_done": True, "solved": False}
@@ -157,6 +176,7 @@ def submit_move(state: dict, uci: str, *, now: Optional[float] = None) -> dict:
         run.combo += 1
         run.best_combo = max(run.best_combo, run.combo)
         run.results.append(True)
+        run.log.append(_log_entry(prog.puzzle, solved=True, your_move=uci))
         bonus = 0.0
         if run.combo % _COMBO_BONUS_EVERY == 0:
             bonus = _COMBO_TIME_BONUS
@@ -218,6 +238,7 @@ def _finish(run: StormRun, state: dict, *, now: float, extra: Optional[dict] = N
         "high": int(state.get("storm_high", 0) or 0),
         "new_high": new_high,
         "results": run.results[-30:],
+        "log": list(run.log),  # the per-puzzle review list for the post-run AI coach
     }
     if extra:
         merged = dict(extra)

@@ -113,6 +113,8 @@ def _mistake_puzzle_response(state: dict) -> JSONResponse:
         "game_id": puzzle.get("game_id"),
         "reviewed_side": puzzle.get("reviewed_side"),
         "ply": puzzle.get("ply"),
+        # How much win% the original mistake cost — shown small in the badge for context.
+        "win_drop": round(float(puzzle.get("win_drop", 0.0) or 0.0), 1),
         "badge": {
             "white": puzzle.get("white"),
             "black": puzzle.get("black"),
@@ -407,6 +409,7 @@ def puzzle_current() -> JSONResponse:
             "game_id": p.get("game_id"),
             "reviewed_side": p.get("reviewed_side"),
             "ply": p.get("ply"),
+            "win_drop": round(float(p.get("win_drop", 0.0) or 0.0), 1),
             "badge": {
                 "white": p.get("white"), "black": p.get("black"),
                 "speed": p.get("speed"), "date": p.get("date"),
@@ -509,6 +512,61 @@ def storm_state() -> JSONResponse:
     view["high"] = state.get("storm_high", 0)
     view["best_combo_ever"] = state.get("storm_best_combo", 0)
     return JSONResponse(view)
+
+
+@router.get("/puzzle/storm/review")
+def storm_review() -> JSONResponse:
+    """The finished run's per-puzzle log (id/fen/themes/result), for the post-run review list.
+
+    Refresh-safe: the run object lingers (ended) until the user starts a new run or leaves storm, so
+    the game-over review survives a page reload. Empty when there's no run to review.
+    """
+    if not config.PUZZLES_ENABLED:
+        return _disabled()
+    run = puzzle_storm.get_run()
+    return JSONResponse({"log": list(run.log) if run is not None else []})
+
+
+@router.get("/puzzle/solution")
+def puzzle_solution(id: str) -> JSONResponse:
+    """A curated puzzle's solver line, so a FINISHED puzzle can be stepped through on the board.
+
+    Reveal-on-demand: only fetched once a puzzle is resolved (a solve/Show-solution in the Solve
+    trainer, or a post-run Storm review), so a live puzzle never carries its solution.
+    `solution_uci`/`solution_san` start at the solver's first move (the setup move that reaches
+    `solve_fen` is omitted). Unknown id (e.g. a "from your games" mistake puzzle) -> 404.
+    """
+    if not config.PUZZLES_ENABLED:
+        return _disabled()
+    puzzle = puzzles_mod.get_puzzle(id)
+    if not puzzle:
+        return JSONResponse({"error": "Unknown puzzle."}, status_code=404)
+    moves = puzzle.get("moves", []) or []
+    return JSONResponse({
+        "solve_fen": puzzle.get("solve_fen") or puzzles_mod.position_fen(puzzle, 1),
+        "solution_uci": moves[1:],
+        "solution_san": puzzles_mod.solution_san(puzzle)[1:],
+    })
+
+
+@router.post("/puzzle/storm/summary")
+def storm_summary() -> JSONResponse:
+    """One Claude-written recap of the just-finished run: the recurring weak themes across misses."""
+    if not config.PUZZLES_ENABLED:
+        return _disabled()
+    if not _has_llm():
+        return JSONResponse(
+            {"error": "The AI coach is unavailable (no `claude` CLI or local model)."},
+            status_code=503,
+        )
+    run = puzzle_storm.get_run()
+    if run is None or not run.log:
+        return JSONResponse({"error": "No finished run to summarize."}, status_code=404)
+    try:
+        result = claude_bridge.summarize_storm_run(run.log)
+    except claude_bridge.ChatError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    return JSONResponse({"answer": result.get("answer", ""), "session_id": result.get("session_id")})
 
 
 @router.post("/puzzle/storm/end")

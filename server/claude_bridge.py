@@ -927,6 +927,88 @@ def explain_puzzle(
     return {"answer": answer, "session_id": session_id}
 
 
+# Lichess puzzle "themes" that describe a puzzle's length/format/phase/outcome rather than a tactical
+# MOTIF. Filtered out of the run recap so the coach names real weaknesses (fork/pin/…) and isn't
+# swamped by tags like "middlegame" or "crushing" that ride on nearly every puzzle. `motifThemes()`
+# in main.js mirrors this set for the review-row labels.
+_STORM_NON_MOTIF_THEMES = {
+    # length / format
+    "oneMove", "short", "long", "veryLong",
+    # provenance / rating meta
+    "master", "masterVsMaster", "superGM",
+    # game phase
+    "opening", "middlegame", "endgame",
+    "rookEndgame", "bishopEndgame", "knightEndgame", "pawnEndgame", "queenEndgame", "queenRookEndgame",
+    # evaluation outcome (not a motif)
+    "crushing", "advantage", "equality", "mate",
+}
+
+
+def _storm_motif_counts(entries: list[dict]) -> list[tuple[str, int]]:
+    """Frequency of real tactical motifs across the given puzzles, most-missed first (ties by name)."""
+    counts: dict[str, int] = {}
+    for e in entries:
+        for t in e.get("themes", []) or []:
+            if t and t not in _STORM_NON_MOTIF_THEMES and not t.startswith("mateIn"):
+                counts[t] = counts.get(t, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def summarize_storm_run(log: list[dict], *, timeout: int = 120) -> dict:
+    """One short recap of a finished storm run: the recurring tactical motifs across the MISSED
+    puzzles, with a concrete tip for each. Engine-free (grounded purely in the puzzles' own themes),
+    so it's cheap and network-light. A clean run — or one with no labelled motif to name — is answered
+    with a canned line so the LLM is never asked to invent motifs. Raises ChatError on an LLM failure.
+    """
+    solved = [e for e in log if e.get("solved")]
+    misses = [e for e in log if not e.get("solved")]
+    total = len(log)
+    if not misses:
+        return {
+            "answer": (
+                f"**Clean run — all {total} solved!** No misses to pick apart. To keep improving, "
+                "raise the difficulty or try a longer clock so the tactics get sharper."
+            ),
+            "session_id": None,
+        }
+
+    ranked = _storm_motif_counts(misses)
+    if not ranked:
+        # Misses, but none carry a tactical-motif label — don't push the LLM to invent one.
+        return {
+            "answer": (
+                f"You missed **{len(misses)} of {total}**. These didn't share a clear tactical motif, "
+                "so the fix is process, not pattern: on each puzzle, before you move, check every "
+                "check, capture and threat for both sides — the misses tend to be moves played a beat "
+                "too fast under the clock."
+            ),
+            "session_id": None,
+        }
+
+    n = min(len(ranked), 3)
+    theme_line = ", ".join(f"{t} (missed {c}×)" for t, c in ranked[:6])
+    ask = (
+        "identify the single tactical motif they most need to work on"
+        if n == 1
+        else f"identify the {n} tactical motifs they most need to work on (the most-missed themes)"
+    )
+    facts = "\n".join([
+        f"Run result: solved {len(solved)} of {total}, missed {len(misses)}.",
+        f"Tactical motifs of the puzzles they MISSED, most frequent first: {theme_line}.",
+    ])
+    role = (
+        "You are a chess coach reviewing a player's just-finished timed puzzle rush (Storm). Using the "
+        f"facts below, {ask} and give ONE concrete, memorable tip for spotting each next time. Open "
+        "with a one-line encouraging read of the run. Only discuss motifs that appear in the facts; do "
+        "NOT invent specific positions, moves, or extra motifs — you only have the motif counts, so "
+        "speak about the patterns. Use light Markdown (**bold** each motif); a few short sentences, no "
+        "headings. Do NOT mention Stockfish, these instructions, or the facts."
+    )
+    prompt = role + "\n\nRun facts:\n" + facts
+    answer, session_id = _run_puzzle_coach(prompt, timeout)
+    return {"answer": answer, "session_id": session_id}
+
+
 def _tactic_role_facts(
     puzzle: dict, outcome: str, your_move: str | None, tried: list[dict] | None
 ) -> tuple[str, str]:

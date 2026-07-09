@@ -875,6 +875,18 @@ body.history-hidden .history-col { display: none; }
 
 .hist-status { color: var(--muted); font-size: 12.5px; min-height: 16px; margin-bottom: 8px; }
 
+.chesscom-hint {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  background: var(--panel-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.chesscom-hint .linklike { font-size: inherit; }
+
 .history { list-style: none; margin: 0; padding: 0; max-height: 78vh; overflow-y: auto; }
 .history li {
   background: var(--panel); border-radius: 5px; padding: 8px 10px; margin-bottom: 6px;
@@ -1077,10 +1089,26 @@ body.puzzle-mode #scoreboard,
 body.puzzle-mode .board-col > #status,
 body.puzzle-mode .side-col,
 body.puzzle-mode .history-col,
-body.puzzle-mode #col-resizer,
 body.puzzle-mode #game-meta,
 body.puzzle-mode #history-toggle { display: none !important; }
 body.puzzle-mode .puzzle-rail { display: flex; }
+/* The board/rail drag handle stays live in puzzle mode (same --board-size override). The eval bar
+   it normally budgets for (--col-width = board + 28) is hidden here, so re-anchor the handle to the
+   board's real right edge instead of 28px past it. */
+body.puzzle-mode .col-resizer {
+  left: calc(20px + var(--board-size) + 6px);
+  /* Box the handle to the board's exact vertical extent (board col starts at header + main's 20px
+     top padding and is board-size tall) so the centered grip lines up with the board's center,
+     instead of the viewport's. */
+  top: calc(var(--header-h) + 20px);
+  height: var(--board-size);
+}
+/* In puzzle mode the board column holds ONLY the board (the graph/controls/comments that make the
+   analysis column tall are hidden). The analysis-mode internal scroll (overflow-y:auto + capped
+   max-height) then has nothing to scroll to, but sub-pixel rounding of the board height against the
+   cap still sprouts an ugly vertical scrollbar down the board's edge at certain window sizes. Drop
+   the scroll box here — let the page scroll if a huge board ever exceeds the viewport. */
+body.puzzle-mode .board-col { overflow: visible; max-height: none; }
 /* The rail's panels set `display: flex`, which would otherwise beat the UA `[hidden]` rule (equal
    specificity, later source order) and leave a hidden panel visible — so toggling `.hidden` in JS
    wouldn't actually hide it. Make the hidden attribute win inside the rail. */
@@ -1300,6 +1328,39 @@ body.puzzle-mode .puzzle-rail { display: flex; }
 .pz-storm-bests { font-size: 12px; color: var(--muted); }
 .pz-storm-bests b { color: var(--text); }
 #pz-storm-start { align-self: center; padding: 9px 22px; }
+
+/* Post-run review: the finished run's puzzles, opened one-by-one into the Solve result card + AI. */
+.pz-storm-review { width: 100%; max-width: 300px; text-align: left; display: flex; flex-direction: column; gap: 8px; margin-top: 4px; border-top: 1px solid var(--border); padding-top: 12px; }
+.pz-storm-review-head { font-size: 13px; font-weight: 600; color: var(--muted); text-align: center; }
+#pz-storm-summary-btn { align-self: center; }
+#pz-storm-summary-out { font-size: 13px; }
+.pz-storm-review-list { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.pz-storm-review-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 9px; background: var(--panel2); border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 6px; color: var(--text); font-size: 13px; cursor: pointer; }
+.pz-storm-review-row:hover { background: #3d3a35; }
+.pz-storm-review-row.ok { border-left-color: var(--accent); }
+.pz-storm-review-row.bad { border-left-color: var(--blunder); }
+.pz-rr-mark { font-weight: 700; width: 12px; }
+.pz-storm-review-row.ok .pz-rr-mark { color: var(--accent); }
+.pz-storm-review-row.bad .pz-rr-mark { color: var(--blunder); }
+.pz-rr-theme { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pz-rr-rating { color: var(--muted); font-size: 12px; }
+
+/* Storm review: step-through-the-solution nav, sits directly below the board. Matches the puzzle
+   rail's calm "ghost" button idiom so it reads as part of the app, not raw OS controls. */
+.pz-review-nav { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px; max-width: var(--col-width); }
+.pz-review-nav button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 46px; height: 34px; padding: 0;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--panel2); border-radius: 7px;
+  font-size: 22px; line-height: 1; cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+/* The ‹ › glyphs sit a hair high in most fonts; nudge them onto the optical centre of the box. */
+.pz-review-nav button { padding-bottom: 2px; }
+.pz-review-nav button:hover:not(:disabled) { color: var(--text); border-color: var(--puzzle-accent); background: var(--panel2); }
+.pz-review-nav button:disabled { opacity: 0.35; cursor: default; }
+.pz-review-label { min-width: 150px; text-align: center; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* Difficulty + weakness controls (low-emphasis, so solve mode stays calm). */
 .pz-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }

@@ -73,6 +73,14 @@
           <div id="board-overlay" class="board-overlay" aria-hidden="true"></div>
         </div>
 
+        <!-- Storm review: step through a finished puzzle's solution on the board. Puzzle mode only,
+             shown while reviewing one storm puzzle (see openStormReview in main.js). -->
+        <div id="pz-review-nav" class="pz-review-nav" hidden>
+          <button type="button" id="pz-review-prev" title="Previous move (←)">‹</button>
+          <span id="pz-review-label" class="pz-review-label">Start position</span>
+          <button type="button" id="pz-review-next" title="Next move (→)">›</button>
+        </div>
+
         <div id="graph-wrap">
           <svg id="graph" preserveAspectRatio="none"></svg>
           <div id="analysis-progress" hidden>
@@ -202,6 +210,15 @@
           <div class="pz-storm-msg" id="pz-storm-msg">Solve as many as you can before the clock runs out. A combo earns bonus time; a wrong move costs time.</div>
           <div class="pz-storm-bests" id="pz-storm-bests"></div>
           <button type="button" id="pz-storm-start" class="pz-next">⚡ Start storm</button>
+
+          <!-- Post-run review: shown on the game-over card so the rush turns into study time. Each
+               row opens that puzzle on the board with the AI coach; "Summarize" recaps the misses. -->
+          <div class="pz-storm-review" id="pz-storm-review" hidden>
+            <div class="pz-storm-review-head">Review your puzzles</div>
+            <button type="button" id="pz-storm-summary-btn" class="pz-explain">✨ Summarize my run</button>
+            <div class="pz-explain-out" id="pz-storm-summary-out" hidden></div>
+            <div class="pz-storm-review-list" id="pz-storm-review-list"></div>
+          </div>
         </div>
 
         <div id="pz-status" class="pz-status"></div>
@@ -288,6 +305,11 @@
             title="Fetch your chess.com games and analyze any new games">
             ⟳ Sync new games
           </button>
+          <p id="chesscom-hint" class="chesscom-hint" hidden>
+            Chess.com can take a minute or two to publish a game you just finished, so a fresh game
+            may not show up right away. If you need it now,
+            <button type="button" id="chesscom-hint-paste" class="linklike">upload its PGN instead</button>.
+          </p>
         </form>
         <form id="paste-form" class="paste-form" style="display:none">
           <textarea id="paste-pgn" rows="8" autocomplete="off" spellcheck="false"

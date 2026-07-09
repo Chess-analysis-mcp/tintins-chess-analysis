@@ -99,3 +99,45 @@ def test_move_after_expiry_finishes_gracefully():
     puzzle_storm.start(state, now=1000.0)
     res = puzzle_storm.submit_move(state, "e2e4", now=1000.0 + 999)
     assert res["ended"] is True
+
+
+def test_run_logs_resolved_puzzles_for_review():
+    """Each resolved puzzle is recorded (solution-free) so the run can be reviewed after time-up."""
+    state = puzzle_rating.load_state()
+    view = puzzle_storm.start(state, now=1000.0)
+    first_id = view["puzzle"]["id"]
+    # A miss, then a solve.
+    puzzle_storm.submit_move(state, "a1a1", now=1000.0)
+    puzzle_storm.next_puzzle(state, now=1000.0)
+    _solve_current(state, now=1000.0)
+    log = puzzle_storm.get_run().log
+    assert len(log) == 2
+    assert log[0]["id"] == first_id and log[0]["solved"] is False and log[0]["your_move"] == "a1a1"
+    assert log[1]["solved"] is True
+    assert all("moves" not in e and e["fen"] for e in log)  # never carries the solution
+    # The final view exposes the log so the game-over card can render it without a second call.
+    final = puzzle_storm.next_puzzle(state, now=1000.0 + 999)
+    assert final["ended"] is True and len(final["log"]) == 2
+
+
+def test_summarize_clean_run_needs_no_llm():
+    """A miss-free run is recapped with a canned message (no LLM call, so it works offline)."""
+    from server import claude_bridge
+
+    out = claude_bridge.summarize_storm_run([
+        {"id": "a", "solved": True, "themes": ["fork"]},
+        {"id": "b", "solved": True, "themes": ["pin"]},
+    ])
+    assert "Clean run" in out["answer"] and out["session_id"] is None
+
+
+def test_summarize_misses_with_no_motif_label_needs_no_llm():
+    """Misses whose only themes are phase/outcome tags don't push the LLM to invent a motif."""
+    from server import claude_bridge
+
+    out = claude_bridge.summarize_storm_run([
+        {"id": "a", "solved": False, "themes": ["opening", "middlegame"]},
+        {"id": "b", "solved": True, "themes": ["endgame"]},
+    ])
+    # No tactical motif survives the filter -> canned process tip, no session (no LLM call).
+    assert out["session_id"] is None and "1 of 2" in out["answer"]

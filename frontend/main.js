@@ -79,6 +79,11 @@ let chesscomUsername = "";
 // check the most recent `chesscomSyncMax` games and analyze any not already in history.
 let chesscomSync = true;
 let chesscomSyncMax = 5;
+// Rapid-refresh detection: if the user hammers Load/Sync on the Chess.com tab (a fresh game not
+// showing yet), surface a small "chess.com is slow to publish — upload the PGN instead" hint.
+let chesscomRefreshTimes = [];
+const CHESSCOM_REFRESH_WINDOW_MS = 20000;
+const CHESSCOM_REFRESH_TRIGGER = 3;
 // On-demand Claude-written end-of-game summary: generated when the user presses the button, or
 // automatically per game when `coachAiAuto` is on (a Settings option). `coachAiToken` invalidates
 // an in-flight request when a new game is opened so a stale summary never lands on the wrong game.
@@ -154,6 +159,11 @@ let stormGen = 0; // bumped per storm puzzle, so a stale async handler bails
 let stormTimerId = null;
 let stormDeadline = 0; // client-side ms wall-clock the run ends at (server remaining is authoritative)
 let stormScore = 0, stormCombo = 0;
+let stormReviewEntries = []; // per-puzzle log of the just-finished run (for the post-run AI review)
+let inStormReview = false; // true while reviewing one finished storm puzzle on the board
+// Shared solution step-through (Storm review AND the normal Solve trainer, once a puzzle is finished).
+let solutionPlay = null; // {fens, ucis, sans, lastMoves, idx, yourMove, solved}
+let solutionGen = 0; // bumped to cancel an in-flight fetch/animation (leaving, new puzzle, manual scrub)
 
 const $ = (id) => document.getElementById(id);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -835,6 +845,20 @@ function updateNav() {
 const escapeHtml = (s) =>
   s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
+// Themes that describe a puzzle's length/format/phase/outcome, not a tactical motif — mirrors
+// `_STORM_NON_MOTIF_THEMES` in claude_bridge.py so a review row labels the real motif (fork/pin/…)
+// rather than "middlegame". Falls back to the raw themes when nothing tactical is tagged.
+const NON_MOTIF_THEMES = new Set([
+  "oneMove", "short", "long", "veryLong", "master", "masterVsMaster", "superGM",
+  "opening", "middlegame", "endgame",
+  "rookEndgame", "bishopEndgame", "knightEndgame", "pawnEndgame", "queenEndgame", "queenRookEndgame",
+  "crushing", "advantage", "equality", "mate",
+]);
+function motifThemes(themes) {
+  const t = (themes || []).filter((x) => x && !NON_MOTIF_THEMES.has(x) && !/^mateIn\d/.test(x));
+  return t.length ? t : (themes || []).filter((x) => x && !/^mateIn\d/.test(x));
+}
+
 // Minimal, safe markdown → HTML: escape first, then bold / italic / code / lists / paragraphs.
 function renderMarkdown(text) {
   const lines = escapeHtml(text).split("\n");
@@ -1379,6 +1403,26 @@ async function maybeAutoload() {
 }
 
 // Auto-sync: ask the server to fetch the configured chess.com user's newest games and analyze the
+// Record a manual Chess.com refresh (Load or Sync). When the user triggers it 3+ times inside a
+// 20s window — the tell-tale of waiting on a just-finished game that chess.com hasn't published
+// yet — reveal the "upload the PGN instead" hint.
+function noteChesscomRefresh() {
+  const now = Date.now();
+  chesscomRefreshTimes.push(now);
+  chesscomRefreshTimes = chesscomRefreshTimes.filter((t) => now - t <= CHESSCOM_REFRESH_WINDOW_MS);
+  if (chesscomRefreshTimes.length >= CHESSCOM_REFRESH_TRIGGER) {
+    const hint = $("chesscom-hint");
+    if (hint) hint.hidden = false;
+  }
+}
+
+// Hide the rapid-refresh hint and reset its counter (on tab switch, or once new games arrive).
+function clearChesscomHint() {
+  chesscomRefreshTimes = [];
+  const hint = $("chesscom-hint");
+  if (hint) hint.hidden = true;
+}
+
 // ones history hasn't seen. Returns true when a sync batch was started (the board shows its first
 // game). `quiet` suppresses the "nothing new" message (used on app launch).
 async function syncChesscom(quiet) {
@@ -1402,6 +1446,7 @@ async function syncChesscom(quiet) {
     return false;
   }
   const n = res.new_games;
+  clearChesscomHint(); // new games arrived — the "chess.com is slow" advice no longer applies
   batchInfo = { total: n, self_handle: res.self_handle, lastDone: -1 };
   $("history-status").textContent =
     `Syncing ${n} new chess.com game${n === 1 ? "" : "s"} → they'll appear in My games.`;
@@ -2018,6 +2063,7 @@ function renderInsights(d) {
 // Just the tab chrome (active button + which form/list is shown), no data fetch.
 function activateTab(mode) {
   historyMode = mode;
+  clearChesscomHint(); // leaving/returning to a tab resets the rapid-refresh detector
   $("mode-normal").classList.toggle("active", mode === "normal");
   $("mode-lichess").classList.toggle("active", mode === "lichess");
   $("mode-chesscom").classList.toggle("active", mode === "chesscom");
@@ -2456,9 +2502,11 @@ function boardSizeBounds() {
   const vh = window.innerHeight;
   const PAD = 40; // main's left+right padding
   const GAP = 24; // main's column gap
-  const SIDE_MIN = 280; // keep the analysis column usable
-  const EVALBAR = 28; // eval bar + its gap (col-width = board-size + 28)
-  const historyCol = vw > HISTORY_DRAWER_MAX ? 280 + GAP : 0; // a column above 1400, else a drawer
+  const puzzle = document.body.classList.contains("puzzle-mode");
+  const SIDE_MIN = 280; // keep the analysis column / puzzle rail usable
+  const EVALBAR = puzzle ? 0 : 28; // eval bar + its gap (col-width = board-size + 28); hidden in puzzle mode
+  // The Games column only exists in analysis mode above the drawer breakpoint.
+  const historyCol = !puzzle && vw > HISTORY_DRAWER_MAX ? 280 + GAP : 0;
   const maxByWidth = vw - PAD - GAP - SIDE_MIN - historyCol - EVALBAR;
   const maxByHeight = Math.round(vh * 0.92);
   const min = 240;
@@ -2775,6 +2823,9 @@ async function setPuzzleMode(on, opts = {}) {
   document.body.classList.toggle("puzzle-mode", on);
   $("mode-analyze").classList.toggle("active", !on);
   $("mode-puzzles").classList.toggle("active", on);
+  // Puzzle mode frees the eval-bar + Games-column width, so the two modes have different board-size
+  // bounds. Re-clamp any user override to the mode we're entering (also redraws the board).
+  if (boardSizeUser != null) applyBoardSize();
   // The mode swap hides/shows elements around the board, shifting its on-screen position; chessground
   // caches its bounding rect, so without a redraw grabs land offset from the cursor. Recompute bounds
   // after the layout settles (next frame).
@@ -2807,10 +2858,13 @@ async function setPuzzleMode(on, opts = {}) {
     await loadNextPuzzle();
   } else {
     lsSet(PZ_MODE_KEY, "0"); // back in analyze mode -> next open lands on analyze
+    clearSolutionPlayback(); // drop any solution step-through + hide its nav
     // Leaving puzzles entirely: bank + drop any storm run and reset the sub-mode to Solve.
     if (stormShown) {
       endStormRun({ abandon: true });
       stormShown = false;
+      inStormReview = false;
+      $("pz-next").textContent = "Next puzzle →";
       $("pz-solve").hidden = false;
       $("pz-storm").hidden = true;
       $("pz-mode-solve").classList.add("active");
@@ -2851,6 +2905,7 @@ async function resumeCurrentPuzzle() {
     game_id: cur.game_id,
     reviewed_side: cur.reviewed_side,
     ply: cur.ply,
+    win_drop: cur.win_drop,
     badge: cur.badge,
     game_url: cur.game_url,
     fen: cur.fen,
@@ -2929,6 +2984,7 @@ function applyPuzzle(p) {
   puzzleShapes = mistakePlayedShape(p);
   puzzleLastMove = null; // no carry-over highlight from the previous puzzle
   puzzleChatReset(); // a new puzzle drops any follow-up chat thread
+  clearSolutionPlayback(); // a new puzzle supersedes the previous puzzle's solution step-through
   puzzleSolveColor = p.side_to_move || "white";
   orient = puzzleSolveColor;
   pzStatus("");
@@ -3157,6 +3213,9 @@ async function onPuzzleMove(orig, dest) {
 function setStormMode(on) {
   if (on === stormShown) return;
   cancelAutoAdvance(); // a solve-trainer auto-advance must not fire into the storm sub-mode
+  inStormReview = false; // any open post-run review ends when we switch sub-mode
+  clearSolutionPlayback();
+  $("pz-next").textContent = "Next puzzle →"; // undo the "‹ Back to results" repurposing
   stormShown = on;
   $("pz-mode-solve").classList.toggle("active", !on);
   $("pz-mode-storm").classList.toggle("active", on);
@@ -3228,6 +3287,7 @@ function stormShowStart(gameOver, view) {
     $("pz-storm-results").innerHTML = "";
     msg.innerHTML =
       "Solve as many as you can before the clock runs out. A combo earns bonus time; a wrong move costs time.";
+    $("pz-storm-review").hidden = true; // no run to review on the intro screen
   }
   renderStormBests();
 }
@@ -3246,6 +3306,10 @@ function renderStormBests() {
 async function startStorm() {
   const btn = $("pz-storm-start");
   btn.hidden = true;
+  inStormReview = false; // a new run supersedes any previous run's review
+  clearSolutionPlayback();
+  $("pz-storm-review").hidden = true;
+  $("pz-next").textContent = "Next puzzle →";
   pzStatus("");
   let view;
   try {
@@ -3481,6 +3545,244 @@ function finishStorm(view) {
   } else {
     stormShowStart(false);
   }
+  // Turn the finished rush into study time: list every puzzle for AI review. The finish view
+  // usually carries the log inline; fall back to a fetch (refresh-safe while the run lingers).
+  if (view && Array.isArray(view.log)) {
+    populateStormReview(view.log);
+  } else {
+    fetch("/api/puzzle/storm/review")
+      .then((r) => r.json())
+      .then((d) => populateStormReview((d && d.log) || []))
+      .catch(() => populateStormReview([]));
+  }
+}
+
+// --- post-run review: study the puzzles from a finished storm with the AI coach -----------------
+
+// Show the review list on the game-over card (misses pinned first). `has_llm` gates the AI bits.
+function populateStormReview(log) {
+  stormReviewEntries = Array.isArray(log) ? log : [];
+  const wrap = $("pz-storm-review");
+  const list = $("pz-storm-review-list");
+  const summaryBtn = $("pz-storm-summary-btn");
+  $("pz-storm-summary-out").hidden = true;
+  $("pz-storm-summary-out").innerHTML = "";
+  if (!stormReviewEntries.length) {
+    wrap.hidden = true;
+    return;
+  }
+  const hasLlm = !!(puzzleConfigCache && puzzleConfigCache.has_llm);
+  summaryBtn.hidden = !hasLlm;
+  summaryBtn.disabled = false;
+  // Misses first (that's where the learning is), then solves; stable within each group.
+  const rows = stormReviewEntries
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => (a.e.solved === b.e.solved ? a.i - b.i : a.e.solved ? 1 : -1));
+  list.innerHTML = "";
+  rows.forEach(({ e }) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "pz-storm-review-row " + (e.solved ? "ok" : "bad");
+    const label = motifThemes(e.themes).slice(0, 2).join(", ") || "tactic";
+    row.innerHTML =
+      `<span class="pz-rr-mark">${e.solved ? "✓" : "✗"}</span>` +
+      `<span class="pz-rr-theme">${escapeHtml(label)}</span>` +
+      `<span class="pz-rr-rating">${e.rating || ""}</span>`;
+    row.addEventListener("click", () => openStormReview(e));
+    list.appendChild(row);
+  });
+  wrap.hidden = false;
+}
+
+// Open one finished storm puzzle on the board for review, reusing the Solve rail's result card so
+// the existing "Explain why" + follow-up chat work unchanged (they ground on puzzleData.id + fen).
+function openStormReview(entry) {
+  inStormReview = true;
+  ++puzzleGen; // become the current puzzle; supersede any in-flight Solve-trainer handler
+  puzzleBusy = false;
+  puzzleDone = true;
+  puzzleSource = "lichess";
+  puzzleData = {
+    id: entry.id,
+    fen: entry.fen,
+    solve_fen: entry.fen,
+    themes: entry.themes || [],
+    source: "lichess",
+    side_to_move: entry.side_to_move || "white",
+    _outcome: entry.solved ? "solved_first_try" : "failed",
+    _yourMove: entry.your_move || null,
+  };
+  puzzleFailed = !entry.solved;
+  puzzleHinted = false;
+  puzzleMissRating = null;
+  puzzleChatReset();
+  puzzleSolveColor = entry.side_to_move || "white";
+  orient = puzzleSolveColor;
+  // A miss shows the move the solver played, in red, so the review has a concrete starting point.
+  puzzleShapes = !entry.solved && entry.your_move
+    ? [{ orig: entry.your_move.slice(0, 2), dest: entry.your_move.slice(2, 4), brush: "red" }]
+    : [];
+
+  // Swap the storm scoreboard for the Solve result card (we stay in the storm sub-mode).
+  $("pz-storm").hidden = true;
+  $("pz-solve").hidden = false;
+  $("pz-prompt").hidden = true;
+  $("pz-ghosts").hidden = true;
+  $("pz-progress").hidden = true;
+  $("pz-statcard").hidden = true;
+  $("pz-source-badge").hidden = true;
+  $("pz-result").hidden = false;
+
+  const verdict = $("pz-verdict");
+  verdict.className = "pz-verdict " + (entry.solved ? "ok" : "bad");
+  verdict.textContent = entry.solved ? "✓ You solved this" : "✗ You missed this";
+  const themes = motifThemes(entry.themes);
+  $("pz-theme").innerHTML = themes.length ? "Theme: <b>" + escapeHtml(themes.slice(0, 3).join(", ")) + "</b>" : "";
+  $("pz-replay").hidden = true;
+  $("pz-explain-out").hidden = true;
+  $("pz-explain-out").innerHTML = "";
+  $("pz-explain").hidden = !(puzzleConfigCache && puzzleConfigCache.has_llm);
+  $("pz-explain").disabled = false;
+  $("pz-chat").hidden = true;
+  $("pz-chat-messages").innerHTML = "";
+  $("pz-next").textContent = "‹ Back to results"; // repurposed while reviewing (routed in the handler)
+
+  chess.load(entry.fen);
+  renderPuzzleBoard(false); // locked review board; draws the played-move arrow at the solve position
+  pzStatus("Reviewing a storm puzzle — step through the solution below the board, or press Explain.");
+  // Fetch + animate the solution, then leave the step-nav for scrubbing (storm review starts at the
+  // solve position and plays forward).
+  startSolutionPlayback({
+    id: entry.id, yourMove: entry.your_move, solved: entry.solved, animate: true,
+  });
+}
+
+// Fetch a curated puzzle's solution line and set up the step-through nav below the board. Shared by
+// Storm review and the normal Solve trainer. `animate` plays the line forward once (storm review);
+// otherwise it rests at the final position (the Solve board has already played the moves out).
+// Cancels cleanly (via `solutionGen`) if the user leaves or loads another puzzle mid-fetch.
+async function startSolutionPlayback({ id, yourMove = null, solved = true, animate = false }) {
+  const myGen = ++solutionGen;
+  solutionPlay = null;
+  $("pz-review-nav").hidden = true;
+  if (!id) return;
+  let sol;
+  try {
+    sol = await fetch("/api/puzzle/solution?id=" + encodeURIComponent(id)).then((r) => r.json());
+  } catch (_) {
+    return; // no solution available (e.g. a mistake puzzle) -> the card still works, just no playback
+  }
+  if (myGen !== solutionGen) return;
+  const base = (sol && sol.solve_fen) || null;
+  const ucis = (sol && sol.solution_uci) || [];
+  const sans = (sol && sol.solution_san) || [];
+  if (!base || !ucis.length) return;
+  // Build the board position at each step of the solution, starting from the solve position.
+  const fens = [base];
+  const lastMoves = [null];
+  const tmp = new Chess(base);
+  for (const u of ucis) {
+    const mv = tmp.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4) || undefined });
+    if (!mv) break; // defensive: a bad line just stops the playback where it is
+    fens.push(tmp.fen());
+    lastMoves.push([u.slice(0, 2), u.slice(2, 4)]);
+  }
+  solutionPlay = {
+    fens, ucis: ucis.slice(0, fens.length - 1), sans, lastMoves,
+    idx: 0, yourMove, solved,
+  };
+  if (animate) {
+    solutionGotoStep(0);
+    for (let i = 1; i < fens.length; i++) {
+      await sleep(650);
+      if (myGen !== solutionGen) return;
+      solutionGotoStep(i);
+    }
+  } else {
+    // Rest at the final position (the Solve board is already there); the user scrubs backward.
+    solutionGotoStep(fens.length - 1);
+  }
+}
+
+// Show a specific step of the solution on the board (idx 0 = the solve position).
+function solutionGotoStep(i) {
+  const p = solutionPlay;
+  if (!p) return;
+  p.idx = Math.max(0, Math.min(p.fens.length - 1, i));
+  chess.load(p.fens[p.idx]);
+  puzzleLastMove = p.lastMoves[p.idx] || null;
+  if (p.idx === 0) {
+    // At the start, a miss shows the move the solver actually played (red); a clean solve shows nothing.
+    puzzleShapes = !p.solved && p.yourMove
+      ? [{ orig: p.yourMove.slice(0, 2), dest: p.yourMove.slice(2, 4), brush: "red" }]
+      : [];
+  } else {
+    const u = p.ucis[p.idx - 1];
+    puzzleShapes = [{ orig: u.slice(0, 2), dest: u.slice(2, 4), brush: "green" }];
+  }
+  renderPuzzleBoard(false);
+  updateSolutionNav();
+}
+
+// Manual scrub: cancel any running auto-animation, then step one move.
+function solutionStep(delta) {
+  if (!solutionPlay) return;
+  ++solutionGen;
+  solutionGotoStep(solutionPlay.idx + delta);
+}
+
+function updateSolutionNav() {
+  const nav = $("pz-review-nav");
+  const p = solutionPlay;
+  if (!p) {
+    nav.hidden = true;
+    return;
+  }
+  nav.hidden = false;
+  $("pz-review-prev").disabled = p.idx <= 0;
+  $("pz-review-next").disabled = p.idx >= p.fens.length - 1;
+  const total = p.fens.length - 1;
+  $("pz-review-label").textContent =
+    p.idx === 0 ? "Start position" : `Move ${p.idx} / ${total}: ${p.sans[p.idx - 1] || ""}`;
+}
+
+// Tear down any active solution playback + hide the step nav (new puzzle, leaving, mode switch).
+function clearSolutionPlayback() {
+  ++solutionGen;
+  solutionPlay = null;
+  const nav = $("pz-review-nav");
+  if (nav) nav.hidden = true;
+}
+
+// Leave the single-puzzle review and return to the game-over card + review list.
+function closeStormReview() {
+  inStormReview = false;
+  clearSolutionPlayback();
+  puzzleChatReset();
+  $("pz-next").textContent = "Next puzzle →";
+  $("pz-result").hidden = true;
+  $("pz-explain-out").hidden = true;
+  $("pz-explain-out").innerHTML = "";
+  $("pz-solve").hidden = true;
+  $("pz-storm").hidden = false;
+}
+
+async function summarizeStormRun() {
+  const btn = $("pz-storm-summary-btn");
+  const out = $("pz-storm-summary-out");
+  btn.disabled = true;
+  out.hidden = false;
+  out.innerHTML = '<p class="muted">Snowie is reviewing your run (thinking)</p>';
+  let res;
+  try {
+    res = await fetch("/api/puzzle/storm/summary", { method: "POST" }).then((r) => r.json());
+  } catch (_) {
+    out.innerHTML = '<p class="muted">Summary failed — try again.</p>';
+    btn.disabled = false;
+    return;
+  }
+  out.innerHTML = renderMarkdown(res.error || res.answer || "");
+  btn.disabled = false;
 }
 
 // End the run when leaving storm mode entirely (tell the server so the highscore is banked).
@@ -3504,6 +3806,8 @@ function renderPuzzleBadge(p) {
   if (opp) bits.push("vs " + opp);
   if (b.speed && b.speed !== "unknown") bits.push(b.speed);
   if (b.date) bits.push(b.date);
+  // How much win% the original move threw away — small context on the cost of the miss.
+  if (p.win_drop != null && p.win_drop >= 1) bits.push("cost −" + Math.round(p.win_drop) + "% win chance");
   el.textContent = bits.join(" · ");
   el.hidden = false;
 }
@@ -3585,6 +3889,7 @@ function restorePrevPuzzle() {
   const s = prevPuzzleSnapshot;
   if (!s) return;
   cancelAutoAdvance();
+  clearSolutionPlayback(); // restored review shows the snapshot board, not a live step-through
   ++puzzleGen; // become the current puzzle; supersede any in-flight handler
   prevPuzzleSnapshot = null; // single-level back; a later Next re-captures this one
   puzzleBusy = false;
@@ -3700,6 +4005,15 @@ function finishPuzzle(outcome, ratingSummary, yourMove) {
   puzzleData._yourMove = yourMove || null;
   $("pz-explain").hidden = !(puzzleConfigCache && puzzleConfigCache.has_llm);
   loadPuzzleStatCard();
+
+  // Let the player walk the solution move-by-move with the step-nav below the board. Curated tactics
+  // only — "from your games" puzzles have no forced line to replay (they use "replay in full game").
+  // The board is already at the end of the line, so we rest there and let them scrub backward.
+  if (!isMine) {
+    startSolutionPlayback({ id: puzzleData.id, solved, animate: false });
+  } else {
+    clearSolutionPlayback();
+  }
 
   // Flow-state grinding: on a solve, roll straight into the next puzzle after the animation plays
   // (opt-out in Settings). Never on "Show solution" (outcome "failed") — that's a study moment.
@@ -3938,6 +4252,7 @@ function init() {
   });
   $("chesscom-form").addEventListener("submit", (e) => {
     e.preventDefault();
+    noteChesscomRefresh();
     chesscomCount = LICHESS_PAGE;
     loadChesscom($("chesscom-user").value.trim());
   });
@@ -3947,8 +4262,11 @@ function init() {
       $("history-status").textContent = "Set your chess.com username in ⚙ Settings first.";
       return;
     }
+    noteChesscomRefresh();
     syncChesscom(false);
   });
+  // Hint shortcut: jump straight to the Paste PGN tab.
+  $("chesscom-hint-paste").addEventListener("click", () => setMode("paste"));
   // "Set as my account": make the looked-up Lichess handle your unified identity.
   $("set-as-me").addEventListener("click", async () => {
     const u = ($("lichess-user").value.trim() || lichessUser || "").trim();
@@ -3976,7 +4294,7 @@ function init() {
   // Puzzle mode: top-level Analyze/Puzzles switch + the rail controls.
   $("mode-analyze").addEventListener("click", () => setPuzzleMode(false));
   $("mode-puzzles").addEventListener("click", () => setPuzzleMode(true));
-  $("pz-next").addEventListener("click", () => loadNextPuzzle());
+  $("pz-next").addEventListener("click", () => (inStormReview ? closeStormReview() : loadNextPuzzle()));
   $("pz-skip").addEventListener("click", () => loadNextPuzzle());
   $("pz-prev").addEventListener("click", restorePrevPuzzle);
   $("pz-hint").addEventListener("click", puzzleHint);
@@ -3991,6 +4309,9 @@ function init() {
   $("pz-mode-solve").addEventListener("click", () => setStormMode(false));
   $("pz-mode-storm").addEventListener("click", () => setStormMode(true));
   $("pz-storm-start").addEventListener("click", startStorm);
+  $("pz-storm-summary-btn").addEventListener("click", summarizeStormRun);
+  $("pz-review-prev").addEventListener("click", () => solutionStep(-1));
+  $("pz-review-next").addEventListener("click", () => solutionStep(1));
 
   // Settings panel.
   $("settings-toggle").addEventListener("click", openSettings);
@@ -4016,6 +4337,11 @@ function init() {
       return;
     }
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    if (solutionPlay) {
+      // Scrub the solution with the arrow keys, mirroring the ‹ › buttons (Storm review + Solve).
+      if (e.key === "ArrowLeft") { e.preventDefault(); solutionStep(-1); return; }
+      if (e.key === "ArrowRight") { e.preventDefault(); solutionStep(1); return; }
+    }
     if (puzzleMode) return; // puzzle mode has no game-navigation hotkeys
     if (e.key === "ArrowLeft") {
       e.preventDefault();

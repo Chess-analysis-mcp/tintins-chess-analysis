@@ -67,7 +67,7 @@ def test_interleave_can_swap_in_a_mistake_puzzle(client, monkeypatch):
 
     fake = {"id": "g1:white:3", "key": "g1:white:3", "source": "your_games",
             "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "side_to_move": "white", "motifs": [],
-            "played_uci": "e2e4", "played_san": "e4", "best_uci": "d2d4"}
+            "played_uci": "e2e4", "played_san": "e4", "best_uci": "d2d4", "win_drop": 12.3}
     monkeypatch.setattr(rp, "_has_engine", lambda: True)
     monkeypatch.setattr(rp.puzzle_mistakes, "next_mistake_puzzle", lambda *a, **k: dict(fake))
     monkeypatch.setattr(config, "PUZZLE_MISTAKE_INTERLEAVE", True)
@@ -75,6 +75,7 @@ def test_interleave_can_swap_in_a_mistake_puzzle(client, monkeypatch):
     nx = client.get("/api/puzzle/next").json()
     assert nx["source"] == "your_games"
     assert nx["played_uci"] == "e2e4"  # surfaced for the grey played-move arrow
+    assert nx["win_drop"] == 12.3  # the original mistake's win% cost, for the badge
 
 
 def test_interleave_off_serves_curated_tactics(client, monkeypatch):
@@ -182,3 +183,37 @@ def test_storm_end_persists_and_clears(client):
     client.post("/api/puzzle/storm/start")
     assert client.post("/api/puzzle/storm/end").json()["ended"] is True
     assert client.get("/api/puzzle/storm/state").json()["active"] is False
+
+
+def test_storm_review_logs_a_missed_puzzle(client):
+    view = client.post("/api/puzzle/storm/start").json()
+    pid = view["puzzle"]["id"]
+    client.post("/api/puzzle/storm/move", json={"uci": "a1a1"})  # a wrong move resolves the puzzle
+    log = client.get("/api/puzzle/storm/review").json()["log"]
+    assert len(log) == 1
+    entry = log[0]
+    assert entry["id"] == pid and entry["solved"] is False and entry["your_move"] == "a1a1"
+    assert entry["fen"] and isinstance(entry["themes"], list)
+
+
+def test_storm_review_logs_a_solved_puzzle(client):
+    view = client.post("/api/puzzle/storm/start").json()
+    moves = puzzles_mod.get_puzzle(view["puzzle"]["id"])["moves"]
+    for i in range(1, len(moves), 2):
+        if client.post("/api/puzzle/storm/move", json={"uci": moves[i]}).json().get("puzzle_done"):
+            break
+    log = client.get("/api/puzzle/storm/review").json()["log"]
+    assert log and log[-1]["solved"] is True
+
+
+def test_puzzle_solution_reveals_the_line_for_review(client):
+    view = client.post("/api/puzzle/storm/start").json()
+    pid = view["puzzle"]["id"]
+    sol = client.get("/api/puzzle/solution", params={"id": pid}).json()
+    full = puzzles_mod.get_puzzle(pid)["moves"]
+    assert sol["solution_uci"] == full[1:]  # setup move omitted; solver's line only
+    assert len(sol["solution_san"]) == len(full) - 1 and sol["solve_fen"]
+
+
+def test_puzzle_solution_unknown_id_404s(client):
+    assert client.get("/api/puzzle/solution", params={"id": "nope"}).status_code == 404
