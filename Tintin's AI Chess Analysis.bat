@@ -34,7 +34,18 @@ REM Open a loading splash in the browser RIGHT NOW so first-time users see progr
 REM (slow, one-time) install + engine download run - instead of a blank screen that looks frozen.
 REM It polls the board URL and swaps itself for the real app once the server is up; CHESS_WEB_OPEN=0
 REM (below) stops the server opening a second tab. (%CD:\=/% turns the path into a file:// URL.)
+REM Copy the splash into a writable scratch dir so the installer can drop a sibling progress.js beside
+REM it - the splash re-loads that file to advance a real progress bar during the slow first-run install.
+REM A failed copy just opens the in-place splash (spinner only, no bar; no regression).
+set "SPLASH_DIR=%TEMP%\tintin-chess-splash"
 set "SPLASH=file:///%CD:\=/%/frontend/loading.html#%CHESS_WEB_HOST%:%CHESS_WEB_PORT%"
+if not exist "%SPLASH_DIR%" mkdir "%SPLASH_DIR%" >nul 2>&1
+copy /Y "frontend\loading.html" "%SPLASH_DIR%\loading.html" >nul 2>&1
+if exist "%SPLASH_DIR%\loading.html" (
+  type nul > "%SPLASH_DIR%\progress.js"
+  set "CHESS_INSTALL_PROGRESS=%SPLASH_DIR%\progress.js"
+  set "SPLASH=file:///%SPLASH_DIR:\=/%/loading.html#%CHESS_WEB_HOST%:%CHESS_WEB_PORT%"
+)
 if not defined RELAUNCHED start "" "%SPLASH%"
 
 REM Apply a staged update (dropped by the in-app "Update now" button) before starting. Best-effort.

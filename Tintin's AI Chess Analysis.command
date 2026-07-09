@@ -101,7 +101,16 @@ fi
 # The splash polls the board URL and swaps itself for the real app the moment the server is up; so we
 # set CHESS_WEB_OPEN=0 below to avoid the server opening a second, duplicate tab. (Spaces in the path
 # → %20 for a valid file:// URL; the #host:port lets the splash know where the board will be.)
+# Copy the splash into a writable scratch dir so the installer can drop a sibling progress.js beside
+# it — the splash re-loads that file (as a <script>) to advance a real progress bar during the slow
+# first-run install. A failed copy just opens the in-place splash (spinner only, no bar; no regression).
+SPLASH_DIR="${TMPDIR:-/tmp}/tintin-chess-splash"
 SPLASH="file://${PWD// /%20}/frontend/loading.html#${HOST}:${PORT}"
+if mkdir -p "$SPLASH_DIR" 2>/dev/null && cp "frontend/loading.html" "$SPLASH_DIR/loading.html" 2>/dev/null; then
+  : > "$SPLASH_DIR/progress.js" 2>/dev/null || true   # clear any stale progress from a prior run
+  export CHESS_INSTALL_PROGRESS="$SPLASH_DIR/progress.js"
+  SPLASH="file://${SPLASH_DIR// /%20}/loading.html#${HOST}:${PORT}"
+fi
 [ -n "$RELAUNCHED" ] || open "$SPLASH" 2>/dev/null || xdg-open "$SPLASH" 2>/dev/null || true
 
 # Apply a staged update before starting. The in-app "Update now" button drops a `.update-requested`

@@ -182,6 +182,18 @@ die() {  # show a native error dialog, then exit non-zero
   exit 1
 }
 
+# Report install progress to the browser loading splash (see frontend/loading.html). The splash
+# re-loads a sibling progress.js as a <script> and moves its bar; here we just rewrite that file
+# atomically (tmp+mv). A no-op until CHESS_INSTALL_PROGRESS is set below.
+progress() {
+  [ -n "${CHESS_INSTALL_PROGRESS:-}" ] || return 0
+  local pct="$1" step="${2:-}"
+  step="${step//\\/\\\\}"; step="${step//\"/\\\"}"
+  { printf 'window.__setInstallProgress && window.__setInstallProgress({ pct: %s, step: "%s" });\n' \
+      "$pct" "$step" > "$CHESS_INSTALL_PROGRESS.tmp" \
+    && mv -f "$CHESS_INSTALL_PROGRESS.tmp" "$CHESS_INSTALL_PROGRESS"; } 2>/dev/null || true
+}
+
 # Download the official static Stockfish straight from GitHub (no Homebrew needed) into $1, picking
 # the build for this CPU and falling back to a more compatible one if it won't run. Returns non-zero
 # on failure. curl-downloaded binaries aren't quarantined, so they run without a Gatekeeper prompt.
@@ -230,24 +242,38 @@ fi
 # think the app is frozen. Open a loading splash in the browser immediately: it polls the board URL
 # and replaces itself with the real app the moment the server is up. CHESS_WEB_OPEN=0 (set below)
 # stops the server opening a second tab. Spaces in the bundle path → %20 for a valid file:// URL.
+# Copy the splash into the writable support dir so we can drop a sibling progress.js next to it (the
+# bundle itself is read-only, so we can't write beside the in-bundle copy). The splash re-loads that
+# file to advance a real progress bar during the slow first-run install. A failed copy falls back to
+# the in-bundle splash (spinner only, no bar; no regression).
+SPLASH_DIR="$SUPPORT/splash"
 SPLASH="file://${REPO// /%20}/frontend/loading.html#${HOST}:${PORT}"
+if mkdir -p "$SPLASH_DIR" 2>/dev/null && cp "$REPO/frontend/loading.html" "$SPLASH_DIR/loading.html" 2>/dev/null; then
+  : > "$SPLASH_DIR/progress.js" 2>/dev/null || true   # clear any stale progress from a prior run
+  export CHESS_INSTALL_PROGRESS="$SPLASH_DIR/progress.js"
+  SPLASH="file://${SPLASH_DIR// /%20}/loading.html#${HOST}:${PORT}"
+fi
 echo "Opening loading splash: $SPLASH"
 open "$SPLASH" || true
+progress 5 "Preparing setup…"
 
 # 1) uv — manages Python + deps (self-contained; no pre-existing Python needed).
 if ! command -v uv >/dev/null 2>&1; then
+  progress 8 "Installing the package manager (uv)…"
   echo "Installing uv…"
   curl -LsSf https://astral.sh/uv/install.sh | sh \
     || die "Could not install 'uv'. Check your internet connection and open the app again."
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 command -v uv >/dev/null 2>&1 || die "'uv' was installed but isn't on PATH. Open a Terminal, run: curl -LsSf https://astral.sh/uv/install.sh | sh"
+progress 20 "Package manager ready"
 
 # 2) Stockfish — the chess engine (not a pip package). Prefer a system install / Homebrew; on a
 #    clean Mac with neither, download the official static binary from GitHub (no Homebrew needed)
 #    into the data dir. That path is exported as STOCKFISH_PATH *and* auto-detected by the app (it
 #    lives under CHESS_DATA_DIR — see config._managed_stockfish_path), so it's found with zero config.
 SF_MANAGED="$DATA_DIR/engine/stockfish"
+progress 22 "Setting up the chess engine (Stockfish)…"
 if command -v stockfish >/dev/null 2>&1; then
   echo "Stockfish found on PATH: $(command -v stockfish)"
 elif [ -x "$SF_MANAGED" ]; then
@@ -266,6 +292,7 @@ fi
 
 # 3) Build the Python environment in the writable support dir (NOT inside the bundle).
 export UV_PROJECT_ENVIRONMENT="$ENV_DIR"
+progress 45 "Downloading Python & dependencies (largest step)…"
 echo "Syncing Python environment into $ENV_DIR …"
 # --no-install-project: install only the locked DEPENDENCIES, not the project package itself.
 #   run_web.py imports server.* via sys.path, so the package never needs building/installing — and
@@ -273,6 +300,7 @@ echo "Syncing Python environment into $ENV_DIR …"
 # --frozen: never touch uv.lock (which lives in the read-only bundle).
 ( cd "$REPO" && uv sync --frozen --no-install-project ) \
   || die "Could not set up the Python environment. See $LOG."
+progress 96 "Starting the board…"
 
 # 4) Serve the board in app mode. Run the venv's python directly (no terminal, shallow process
 #    tree) so closing the browser tab — or quitting the app — stops the server cleanly.
