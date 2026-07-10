@@ -40,7 +40,7 @@ It has **two modes**, side by side in the same board:
 ## Features
 
 - **Full-game review** → an ordered list of your inaccuracies / mistakes / blunders with per-side
-  accuracy, using Lichess-style win%-drop thresholds (5 / 10 / 15).
+  accuracy, using Lichess-style win%-drop thresholds.
 - **Explanations in words.** Every flagged move gets a concrete, engine-grounded comment (the
   better move, its line, and how your move gets punished). No guessing: it's built from the engine
   sweep.
