@@ -101,7 +101,16 @@ fi
 # The splash polls the board URL and swaps itself for the real app the moment the server is up; so we
 # set CHESS_WEB_OPEN=0 below to avoid the server opening a second, duplicate tab. (Spaces in the path
 # → %20 for a valid file:// URL; the #host:port lets the splash know where the board will be.)
+# Copy the splash into a writable scratch dir so the installer can drop a sibling progress.js beside
+# it — the splash re-loads that file (as a <script>) to advance a real progress bar during the slow
+# first-run install. A failed copy just opens the in-place splash (spinner only, no bar; no regression).
+SPLASH_DIR="${TMPDIR:-/tmp}/tintin-chess-splash"
 SPLASH="file://${PWD// /%20}/frontend/loading.html#${HOST}:${PORT}"
+if mkdir -p "$SPLASH_DIR" 2>/dev/null && cp "frontend/loading.html" "$SPLASH_DIR/loading.html" 2>/dev/null; then
+  : > "$SPLASH_DIR/progress.js" 2>/dev/null || true   # clear any stale progress from a prior run
+  export CHESS_INSTALL_PROGRESS="$SPLASH_DIR/progress.js"
+  SPLASH="file://${SPLASH_DIR// /%20}/loading.html#${HOST}:${PORT}"
+fi
 [ -n "$RELAUNCHED" ] || open "$SPLASH" 2>/dev/null || xdg-open "$SPLASH" 2>/dev/null || true
 
 # Apply a staged update before starting. The in-app "Update now" button drops a `.update-requested`
@@ -135,7 +144,10 @@ fi
 # First-run install: no uv, or the project env hasn't been built yet.
 if ! command -v uv >/dev/null 2>&1 || [ ! -d ".venv" ]; then
   echo "First-time setup — installing Tintin's AI Chess Analysis (this happens only once)…"
-  ./install.sh
+  # Non-interactive: the user is watching the browser splash, not this window, so the installer must
+  # NOT stop at its username prompt (that would hang first-run — the server would never start). The
+  # username is collected on the app's first-run screen instead.
+  CHESS_NONINTERACTIVE=1 ./install.sh
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 

@@ -12,13 +12,32 @@ function Ok($m)   { Write-Host "[ok] $m" -ForegroundColor Green }
 function Info($m) { Write-Host "> $m" -ForegroundColor Cyan }
 function Warn($m) { Write-Host "[!] $m" -ForegroundColor Yellow }
 
+# Report install progress to the browser loading splash. The launcher points CHESS_INSTALL_PROGRESS
+# at a progress.js sitting next to the splash's loading.html; the splash re-loads it as a <script>
+# and moves its bar. Unset (a plain `install.ps1` run) -> a no-op. Written atomically (tmp+rename)
+# so the splash never reads a half-written file. See frontend/loading.html for the reader side.
+function Progress($pct, $step) {
+    if (-not $env:CHESS_INSTALL_PROGRESS) { return }
+    $safe = ($step -replace '\\', '\\') -replace '"', '\"'
+    $line = "window.__setInstallProgress && window.__setInstallProgress({ pct: $pct, step: `"$safe`" });"
+    try {
+        # WriteAllText gives UTF-8 WITHOUT a BOM on both Windows PowerShell 5.1 and PS 7 (Set-Content
+        # -Encoding UTF8 emits a BOM on 5.1). tmp+Move keeps the splash from reading a half-written file.
+        $tmp = "$($env:CHESS_INSTALL_PROGRESS).tmp"
+        [System.IO.File]::WriteAllText($tmp, $line, (New-Object System.Text.UTF8Encoding($false)))
+        Move-Item -Force -Path $tmp -Destination $env:CHESS_INSTALL_PROGRESS
+    } catch {}
+}
+
 Write-Host "Chess Review MCP - installer" -ForegroundColor White
 Write-Host ""
+Progress 5 "Preparing setup..."
 
 # 1) uv -------------------------------------------------------------------------------
 if (Get-Command uv -ErrorAction SilentlyContinue) {
     Ok "uv already installed ($(uv --version))"
 } else {
+    Progress 8 "Installing the package manager (uv)..."
     Info "Installing uv (manages Python + dependencies for this project)..."
     powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
     $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
@@ -31,11 +50,14 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
 
 # 2) Build the project environment ----------------------------------------------------
 # Built before Stockfish so the download fallback below can run via `uv run python`.
+Progress 25 "Downloading Python & dependencies (largest step)..."
 Info "Setting up the Python environment with uv (first run downloads Python + deps)..."
 uv sync
 Ok "Environment ready"
+Progress 70 "Environment ready"
 
 # 3) Stockfish - try winget/choco, else download the official static build. ------------
+Progress 72 "Setting up the chess engine (Stockfish)..."
 if (Get-Command stockfish -ErrorAction SilentlyContinue) {
     Ok "Stockfish already installed"
 } else {
@@ -58,6 +80,8 @@ if (Get-Command stockfish -ErrorAction SilentlyContinue) {
         Ok "Stockfish installed"
     } else {
         Info "Downloading the official Stockfish engine (no package manager needed)..."
+        # The downloader reports real byte-percent into this band, so the splash bar actually moves.
+        $env:CHESS_INSTALL_PROGRESS_BAND = "72,92"
         try { $SfPath = uv run python scripts/download_stockfish.py } catch { $SfPath = $null }
         if ($SfPath) {
             Ok "Stockfish downloaded ($SfPath)"
@@ -72,25 +96,37 @@ if (Get-Command stockfish -ErrorAction SilentlyContinue) {
 # 4) Record your chess username -------------------------------------------------------
 # Saved to the user-level settings.json (shared by app + MCP), NOT a tracked file — so the working
 # tree stays clean and the launcher's one-click update can fast-forward without conflicts.
+#
+# Skipped entirely when non-interactive: the double-click launcher runs this installer with
+# CHESS_NONINTERACTIVE=1 (and the user is watching the BROWSER splash, not this window), so a
+# blocking Read-Host here would hang first-run forever - the server never starts, the splash never
+# redirects, and the app looks frozen. The browser's own first-run prompt collects the username instead.
+Progress 94 "Finishing setup..."
 Write-Host ""
-Info "Your Lichess/Chess.com username lets the tool tell which side is 'you' in a game."
-$ChessUser = Read-Host "Username (press Enter to skip)"
-if ($ChessUser) {
-    $py = @"
+if ($env:CHESS_NONINTERACTIVE) {
+    Info "Set your Lichess/Chess.com username on the app's first-run screen (or in Settings)."
+} else {
+    Info "Your Lichess/Chess.com username lets the tool tell which side is 'you' in a game."
+    $ChessUser = Read-Host "Username (press Enter to skip)"
+    if ($ChessUser) {
+        $py = @"
 import sys
 from server.core import settings
 settings.update({'username': sys.argv[1]})
 "@
-    uv run python -c $py $ChessUser
-    Ok "Saved username"
-} else {
-    Warn "Skipped - set it later in the app's Settings panel if you want auto side-detection."
+        uv run python -c $py $ChessUser
+        Ok "Saved username"
+    } else {
+        Warn "Skipped - set it later in the app's Settings panel if you want auto side-detection."
+    }
 }
 
 # 5) Self-check -----------------------------------------------------------------------
+Progress 97 "Almost ready..."
 Write-Host ""
 uv run python -m server.doctor
 
+Progress 98 "Starting the board..."
 Write-Host ""
 Write-Host "Done." -ForegroundColor White
 Write-Host "Easiest: double-click `"Tintin's AI Chess Analysis.bat`" to open the board with your latest Lichess game."

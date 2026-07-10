@@ -7,24 +7,32 @@ A chess coach you can actually **talk to**, and one that **doesn't make things u
 was a mistake or what you should have played, and get a straight answer **in words**, grounded in
 real **Stockfish** lines instead of guessed. Under the hood it reviews your game with the engine and
 finds exactly where you went wrong; the difference is it then explains it. Works with games from
-**anywhere** (Lichess, Chess.com, or any PGN you can paste), and Lichess players get a few extras
-(fetch your recent games by username, auto-load on launch). It runs two ways: from the **Claude Code
+**anywhere** (Lichess, Chess.com, or any PGN you can paste). Both Lichess and Chess.com games can
+be fetched by username, your latest game auto-loads on launch, and new **Chess.com games sync
+automatically** into your history. Lichess players get a few extras. It runs two ways: from the **Claude Code
 terminal** (as an MCP server) and as an **interactive web board** that share one engine and one
 analysis, so they never disagree.
+
+It has **two modes**, side by side in the same board:
+
+- **Analyze** your games: the full-game review described above.
+- **Puzzles**: a built-in tactics trainer with a faithful **Glicko-2** rating, a timed **Storm**
+  rush, and, uniquely, an AI coach that **teaches the pattern** behind each solution. It can also
+  turn your **own past blunders** into practice puzzles. See [Puzzle trainer](#puzzle-trainer).
 
 ![Chess Review board: the board with played, best, and refutation arrows, an eval bar, a win graph, the mistake list, the Snowie AI coach, and the Games panel](docs/screenshots/chess_new_pipeline.png)
 
 > **Requires a Claude subscription** *(or a local model)***.** The AI-coach explanations and chat
-> (Snowie) — the whole "explained in words" part — run on **headless `claude`, using your existing
+> (Snowie), the whole "explained in words" part, run on **headless `claude`, using your existing
 > Claude subscription** (no API key, no per-token billing). You need the [`claude`
 > CLI](https://docs.claude.com/en/docs/claude-code/overview) installed and logged in
 > (`claude login`). Prefer to stay fully offline? You can instead point the AI coach at a **local
-> model** (Ollama, LM Studio, …) with no Claude account at all — see
+> model** (Ollama, LM Studio, …) with no Claude account at all; see
 > [Run the AI on a local model](#run-the-ai-on-a-local-model-instead-of-claude). Either way, the
 > engine review itself (mistake list, eval bar, win graph, arrows) works without any of it.
 
 > **New here? Pick your goal:**
-> - 🎯 **I just want to review my games** → [get the app](#-i-just-want-to-review-my-games) (download on Mac, or double-click the launcher on Windows/Linux — it sets itself up).
+> - 🎯 **I just want to review my games (and train puzzles)** → [get the app](#-i-just-want-to-review-my-games) (download on Mac, or double-click the launcher on Windows/Linux; it sets itself up).
 > - 🤖 **I want chess analysis inside Claude Code** → [run the installer](#-i-want-it-inside-claude-code).
 
 ---
@@ -41,19 +49,25 @@ analysis, so they never disagree.
 - **Eval bar + Lichess-style win graph** that orient to the side you're reviewing (black-on-bottom
   when you played black). Click the graph or use ← / → to scrub the whole game.
 - **Move arrows:** gray = the move you played, green = engine best moves (live **multi-PV** with
-  **progressive deepening**, thicker arrow = better move), red = the refutation of a move you try.
+  **progressive deepening**, thicker arrow = better move), red = the refutation of a move you try and yellow = threats (toggle **Show threats** or press `t`) to show what the opponent is threatening to play next.
+- **Chess.com auto-sync.** If your Chess.com username is set, your latest games will be fetched
+ and analyzed (alternatively you can use the ⟳ Sync button on the Chess.com tab).
+- **Insights panel.** Recurring themes and stats aggregated across every analyzed game in a chosen
+  period (today / past 7 days / past 30 days / all time). Insights include record, average accuracy, your most common mistake motifs, weakest phase, and most-played openings.
 - **In-browser AI coach (Snowie).** A "why? / what now?" chat powered by headless `claude -p`
   (your Claude subscription), fed pre-computed engine facts so answers are grounded, not estimated.
 - **Cross-game history + coaching profile.** Every reviewed game is saved locally, tagged with
   recurring mistake motifs (hung pieces, missed forks, back-rank, time trouble…), and rolled up
   into a per-player profile. With **"Personalize AI coach with my history"** on (in **⚙ Settings**),
-  Claude can draw on your recurring patterns — only when they actually bear on the position at hand.
-
-<!-- TODO: screenshot of the mistake list + the engine-grounded comment box.
-     Show the right-sidebar "Mistakes" list and, below the board, the green comment box for a
-     selected blunder (e.g. "Nf3 is a blunder: your win chance falls from 80.8% to 56.9% ...").
-     Save as docs/screenshots/mistakes-and-comment.png -->
-<!-- ![Mistake list and comment](docs/screenshots/mistakes-and-comment.png) -->
+  Claude can draw on your recurring patterns, but only when they actually bear on the position at hand.
+- **Puzzle trainer.** A second mode alongside Analyze: solve tactical puzzles with a faithful
+  **Glicko-2** rating, a timed **Storm** rush, a **daily streak**, and a **"train my weaknesses"**
+  filter that biases selection toward the motifs you miss most. Unlike a bare puzzle site, the AI
+  coach **explains the motif** behind each solution, and you can practice **your own past blunders**
+  as engine-checked puzzles. See [Puzzle trainer](#puzzle-trainer).
+- **Fully offline board.** The board (chessground + chess.js) is **vendored**, not loaded from a
+  CDN, so it renders with zero network. Only the optional extras (Lichess/Chess.com fetch, puzzle
+  downloads, the AI coach, update checks) reach the network, and each is individually disablable.
 
 ---
 
@@ -74,29 +88,23 @@ shells out to headless `claude -p` (your subscription).
 
 ## Installation
 
-There are only **two** things you might want, so pick one:
-
-| Your goal | Go to |
-| --- | --- |
-| 🎯 **Just review my chess games** (from Lichess, Chess.com, or any PGN) | [I just want to review my games](#-i-just-want-to-review-my-games) |
-| 🤖 **Use chess analysis inside Claude Code** (the MCP server) | [I want it inside Claude Code](#-i-want-it-inside-claude-code) |
-
-Either way you need **nothing installed first** — no Python, no Stockfish. The app/installer fetches
-everything (it uses [uv](https://docs.astral.sh/uv/) to download a compatible Python for you).
+Two ways to use it (the goal-picker links at the top jump straight there). Either way you need
+**nothing installed first**, no Python and no Stockfish: the app/installer fetches everything, using
+[uv](https://docs.astral.sh/uv/) to download a compatible Python for you.
 
 ### 🎯 I just want to review my games
 
 Zero terminal required. Open the app and it brings up a chess board in your browser, ready to
-review a game from **any source** — paste or upload a PGN (Chess.com, OTB, anywhere), or, if you
-play on **Lichess**, just give it your username and it loads your recent games for you.
+review a game from **any source**: paste or upload a PGN, or, if you
+play on **Lichess** or **Chess.com**, just give it your username and it loads your recent games for you.
 
 <a id="review-mac"></a>
-**macOS — the app.** Download the zip from the
+**macOS: the app.** Download the zip from the
 [Releases page](https://github.com/Chess-analysis-mcp/tintins-chess-analysis/releases). Unzipping it
 gives you **`Tintin's AI Chess Analysis.app`**. Drag that into **Applications**, and open it.
 
 - **First open:** it's unsigned, so macOS blocks it once. Double-click it (you'll get a "cannot
-  verify" / "blocked" message — click **Done**), then go to **System Settings → Privacy &
+  verify" / "blocked" message, click **Done**), then go to **System Settings → Privacy &
   Security**, scroll down to the message about the app, and click **Open Anyway → Open**. You only
   do this once. *(On older macOS you can instead right-click the app → **Open** → **Open**.)*
 - The app installs Stockfish + its Python env on first run (needs internet once), then opens the
@@ -105,46 +113,48 @@ gives you **`Tintin's AI Chess Analysis.app`**. Drag that into **Applications**,
   survives updates. Setup problems show in a dialog; logs go to that folder's `launch.log`.
 
 <a id="review-windows-linux"></a>
-**Windows / Linux — the double-click launcher.** Three steps, no terminal, no GitHub account needed.
+**Windows / Linux: the double-click launcher.** Three steps, no terminal, no GitHub account needed.
 
-**Step 1 — download the project as a ZIP.** On this project's GitHub page, scroll to the **top**,
+**Step 1: download the project as a ZIP.** On this project's GitHub page, scroll to the **top**,
 click the green **`< > Code`** button, and choose **Download ZIP** (see the circled buttons below).
 
 <p align="center">
   <img src="docs/screenshots/install_image.png" alt="On the GitHub page, click the green 'Code' button near the top right, then 'Download ZIP'." width="560">
 </p>
 
-**Step 2 — unzip it.** Double-click the downloaded `.zip` to extract it. You'll get a folder named
-something like **`tintins-chess-analysis`** — open it. (On Windows, if it opens "inside" the zip
+**Step 2: unzip it.** Double-click the downloaded `.zip` to extract it. You'll get a folder named
+something like **`tintins-chess-analysis`**; open it. (On Windows, if it opens "inside" the zip
 first, drag the folder out to your Desktop, or right-click the zip → **Extract All**.)
 
-**Step 3 — double-click the launcher** inside that folder:
+**Step 3: double-click the launcher** inside that folder:
 
 - **Windows:** **`Tintin's AI Chess Analysis.bat`** (if SmartScreen warns: **More info → Run anyway**)
 - **Linux:** **`Tintin's AI Chess Analysis.command`**
 
 The **first launch** installs everything (uv + Stockfish + the env) and can take a couple of
-minutes — a loading page opens in your browser while it works. Every launch after opens straight to
+minutes; a loading page opens in your browser while it works. Every launch after opens straight to
 the board.
 
-**Once the board is open (any platform), load a game from wherever you play** — via the **Games**
-panel (☰), which has three tabs:
+**Once the board is open (any platform), load a game from wherever you play**, via the **Games**
+panel (☰), which has four tabs:
 
-- **Paste PGN** — works for *everyone*. Paste any PGN, or **Upload .pgn** a file (e.g. a Chess.com
+- **Paste PGN**: works for *everyone*. Paste any PGN, or **Upload .pgn** a file (e.g. a Chess.com
   export of one *or many* games), pick your side, and click **Analyze**; all games land in **My
-  games**. This is the universal path — no account of any kind needed.
-- **Lichess** *(bonus for Lichess players)* — type any handle to fetch that player's recent games,
+  games**. This is the universal path, no account of any kind needed.
+- **Lichess**: type any handle to fetch that player's recent games,
   and click **"Set as my account"** to make it yours: that drives **My games**, your coaching
   profile, and (in the app) auto-loading your latest game on launch.
-- **My games** — your previously-analyzed games, to reopen instantly.
+- **Chess.com**: Enter any chess.com username to fetch that player's recent games, or press 
+  **⟳ Sync new games** to retrieve any new games of your own if your Chess.com username is set.
+- **My games**: your previously-analyzed games, to reopen instantly.
 
 Your account/username is set under **⚙ Settings → Your username** (or the Lichess panel's button)
-and saved server-side, so it's the same everywhere. **To quit:** just close the browser tab — the
+and saved server-side, so it's the same everywhere. **To quit:** just close the browser tab; the
 server stops a few seconds later (and the launcher's terminal window closes itself).
 
 ### 🤖 I want it inside Claude Code
 
-Run the one-command installer from the repo root, then reload Claude Code — the `chess` MCP server
+Run the one-command installer from the repo root, then reload Claude Code; the `chess` MCP server
 is already registered in `.mcp.json` (no path editing; it runs via `uv`, which is machine-independent).
 
 ```bash
@@ -165,12 +175,12 @@ uv run python -m server.doctor
 ```
 
 Then open Claude Code in this folder, paste a PGN, and say *"analyze this game."* You also get the
-web board for free — see [Usage](#usage).
+web board for free; see [Usage](#usage).
 
 <details>
 <summary>Advanced: build the macOS .app yourself, or skip uv</summary>
 
-**Build the `.app` from source** (instead of downloading it) — produces the same bundle the
+**Build the `.app` from source** (instead of downloading it); produces the same bundle the
 Releases page ships:
 
 ```bash
@@ -200,17 +210,15 @@ that interpreter instead of `uv run python`.
 
 ### Prerequisites (what the app/installer handles for you)
 
-- **Stockfish** engine (the installer adds it via `brew` / `apt` / `winget`, and if no package
-  manager is available it downloads the official static build automatically, so no manual setup is
-  needed on any platform). The tool auto-detects a normal install, so no path configuration is
-  needed. To use a custom build, set `STOCKFISH_PATH`.
-- **Internet connection** for the web board's first load (chessground / chess.js come from a CDN, so
-  there's no Node/npm build step).
-- **A Claude subscription + the `claude` CLI** (Claude Code), installed and logged in
-  (`claude login`) — required for the AI-coach explanations and chat (Snowie) and for the Claude
-  Code terminal workflow. It runs on your **existing subscription**, no API key or per-token
-  billing. The web board's bare engine review (mistakes, eval bar, arrows) works without it, but the
-  plain-English explanations — the point of the tool — do not.
+- **Stockfish** is installed for you (via `brew` / `apt` / `winget`, or a direct download of the
+  official build) and auto-detected, so no path setup is needed; set `STOCKFISH_PATH` only to force
+  a custom build.
+- **Internet** is needed for first-time setup only (Python, Stockfish, and the puzzle set). After
+  that the board runs fully offline: chessground and chess.js are vendored, with no build step or CDN.
+- **The `claude` CLI + a Claude subscription** power the AI coach and chat, on your existing
+  subscription (no API key, no per-token billing), or use a
+  [local model](#run-the-ai-on-a-local-model-instead-of-claude) instead. The engine review works
+  without either; only the plain-English explanations need it.
 
 ---
 
@@ -240,32 +248,20 @@ It analyzes the game (~20 to 45s depending on length), opens your browser to
 The third argument is your color: `white`, `black`, or `auto` (infer from the PGN headers).
 
 **Browse & reopen past games (the Games panel).** A collapsible third column (toggle with the **☰
-Games** button) lists games you can open in the board. The panel has three tabs: **My games**
-(your previously-analyzed local games), **Lichess** (your recent Lichess games, with a lookup box
-for any handle), and **Paste PGN** — paste a PGN from anywhere (e.g. **Chess.com → Share → PGN**),
-pick which color you played (or leave it on *auto*), and click **Analyze**. Click any game (or
-submit a paste) and the board opens **immediately** — you can step through the moves with ← / →
-while the engine analysis runs in the background; the eval bar, win graph, mistake list, comments,
-and best-move arrows fill in as soon as it finishes.
+Games** button) lists games you can open in the board. The panel has four tabs: **My games**
+(your previously-analyzed local games), **Lichess**, **Chess.com**, and **Paste PGN**: paste 
+a PGN from anywhere, pick which color you played (or leave it on *auto*), and click **Analyze**. 
+Click any game (or paste PGN data) and the board opens **immediately**; you can step through 
+the moves with ← / → while the engine analysis runs in the background; the eval bar, win graph, 
+mistake list, comments, and best-move arrows fill in as soon as it finishes.
 
 **Bulk-analyze a Chess.com export (multiple games at once).** Chess.com lets you download many
 games as a single PGN file. In the **Paste PGN** tab, hit **Upload .pgn** (or paste the file's
-contents) — the app detects all the games, analyzes them one-by-one in the background (showing
+contents); the app detects all the games, analyzes them one-by-one in the background (showing
 "Game *k* of *N*"), and files every one under **My games**. It figures out which handle is *you*
 (the player present in all the games) automatically; if it can't, type your username in the
 optional box. Once a handle is recognized this way it's remembered, so future games from that
 account (Chess.com *or* Lichess) fold into the same history and coaching profile.
-
-<!-- TODO: screenshot of the best-move arrows.
-     Toggle "Show best move" on a quiet middlegame position so two green arrows show, one bold
-     (best) and one thin (a slightly worse alternative). Save as docs/screenshots/best-move-arrows.png -->
-<!-- ![Best-move arrows](docs/screenshots/best-move-arrows.png) -->
-
-<!-- TODO: screenshot of the win graph.
-     Capture the graph strip under the board across a full game, showing the two-tone fill,
-     colored dots at the mistakes, and the vertical current-move marker. Save as
-     docs/screenshots/win-graph.png -->
-<!-- ![Win graph](docs/screenshots/win-graph.png) -->
 
 ### Option B: from the Claude Code terminal (MCP)
 
@@ -277,8 +273,11 @@ up the `chess` server), then:
 2. Ask *"why was move 4 bad?"* → Claude calls `mcp__chess__get_engine_line` and explains using the
    returned best line + refutation.
 
-Tools exposed: `mcp__chess__analyze_game`, `mcp__chess__get_engine_line`, `mcp__chess__goto_mistake`,
-`mcp__chess__get_player_profile` (your cross-game coaching profile, see below).
+Tools exposed: `mcp__chess__analyze_game`, `mcp__chess__fetch_games`, `mcp__chess__fetch_game`,
+`mcp__chess__get_engine_line`, `mcp__chess__goto_mistake`, `mcp__chess__get_player_profile` (your
+cross-game coaching profile, see below), and the puzzle-trainer pair `mcp__chess__next_puzzle` /
+`mcp__chess__solve_puzzle` (drive the same puzzle session as the board; see
+[Puzzle trainer](#puzzle-trainer)).
 
 #### Example (terminal)
 
@@ -291,56 +290,67 @@ Tools exposed: `mcp__chess__analyze_game`, `mcp__chess__get_engine_line`, `mcp__
 >
 > 📊 Open the interactive board: http://127.0.0.1:8765
 
-### Snowie — the in-browser AI coach
+### Snowie: the in-browser AI coach
 
 **Snowie** is the chat panel: it answers position-aware questions using your Claude subscription.
 Each question is handed the **current board** (for *"what should I do here?"*) and the **move in
 question** (for *"why is this bad?"*), each with pre-computed Stockfish facts, so Snowie reasons
 from real lines. Follow-up questions remember the conversation.
 
-<!-- TODO: screenshot of the chat panel with a Q&A.
-     Show "Why is Nd4 bad here?" and Claude's grounded answer rendered with bold/lists. Save as
-     docs/screenshots/chat.png -->
-<!-- ![Ask why chat](docs/screenshots/chat.png) -->
-
-<!-- > **Note on billing:** in-browser chat uses your subscription's separate **Agent SDK credit** (not
-> per-token API billing). If it's exhausted, you'll get a friendly message, so just ask in the
-> Claude Code terminal instead, which uses your normal interactive limits. -->
-
 ### Run the AI on a local model (instead of Claude)
 
-The chat + AI coach can run on a model **entirely on your own machine** instead of your Claude
-subscription. This is the fully-offline path for the AI: it needs **no Claude subscription, no
-login, and not even the `claude` CLI**. The app talks to your local model directly over HTTP.
+The chat and AI coach can run on a model **on your own machine** instead of your Claude subscription,
+with no Claude account or `claude` CLI at all. It works with any local server exposing an
+OpenAI-compatible `/v1/chat/completions` endpoint ([Ollama](https://ollama.com), LM Studio,
+llama.cpp, a [LiteLLM](https://github.com/BerriAI/litellm) proxy, …).
 
-It works with **any local server that exposes an OpenAI-compatible `/v1/chat/completions`
-endpoint**, which is almost all of them: [Ollama](https://ollama.com), LM Studio, llama.cpp's
-server, a [LiteLLM](https://github.com/BerriAI/litellm) proxy, and others. **Ollama is the
-easiest**, so it gets a one-click setup; everything else is two fields.
+- **Ollama (one click):** pull a model (`ollama pull qwen2.5-coder`), then in **⚙ Settings → Advanced
+  → Local AI model** click **Detect Ollama**, pick a model, and **Save**.
+- **Anything else:** in the same place, fill in the server **URL** (e.g. `http://localhost:1234/v1`
+  for LM Studio) and the **Model** name. Clear the field to switch back to Claude.
 
-**With Ollama (one click):**
+Quality depends on the local model, and the Stockfish analysis stays local either way. The terminal
+MCP workflow still uses Claude; this covers the in-browser chat and coach summary.
 
-1. Install Ollama and pull a model: `ollama pull qwen2.5-coder` (any chat model works; it just needs
-   to be running, e.g. `ollama serve`).
-2. In the board, open **⚙ Settings → Advanced → Local AI model** and click **Detect Ollama**. It
-   finds the URL, lists the models you've pulled, and you pick one and **Save**.
+---
 
-That's it. The chat and AI coach now run locally; clear the field to switch back to Claude.
+## Puzzle trainer
 
-**With anything else (two fields):** under the same setting, fill in:
+A **tactics trainer** built into the same board. Flip the header switch from **Analyze** to
+**Puzzles** and the whole workspace collapses to a calm, board-first solve layout: one big board,
+one clear prompt, and a slim rail.
 
-- **URL** — your server's base URL. The app appends `/v1/chat/completions` for you, so any of these
-  forms work: `http://localhost:11434` (Ollama), `http://localhost:1234/v1` (LM Studio),
-  `http://localhost:8080/v1` (llama.cpp), `http://localhost:4000` (a LiteLLM proxy).
-- **Model** — the model name that server should serve (e.g. `qwen2.5-coder`).
+![Puzzle mode: a tactics position with the Solve / Storm switch, the Tactics / From your games source toggle, a "train my weaknesses" filter, easier/harder controls, the daily-streak flame, and the AI coach explaining why the tempting captures fail](docs/screenshots/puzzle_img1_chess.png)
 
-Equivalently, set `CHESS_LOCAL_LLM_BASE_URL` and `CHESS_LOCAL_LLM_MODEL` (see the env-var table).
+- **Rated tactics with real Glicko-2.** Puzzles come from the CC0 **Lichess puzzle database**,
+  sliced into rating-banded, theme-stratified shards. Each solve or miss moves your rating with a
+  faithful **Glicko-2** update (the same system Lichess uses), and a quiet rating curve tracks your
+  progress. A per-user seed means two players of the same rating get different, non-repeating
+  streams from identical files.
+- **The AI coach teaches the pattern.** Press **✨ Explain why** and the coach names the motif and
+  walks the forced line, grounded in the puzzle's verified solution and its theme tags. On a miss it
+  first shows concretely **why your move failed** (the engine refutation), then teaches the winning
+  idea. This is the part a bare puzzle site can't do.
+- **"From your games" mistake puzzles.** A second source resurfaces positions where **you actually
+  blundered** in a past game as practice. These are engine-checked (any move that holds the eval is
+  accepted, so positional spots allow several answers), badged with the matchup and date, and carry
+  a **"replay in the full game"** link back to the review board. They stay **unrated** so your own
+  losses never pollute the Glicko score, and space themselves out Anki-style as you get them right.
+- **Train my weaknesses.** A toggle that biases puzzle selection toward the motifs your coaching
+  profile says you miss most (forks, back-rank, loose conversion…), closing the loop between the
+  games you played and the puzzles you drill.
+- **Storm (timed rush).** A **⚡ Storm** sub-mode: solve as many as you can before the clock runs
+  out, with a combo counter, bonus time for streaks, and a saved high score. Unrated by design, so
+  it never touches your Glicko rating.
+- **Flow-state extras.** A **daily streak** (consecutive days you've solved at least one), optional
+  **auto-advance** to the next puzzle after a solve, and green/yellow/red square-blink feedback.
+  All configurable under **⚙ Settings → Puzzles**.
 
-> **Notes.** Quality depends entirely on the local model: small models explain noticeably worse
-> than Claude, and an older or slower machine may answer slowly (local generation can take a while,
-> so the app waits patiently). The Stockfish analysis is always local and is unaffected by this
-> setting. The terminal MCP workflow still uses Claude; this option covers the in-browser chat and
-> the AI coach summary.
+Everything degrades gracefully: the first puzzle serves instantly from a small vendored offline
+baseline while the full set (~16 MB) downloads in the background; with no engine, only the static
+tactics track shows; with no `claude`/local model, you still solve, just without the written
+explanation. Puzzles are drivable from Claude Code too via the `mcp__chess__next_puzzle` /
+`mcp__chess__solve_puzzle` tools, which share the same session as the board.
 
 ---
 
@@ -351,80 +361,48 @@ time. This is best-effort and fully local: history can never break a review, and
 your machine (the chat is the only outbound call, and your profile is only attached to it when you
 opt in).
 
-- **What's saved.** `analyze_game` appends one compact JSON record per reviewed game to
-  `<DATA_DIR>/history/games.jsonl`. `DATA_DIR` defaults to a per-user app-data folder (macOS:
-  `~/Library/Application Support/Tintin AI Chess Analysis/data`) that both Claude Code **and** the
-  double-click app use, so they share one history/cache automatically. Re-analyzing the same game —
-  even at a deeper depth — supersedes the old record rather than duplicating it.
-- **Mistake motifs.** Each flagged mistake is tagged with cheap, engine-free heuristics in three
-  buckets: things you *did* (e.g. `hung_piece`, `pawn_grab`), things you *missed* (`missed_fork`,
-  `missed_mate`, `missed_capture`), and things you *allowed* (`allowed_fork`, `allowed_mate`,
-  `back_rank`), plus `time_trouble` when your clock was low (read from `[%clk]` PGN comments).
-- **Game mode awareness.** Each game is tagged with its time-format — **bullet / blitz / rapid /
-  classical / correspondence** (derived from the `TimeControl` header) — because what counts as a
-  mistake differs by mode: a blunder in a 1-minute bullet game is far more forgivable than in a
-  long classical one. The flagging thresholds **scale by mode** (blitz is the baseline; faster
-  modes are more lenient, slower modes stricter — on top of the per-skill scaling), the coaching
-  profile breaks your stats down **by mode**, and both the chat and terminal review judge a game
-  against its own mode's expectations.
-- **Coaching profile.** Records roll up into a **hybrid** profile: a `recent` sliding window (so
-  weaknesses you've fixed fade out) plus a `lifetime` view, with an "improving / slipping" trend.
-  Get it from the terminal with `mcp__chess__get_player_profile`, or let the board's chat use it.
-- **Personalized chat.** The **"Personalize AI coach with my history"** option in **⚙ Settings**
-  (on by default) attaches the profile to your chat questions so Claude can connect the position to
-  your recurring patterns. It's designed to stay subtle — Claude only brings up your history when it
-  genuinely sharpens the answer, not in every reply.
+- **What's saved.** One compact record per reviewed game, in a per-user app-data folder shared by
+  Claude Code and the app. Re-analyzing a game supersedes the old record rather than duplicating it.
+- **Mistake motifs.** Each flagged mistake is tagged with engine-free heuristics (hung pieces,
+  missed forks, back-rank, time trouble, …) that build up your profile.
+- **Game-mode aware.** Games are tagged bullet / blitz / rapid / classical, and the flagging
+  thresholds scale by mode and by your skill level, so a bullet blunder is judged more leniently
+  than a classical one.
+- **Coaching profile.** A hybrid of a `recent` sliding window (so fixed weaknesses fade) and a
+  `lifetime` view, with an "improving / slipping" trend. Available in the terminal via
+  `mcp__chess__get_player_profile`, or fed to the board's chat.
+- **Personalized chat.** The **"Personalize AI coach with my history"** setting (on by default) lets
+  Claude connect the position to your recurring patterns, subtly, only when it sharpens the answer.
 
 ### Who is "you"? (identity & aliases)
 
 History is keyed to a canonical player, not a username, so games across your Lichess and Chess.com
-accounts merge into one profile. Set `CHESS_USERNAME` to your main handle and list any other handles
-in `CHESS_ALIASES` (comma-separated, e.g. `"dpdemler, my_other_lichess"`); they all fold into one
-player and also drive `player="auto"` side detection. For multiple people sharing the install, a
-hand-maintained `<DATA_DIR>/identities.json` alias map takes precedence.
-
-To turn history off entirely, set `CHESS_HISTORY=0`.
+accounts merge into one profile. Set your handles in ⚙ Settings (or `CHESS_USERNAME` / `CHESS_ALIASES`)
+and they all fold into one player, which also drives `player="auto"` side detection. To turn history
+off entirely, set `CHESS_HISTORY=0`.
 
 ---
 
 ## Configuration
 
-### In-app Settings panel (no file editing)
+Most people never need to configure anything. The common options live in the in-app **⚙ Settings**
+panel (no file editing): your **username** and other accounts, an optional **Lichess token**, your
+**skill level**, and, under *Advanced*, the **Stockfish path**, a **local AI model**, and the puzzle
+toggles. Saving applies immediately, to both the standalone app and the Claude Code workflow (they
+share one `settings.json`).
 
-Click **⚙ Settings** in the board header to change the common options without touching any files —
-your **username**, **other accounts** (aliases that fold into one profile), an optional **Lichess
-token**, and, under *Advanced*, the profile windows, the **Stockfish path**, and an optional
-**local AI model** (run the chat + coach on your own machine — see [above](#run-the-ai-on-a-local-model-instead-of-claude)).
-Saving writes `<DATA_DIR>/settings.json` and applies immediately.
+Everything is also settable via environment variables (`settings.json` wins where both are set). The
+handful worth knowing:
 
-**Precedence: `settings.json` (the panel) overrides the environment (`.mcp.json`), which overrides
-the built-in defaults.** Both the standalone app *and* the MCP server read `settings.json` at
-startup, so a change you make in the app also takes effect for the Claude Code workflow — your
-username is unified across both. (You can still set everything via environment variables below;
-the panel is just the no-files path. The auto-detected aliases from a bulk Chess.com import live in
-`identities.json` and are merged on top.)
+| Variable | Purpose |
+| --- | --- |
+| `STOCKFISH_PATH` | Force a specific Stockfish binary (otherwise auto-detected). |
+| `CHESS_USERNAME` / `CHESS_ALIASES` | Your handle(s), for side-detection and merging history across accounts. |
+| `CHESS_LOCAL_LLM_BASE_URL` / `CHESS_LOCAL_LLM_MODEL` | Run the AI on a [local model](#run-the-ai-on-a-local-model-instead-of-claude) instead of Claude. |
+| `CHESS_HISTORY=0` / `CHESS_PUZZLES=0` | Turn off game history, or the puzzle trainer. |
 
-### Environment variables
-
-All settable via environment variables too (sensible defaults shown); `settings.json` wins where set:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `STOCKFISH_PATH` | *(auto-detected)* | Path to the Stockfish binary. Auto-detected from your `PATH` and common install locations; only set this for a custom build or an unusual location. |
-| `CHESS_USERNAME` | `JohnDoe` | Used by `player="auto"` to pick your side from PGN headers. |
-| `CHESS_DEFAULT_DEPTH` | `18` | Depth for on-demand single-position analysis. |
-| `CHESS_SWEEP_DEPTH` | `16` | Depth for the full-game sweep (keeps long games fast). |
-| `CHESS_ENGINE_POOL_SIZE` | `2` | Reused Stockfish processes. |
-| `CHESS_WEB_HOST` / `CHESS_WEB_PORT` | `127.0.0.1` / `8765` | Web board address. |
-| `CHESS_WEB_AUTOSTART` | `1` | Set `0` to stop the MCP server from launching the board. |
-| `CHESS_ALIASES` | *(empty)* | Your other handles (comma-separated) that fold into `CHESS_USERNAME` for history + auto side-detection. |
-| `CHESS_HISTORY` | `1` | Set `0` to disable saving game history & the coaching profile. |
-| `CHESS_DATA_DIR` | *(per-user app-data dir)* | Where history (`games.jsonl`, profile, `identities.json`) is stored. Defaults to a user-level folder shared by Claude Code and the app (macOS: `~/Library/Application Support/Tintin AI Chess Analysis/data`); set `<repo>/.chess-review` to keep it in the checkout. |
-| `CHESS_PROFILE_RECENT` | `100` | Games in the profile's `recent` sliding window. |
-| `CHESS_PROFILE_LIFETIME` | `all` | Lifetime view span; positive N = last N games, `0` = omit it (pure sliding window). |
-| `CHESS_SESSION_TTL` | `86400` | Seconds of inactivity before the server self-terminates (`0` disables the watchdog). |
-| `CHESS_LOCAL_LLM_BASE_URL` | *(empty)* | Run the chat + AI coach on a local model instead of Claude (no `claude` CLI needed): the base URL of a server with an OpenAI-compatible `/v1/chat/completions` endpoint (Ollama `http://localhost:11434`, LM Studio `http://localhost:1234/v1`, llama.cpp, LiteLLM proxy). Blank = use the Claude subscription. |
-| `CHESS_LOCAL_LLM_MODEL` | *(empty)* | The model name the local server should serve (e.g. `qwen2.5-coder`). Required when the base URL above is set. |
+The full list (analysis depths, ports, cache sizes, profile windows, data directory, puzzle knobs, …)
+lives in `server/config.py`.
 
 ---
 
@@ -447,11 +425,12 @@ spends Agent-SDK credit. It also runs on every push / PR via GitHub Actions (`.g
 server/
   config.py          # all tunables (env-driven)
   core/              # engine pool, evaluation math, game analysis, session, engine_line,
-                     #   history (game records + motifs + coaching profile), lifecycle watchdog
+                     #   history (game records + motifs + coaching profile), lifecycle watchdog,
+                     #   puzzles (Glicko-2 rating, shard fetch, mistake puzzles, storm)
   mcp_server.py      # MCP tools; boots the web server in a background thread
-  claude_bridge.py   # headless `claude -p` for the chat (subscription)
-  web/               # FastAPI app + board/chat routes + uvicorn runner
-frontend/            # no-build single page (index.html + main.js + styles.css, CDN chessground)
+  claude_bridge.py   # headless `claude -p` for the chat + puzzle coach (subscription)
+  web/               # FastAPI app + board/chat/puzzle routes + uvicorn runner
+frontend/            # no-build single page (index.html + main.js + styles.css, vendored chessground)
 scripts/             # run_web.py (standalone board), validation/smoke scripts
 example_pgns/        # sample games (game1.pgn White, game2.pgn Black)
 tests/               # pytest suite
@@ -461,35 +440,13 @@ tests/               # pytest suite
 
 ## Limitations / notes
 
-- The web board pulls chessground & chess.js from a CDN at runtime (no build step), so it needs
-  internet on first load.
+- The web board is **no-build and vendored** (chessground & chess.js ship with it), so once set up
+  it renders fully offline; only first-time setup needs the network.
 - In-browser chat requires the `claude` CLI installed and logged in, and draws from your Agent SDK
   credit; the terminal path is the zero-extra-cost fallback. (Or point it at a
   [local model](#run-the-ai-on-a-local-model-instead-of-claude) to skip Claude entirely.)
 - Engine analysis is fixed-depth and cached for reproducibility, so evals can differ slightly from
   Lichess near classification boundaries. That's expected.
-
----
-
-## Your data: what stays local, what leaves your machine
-
-This tool is **local-first**, but it is not fully offline, so here's the honest breakdown:
-
-- **Stays on your machine.** The Stockfish engine review (the mistake list, eval bar, win graph,
-  arrows, and the templated move comments) is **100% local**. Your analyzed-game history and
-  coaching profile are stored only under your app-data folder (see [Configuration](#configuration));
-  nothing is uploaded.
-- **The web board is loopback-only.** The board listens on `127.0.0.1` and is guarded against
-  cross-site / DNS-rebinding requests, so other websites you visit can't reach it, read your game
-  data, or spend your Claude quota.
-- **The AI coach (Snowie) sends data to Anthropic.** The in-browser chat and AI-coach summaries run
-  through the headless `claude` CLI **under your own Claude subscription**. To answer, they send the
-  current position (FEN) and pre-computed engine facts to Claude. They also include a summary of
-  your recurring-mistake profile, but **only if** you enable *"Personalize AI coach with my history"*
-  in ⚙ Settings (off by default for new users; opt-in). No API key, no per-token billing, and the
-  engine review works without `claude` at all if you'd rather keep everything local.
-- **Lichess import is optional.** Fetching your games calls the public Lichess API with the username
-  (and optional token) you provide. Skip it and paste PGNs instead, and nothing is sent to Lichess.
 
 ---
 
@@ -534,9 +491,15 @@ restart the app (or reload Claude Code) and the AI coach will work. Full details
 
 ## License & credits
 
+Created and developed by **[Dmitri Demler](https://github.com/DimaPdemler)**.
+
 This project is licensed under the **MIT License**. See [`LICENSE`](LICENSE).
 
-It stands on the shoulders of others, with thanks:
+With thanks to contributors:
+
+- **[riskydissonance](https://github.com/riskydissonance)** and **[Leland Olney](https://github.com/JohnnyPrimus)**: Chess.com API integration.
+
+It also stands on the shoulders of others:
 
 - **[Stockfish](https://stockfishchess.org/)**: the chess engine doing the actual analysis.
   Stockfish is licensed under the **GNU GPL v3**; this project invokes it as a separate binary and
@@ -544,7 +507,8 @@ It stands on the shoulders of others, with thanks:
   when no system install is found.
 - **[python-chess](https://python-chess.readthedocs.io/)** (GPL v3): PGN parsing, move
   generation, and board logic.
-- **[chessground](https://github.com/lichess-org/chessground)** & **[chess.js](https://github.com/jhlywa/chess.js)**: the interactive board UI (loaded from a CDN).
+- **[chessground](https://github.com/lichess-org/chessground)** & **[chess.js](https://github.com/jhlywa/chess.js)**: the interactive board UI (vendored under `frontend/vendor/`, no CDN).
+- **[Lichess puzzle database](https://database.lichess.org/#puzzles)** (CC0): the tactics puzzles behind the trainer.
 - **Opening names** come from the **[Lichess `chess-openings`](https://github.com/lichess-org/chess-openings)** ECO dataset (CC0), vendored in `server/data/eco/`.
 - **[FastAPI](https://fastapi.tiangolo.com/)**, **[uvicorn](https://www.uvicorn.org/)**,
   **[Pydantic](https://docs.pydantic.dev/)**, and the **[MCP](https://modelcontextprotocol.io/)**

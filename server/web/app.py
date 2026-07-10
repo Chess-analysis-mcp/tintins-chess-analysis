@@ -17,6 +17,7 @@ from server.core import lifecycle
 from server.web.routes_board import router as board_router
 from server.web.routes_chat import router as chat_router
 from server.web.routes_history import router as history_router
+from server.web.routes_puzzles import router as puzzles_router
 from server.web.routes_settings import router as settings_router
 from server.web.routes_updates import router as updates_router
 
@@ -142,6 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(history_router, prefix="/api")
     app.include_router(settings_router, prefix="/api")
     app.include_router(updates_router, prefix="/api")
+    app.include_router(puzzles_router, prefix="/api")
 
     # Mount the raw frontend last so /api/* routes win. html=True serves index.html at /.
     if _FRONTEND_DIR is not None:

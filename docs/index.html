@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tintin's AI Chess Analysis: your mistakes, explained in words</title>
-  <meta name="description" content="Analyze a chess game with Stockfish, find where you went wrong, and, unlike a bare engine, get every mistake explained in plain words by Snowie, your AI coach, grounded in real engine lines." />
+  <meta name="description" content="Analyze a chess game with Stockfish, find where you went wrong, and, unlike a bare engine, get every mistake explained in plain words by Snowie, your AI coach, grounded in real engine lines. Plus a built-in puzzle trainer with real ratings and a coach that teaches each solution." />
   <!-- Favicon reuses the app's icon (one level up from docs/). -->
   <link rel="icon" type="image/png" href="../frontend/favicon-32.png" />
   <link rel="icon" type="image/svg+xml" href="../frontend/favicon.svg" />
@@ -26,7 +26,8 @@
         Ask <strong>why</strong> a move was a mistake, or <strong>what</strong> you should have played
         instead, and get a straight answer in plain words. <strong>Snowie</strong>, your AI coach, is
         built on a full Stockfish review of your game, so every explanation is grounded in the real
-        lines the engine saw rather than guessed.
+        lines the engine saw rather than guessed. Then sharpen up in the built-in
+        <strong>puzzle trainer</strong>, where the same coach teaches the pattern behind every solution.
       </p>
       <div class="buttons">
         <a class="btn primary" href="https://github.com/Chess-analysis-mcp/tintins-chess-analysis/releases/latest">Download for Mac</a>
@@ -124,12 +125,53 @@
     </div>
   </section>
 
+  <!-- ===================== PUZZLE TRAINER ===================== -->
+  <section id="puzzles">
+    <div class="wrap">
+      <h2>Tactics that come with a coach</h2>
+      <p class="lead">
+        Most puzzle trainers just mark you right or wrong. This one gives you a real rating
+        that moves as you solve, and explains the idea behind every solution, the same way it
+        explains your games.
+      </p>
+
+      <!-- PUZZLE SCREENSHOT: docs/screenshots/puzzle_img1_chess.png
+           The puzzle mode: board on the left, and a slim rail with the Solve / Storm switch, the
+           Tactics / From your games source toggle, "train my weaknesses", easier/harder, the daily
+           streak flame, and the AI coach explaining why the tempting captures fail. -->
+      <figure>
+        <img class="shot" src="screenshots/puzzle_img1_chess.png"
+             alt="Puzzle mode: a tactics position with the Solve / Storm switch, a Tactics / From your games source toggle, a 'train my weaknesses' filter, easier/harder controls, a daily-streak flame, and the AI coach explaining why each tempting capture fails." />
+        <figcaption>Puzzle mode: one board, one clear prompt, and a coach that teaches the motif, not just the move.</figcaption>
+      </figure>
+
+      <div class="features" style="margin-top: 36px;">
+        <div class="feature">
+          <span class="icon">🧩</span>
+          <h3>Rated tactics</h3>
+          <p>Puzzles from the CC0 Lichess database, with a real rating that moves on every solve or miss, plus a "train my weaknesses" filter tuned to your profile.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">✨</span>
+          <h3>The coach explains why</h3>
+          <p>Press "Explain why" and the coach names the motif and walks the line. Miss it, and it first shows why your move failed, then teaches the win.</p>
+        </div>
+        <div class="feature">
+          <span class="icon">🔁</span>
+          <h3>Your own blunders</h3>
+          <p>A "From your games" source turns positions you actually botched into engine-checked practice puzzles, with a link back to the full game.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ===================== BRING IN YOUR GAMES ===================== -->
   <section id="screenshots">
     <div class="wrap">
       <h2>Bring in your games</h2>
-      <p class="lead">Pull games straight from Lichess, paste a PGN from anywhere, or bulk-upload a
-        Chess.com export, then walk through them move by move.</p>
+      <p class="lead">Pull your games straight from <strong>Lichess</strong> or <strong>Chess.com</strong>
+        by username, or paste any PGN from anywhere, then walk through them move by move. Set your
+        Chess.com username once and new games sync in automatically.</p>
     </div>
   </section>
 
@@ -164,7 +206,7 @@
             <strong>Applications</strong>, and open it (first time, unsigned: double-click, then
             <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>). It installs
             everything itself — no Homebrew or Python needed — then opens the board; paste any PGN, or
-            enter a Lichess username to load your recent games.
+            enter a Lichess or Chess.com username to load your recent games.
           </p>
           <p class="opt-readme"><a href="https://github.com/Chess-analysis-mcp/tintins-chess-analysis#review-mac">Full Mac steps in the README →</a></p>
         </div>
@@ -173,7 +215,7 @@
           <p>
             Double-click <strong>Tintin's AI Chess Analysis.bat</strong> (Windows) or
             <strong>Tintin's AI Chess Analysis.command</strong> (Linux). The first launch installs
-            everything, then opens the board — paste any PGN, or load your recent Lichess games.
+            everything, then opens the board — paste any PGN, or load your recent Lichess or Chess.com games.
           </p>
           <p class="opt-readme"><a href="https://github.com/Chess-analysis-mcp/tintins-chess-analysis#review-windows-linux">Full Windows / Linux steps in the README →</a></p>
         </div>

@@ -166,9 +166,9 @@ MATE_SCORE_CP: int = 10000
 # CHESS_USERNAME), suppressing the first-run prompt.
 #
 # LICHESS_USERNAME is specifically the Lichess handle, which is what drives the "open my latest game"
-# autoload — chess.com has no public game-fetch API, so only a Lichess handle is autoloadable.
-# CHESSCOM_USERNAME is the chess.com handle; it folds into USERNAME's profile as a chesscom-pinned
-# alias. These are derived together by `_compose_identity` (called from env at import and re-applied
+# autoload. CHESSCOM_USERNAME is the chess.com handle; it drives the chess.com game fetch +
+# auto-sync (server.core.chesscom) and folds into USERNAME's profile as a chesscom-pinned alias.
+# These are derived together by `_compose_identity` (called from env at import and re-applied
 # from settings.json), so a chess.com-only user (no Lichess handle) is still canonically identified
 # by their chess.com name.
 USERNAME: str = ""
@@ -279,6 +279,13 @@ def _parse_int(name: str, default: int) -> int:
         return default
 
 
+def _parse_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
 # Coaching profile is a HYBRID of two views so it adapts as a player improves:
 #   - "recent form" = the last CHESS_PROFILE_RECENT games (a sliding window; <=0 means all games).
 #   - "lifetime"    = CHESS_PROFILE_LIFETIME: unset/"all" -> all history (default); a positive N ->
@@ -329,6 +336,16 @@ LICHESS_DEFAULT_MAX: int = int(os.environ.get("CHESS_LICHESS_MAX", "3"))
 # HTTP timeout (seconds) for Lichess requests.
 LICHESS_TIMEOUT: float = float(os.environ.get("CHESS_LICHESS_TIMEOUT", "20"))
 
+# Chess.com game import (server.core.chesscom). Uses the public published-data API (no auth).
+# CHESSCOM_API_BASE is overridable for testing. The auto-sync (POST /api/sync/chesscom) checks the
+# configured user's newest CHESSCOM_SYNC_MAX games on app launch and analyses any not yet in
+# history; CHESS_CHESSCOM_SYNC=0 disables the automatic sync (manual fetch still works). Both the
+# on/off flag and the count are user-editable in the Settings panel (settings.json wins over env).
+CHESSCOM_API_BASE: str = os.environ.get("CHESS_CHESSCOM_API_BASE", "https://api.chess.com").rstrip("/")
+CHESSCOM_TIMEOUT: float = float(os.environ.get("CHESS_CHESSCOM_TIMEOUT", "20"))
+CHESSCOM_SYNC_ENABLED: bool = os.environ.get("CHESS_CHESSCOM_SYNC", "1") != "0"
+CHESSCOM_SYNC_MAX: int = int(os.environ.get("CHESS_CHESSCOM_SYNC_MAX", "5"))
+
 # Endgame tablebase (server.core.tablebase). For <=7-man positions the in-browser chat / AI coach
 # facts include the EXACT theoretical result (win/draw/loss + DTZ/DTM) from the public Lichess
 # tablebase API, so endgame advice is precise instead of trusting a depth-limited eval. Best-effort
@@ -365,6 +382,56 @@ APP_MODE: bool = os.environ.get("CHESS_APP_MODE", "0") == "1"
 # subscription path (headless `claude -p`).
 LOCAL_LLM_BASE_URL: str = os.environ.get("CHESS_LOCAL_LLM_BASE_URL", "").strip()
 LOCAL_LLM_MODEL: str = os.environ.get("CHESS_LOCAL_LLM_MODEL", "").strip()
+
+# --- Puzzle mode (server.core.puzzles / puzzle_rating) ------------------------------------------
+# A tactical-trainer built on the same substrate (board, engine, claude_bridge, DATA_DIR). Puzzles
+# ship as small compressed JSONL: a committed offline baseline (server/data/puzzles/baseline.jsonl.gz,
+# >=100/band) plus dense per-band shards downloaded on demand (P3) from a SEPARATE data repo so the
+# app's Releases tab stays app-versions-only. Per-user state (rating, seen_ids, streak) lives in
+# <DATA_DIR>/puzzles/state.json. CHESS_PUZZLES=0 hides the feature entirely.
+PUZZLES_ENABLED: bool = os.environ.get("CHESS_PUZZLES", "1") != "0"
+# Dedicated puzzle-DATA repo (NOT the app repo) hosting the dense band shards as release assets.
+PUZZLE_SHARD_REPO: str = os.environ.get(
+    "CHESS_PUZZLE_SHARD_REPO", "Chess-analysis-mcp/tintins-chess-puzzles"
+).strip()
+PUZZLE_SHARD_TAG: str = os.environ.get("CHESS_PUZZLE_SHARD_TAG", "puzzles-v1").strip()
+# Allow the background shard fetch (P3). 0 = baseline-only / fully offline. On first puzzle use the
+# whole set (~16 MB / 23 bands) downloads in the background and is kept — no windowing, no LRU.
+PUZZLE_DOWNLOAD: bool = os.environ.get("CHESS_PUZZLE_DOWNLOAD", "1") != "0"
+# How long (seconds) a cached puzzle manifest.json is trusted before re-fetching from the data-repo
+# release (P3), mirroring UPDATE_CHECK_INTERVAL. Best-effort; a failed refresh keeps the stale copy.
+PUZZLE_MANIFEST_INTERVAL: int = _parse_int("CHESS_PUZZLE_MANIFEST_INTERVAL", 6 * 3600)
+# Occasionally mix "from your own games" mistake puzzles (P3.5) into the main tactic stream. Default
+# ON: a small fraction of tactics are replaced by a position from one of your own games, so the
+# trainer surfaces your real weaknesses without you having to switch to the "From your games" source.
+# A Settings toggle turns it off. Needs the engine (mistake puzzles validate live) + analysed games.
+PUZZLE_MISTAKE_INTERLEAVE: bool = os.environ.get("CHESS_PUZZLE_MISTAKE_INTERLEAVE", "1") != "0"
+# Probability (0..1) that a curated-tactic request is swapped for an own-game mistake puzzle when
+# interleave is on. 0.2 = ~1 in 5, occasional enough not to derail a tactics session.
+PUZZLE_MISTAKE_INTERLEAVE_PROB: float = _parse_float("CHESS_PUZZLE_MISTAKE_INTERLEAVE_PROB", 0.2)
+# Only let an attempt move the Glicko rating when the puzzle's own RatingDeviation is below this
+# (mirrors Lichess: well-established puzzles only). Higher-RD puzzles still play, but unrated.
+# Kept generous: Glicko already down-weights a high-RD puzzle in the update, so a low gate here
+# needlessly leaves a big slice of perfectly good puzzles unrated (at 90, ~1/3 of the baseline).
+PUZZLE_MAX_RD: int = _parse_int("CHESS_PUZZLE_MAX_RD", 130)
+# Show the solve/miss board animations (square flash, ripple ring, confetti, shake). Off = the
+# result is conveyed by the verdict text colour alone (green / orange / red). Settings toggle.
+PUZZLE_ANIMATIONS: bool = os.environ.get("CHESS_PUZZLE_ANIMATIONS", "1") != "0"
+# Auto-load the next puzzle a beat after a solve (flow-state grinding) instead of waiting for the
+# "Next puzzle" button. The frontend still holds long enough for the solve animations to finish
+# before advancing. Only fires on a solve, never after "Show solution". Settings toggle; OFF by
+# default (opt in via ⚙ Settings) so a solve leaves you on the board until you press "Next puzzle".
+PUZZLE_AUTO_ADVANCE: bool = os.environ.get("CHESS_PUZZLE_AUTO_ADVANCE", "0") != "0"
+# "Puzzle storm" timed rush (P4): solve as many as you can before the clock runs out. Base clock in
+# seconds; a combo run grants a small time bonus and a wrong move costs time (see puzzle_storm.py).
+# Unrated by design (fast, ramping difficulty) - it only tracks a best-score highscore in state.json.
+PUZZLE_STORM_DURATION: int = _parse_int("CHESS_PUZZLE_STORM_DURATION", 180)
+
+
+def _puzzle_dir() -> str:
+    """Per-user puzzle state + downloaded shards (under DATA_DIR, shared by every entry point)."""
+    return os.path.join(DATA_DIR, "puzzles")
+
 
 # --- Auto-update (server.core.updates) ----------------------------------------------------------
 # The app version (canonical = pyproject.toml). Surfaced via /api/app-config and compared against

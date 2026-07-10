@@ -71,10 +71,67 @@ def _candidates() -> list[str]:
     return []
 
 
+def _progress_band() -> tuple[str, int, int] | None:
+    """Where to report download progress: (file, start_pct, end_pct), or None if not requested.
+
+    The installer sets CHESS_INSTALL_PROGRESS (the splash's progress.js) and, optionally,
+    CHESS_INSTALL_PROGRESS_BAND="start,end" — the percentage slice this download owns on the bar.
+    """
+    path = os.environ.get("CHESS_INSTALL_PROGRESS")
+    if not path:
+        return None
+    band = os.environ.get("CHESS_INSTALL_PROGRESS_BAND", "72,92")
+    try:
+        start_s, end_s = band.split(",")
+        return path, int(start_s), int(end_s)
+    except Exception:  # noqa: BLE001 - a malformed band just disables progress reporting
+        return None
+
+
+def _write_progress(path: str, pct: int, step: str) -> None:
+    """Atomically write the splash's progress.js (tmp+rename) so it never reads a partial file."""
+    step = step.replace("\\", "\\\\").replace('"', '\\"')
+    line = (
+        "window.__setInstallProgress && window.__setInstallProgress("
+        f'{{ pct: {pct}, step: "{step}" }});\n'
+    )
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(line)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 def _download(url: str, dest_file: str) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": "tintins-chess-analysis"})
+    band = _progress_band()
     with urllib.request.urlopen(req, timeout=180) as resp, open(dest_file, "wb") as out:
-        shutil.copyfileobj(resp, out)
+        if band is None:
+            shutil.copyfileobj(resp, out)
+            return
+        # Stream in chunks so we can map bytes-downloaded onto the splash's progress bar. The band
+        # is the slice of the overall bar this engine download owns; we only rewrite progress.js when
+        # the whole-number percent changes, to avoid hammering the disk.
+        path, lo, hi = band
+        try:
+            total = int(resp.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        got = 0
+        last = -1
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            out.write(chunk)
+            got += len(chunk)
+            if total > 0:
+                pct = lo + int((hi - lo) * got / total)
+                if pct != last:
+                    last = pct
+                    _write_progress(path, pct, "Downloading the chess engine (Stockfish)…")
 
 
 def _pick_member(names: list[str], asset: str, want_exe: bool) -> str | None:

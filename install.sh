@@ -16,13 +16,28 @@ ok()   { printf '\033[32m✓\033[0m %s\n' "$1"; }
 info() { printf '\033[34m›\033[0m %s\n' "$1"; }
 warn() { printf '\033[33m!\033[0m %s\n' "$1"; }
 
+# Report install progress to the browser loading splash. The launcher points CHESS_INSTALL_PROGRESS
+# at a `progress.js` sitting next to the splash's loading.html; the splash re-loads it as a <script>
+# and moves its bar. Unset (a plain terminal `./install.sh`) → a no-op. Written atomically (tmp+mv)
+# so the splash never reads a half-written file. See frontend/loading.html for the reader side.
+progress() {
+  [ -n "${CHESS_INSTALL_PROGRESS:-}" ] || return 0
+  local pct="$1" step="${2:-}"
+  step="${step//\\/\\\\}"; step="${step//\"/\\\"}"   # JS-string-safe
+  { printf 'window.__setInstallProgress && window.__setInstallProgress({ pct: %s, step: "%s" });\n' \
+      "$pct" "$step" > "$CHESS_INSTALL_PROGRESS.tmp" \
+    && mv -f "$CHESS_INSTALL_PROGRESS.tmp" "$CHESS_INSTALL_PROGRESS"; } 2>/dev/null || true
+}
+
 bold "Chess Review MCP — installer"
 echo
+progress 5 "Preparing setup…"
 
 # 1) uv — self-contained, no pre-existing Python needed. -------------------------------
 if command -v uv >/dev/null 2>&1; then
   ok "uv already installed ($(uv --version))"
 else
+  progress 8 "Installing the package manager (uv)…"
   info "Installing uv (manages Python + dependencies for this project)…"
   curl -LsSf https://astral.sh/uv/install.sh | sh
   # uv installs to ~/.local/bin (or ~/.cargo/bin); make it visible for the rest of this run.
@@ -33,11 +48,14 @@ fi
 
 # 2) Build the project environment (downloads a compatible Python if needed). ----------
 # Built before Stockfish so the download fallback below can run via `uv run python`.
+progress 25 "Downloading Python & dependencies (largest step)…"
 info "Setting up the Python environment with uv (first run downloads Python + deps)…"
 uv sync
 ok "Environment ready"
+progress 70 "Environment ready"
 
 # 3) Stockfish — try the OS package manager, else download the official static build. ---
+progress 72 "Setting up the chess engine (Stockfish)…"
 if command -v stockfish >/dev/null 2>&1; then
   ok "Stockfish already installed ($(command -v stockfish))"
 else
@@ -57,7 +75,8 @@ else
     # No package manager, or it failed / didn't put stockfish on PATH → download the official
     # static build into the app's managed engine dir (auto-detected; no sudo, no PATH changes).
     info "Downloading the official Stockfish engine (no package manager needed)…"
-    if SF_PATH="$(uv run python scripts/download_stockfish.py)"; then
+    # The downloader reports real byte-percent into this band, so the splash bar actually moves.
+    if SF_PATH="$(CHESS_INSTALL_PROGRESS_BAND=72,92 uv run python scripts/download_stockfish.py)"; then
       ok "Stockfish downloaded ($SF_PATH)"
     else
       warn "Couldn't install or download Stockfish automatically."
@@ -70,24 +89,37 @@ fi
 # 4) Record your chess username (optional). --------------------------------------------
 # Saved to the user-level settings.json (shared by the app + MCP), NOT a tracked file — so the
 # working tree stays clean and the launcher's one-click update can fast-forward without conflicts.
+#
+# Skipped entirely when non-interactive: the double-click launcher runs this installer with
+# CHESS_NONINTERACTIVE=1 (and the user is watching the BROWSER splash, not this terminal), so a
+# blocking `read` here would hang first-run forever — the server never starts, the splash never
+# redirects, and the app looks frozen. The browser's own first-run prompt (#firstrun) collects the
+# username instead. Also skip if stdin isn't a TTY (piped install), as a belt-and-suspenders guard.
+progress 94 "Finishing setup…"
 echo
-info "Your Lichess/Chess.com username lets the tool tell which side is 'you' in a game."
-read -r -p "Username (press Enter to skip): " CHESS_USER || CHESS_USER=""
-if [[ -n "${CHESS_USER}" ]]; then
-  uv run python - "$CHESS_USER" <<'PY'
+if [ -n "${CHESS_NONINTERACTIVE:-}" ] || [ ! -t 0 ]; then
+  info "Set your Lichess/Chess.com username on the app's first-run screen (or in ⚙ Settings)."
+else
+  info "Your Lichess/Chess.com username lets the tool tell which side is 'you' in a game."
+  read -r -p "Username (press Enter to skip): " CHESS_USER || CHESS_USER=""
+  if [[ -n "${CHESS_USER}" ]]; then
+    uv run python - "$CHESS_USER" <<'PY'
 import sys
 from server.core import settings
 settings.update({"username": sys.argv[1]})
 PY
-  ok "Saved username"
-else
-  warn "Skipped — set it later in the app's ⚙ Settings panel if you want auto side-detection."
+    ok "Saved username"
+  else
+    warn "Skipped — set it later in the app's ⚙ Settings panel if you want auto side-detection."
+  fi
 fi
 
 # 5) Self-check. -----------------------------------------------------------------------
+progress 97 "Almost ready…"
 echo
 uv run python -m server.doctor || true
 
+progress 98 "Starting the board…"
 echo
 bold "Done."
 echo "Easiest: double-click \"Tintin's AI Chess Analysis.command\" to open the board with your latest Lichess game."

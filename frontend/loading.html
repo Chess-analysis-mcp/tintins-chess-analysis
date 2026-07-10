@@ -32,6 +32,26 @@
     .manual { margin-top: 18px; display: none; }
     a { color: var(--accent); font-weight: 600; text-decoration: none; }
     a:hover { text-decoration: underline; }
+
+    /* Progress bar — hidden until the installer reports its first milestone (a warm start has no
+       install to report, so the plain spinner + auto-redirect is all that shows). */
+    .progress { display: none; margin: 4px 0 14px; }
+    .progress.show { display: block; }
+    .bar {
+      height: 9px; border-radius: 6px; overflow: hidden;
+      background: rgba(255, 255, 255, 0.10);
+    }
+    .fill {
+      height: 100%; width: 0%; border-radius: 6px;
+      background: var(--accent);
+      transition: width 0.4s ease;
+    }
+    .plabel {
+      display: flex; justify-content: space-between; gap: 12px;
+      margin: 9px 2px 0; font-size: 12.5px; color: var(--bright);
+    }
+    .pstep { text-align: left; }
+    .ppct { color: #8a877f; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -39,6 +59,15 @@
     <div class="spinner" aria-hidden="true"></div>
     <h1>Tintin's AI Chess Analysis</h1>
     <p id="msg">Setting things up…</p>
+
+    <div class="progress" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <div class="plabel">
+        <span class="pstep" id="pstep">Preparing…</span>
+        <span class="ppct" id="ppct"></span>
+      </div>
+    </div>
+
     <p class="muted">The first launch downloads the chess engine and a few components
       (about a minute or two on a normal connection). This only happens once — the app opens
       here automatically when it's ready.</p>
@@ -60,21 +89,66 @@
     const target = resolveTarget();
     document.getElementById("manual-link").href = target;
 
+    // ---- Install progress -----------------------------------------------------------------
+    // The installer (install.sh / install.ps1 / the .app launcher) writes a sibling `progress.js`
+    // that calls window.__setInstallProgress({pct, step}) as it advances. We can't fetch() a local
+    // file from a file:// page (browsers block XHR/fetch to file://), but *re-inserting a <script>
+    // element* pointing at a sibling file:// URL re-reads it from disk — so we poll by re-injecting
+    // the tag. The bar only appears once a real milestone arrives; a warm start never writes one and
+    // just rides the redirect poll below. Progress is monotonic, so a stale read is harmless.
+    let lastPct = 0;
+    const progressEl = document.getElementById("progress");
+    const fillEl = document.getElementById("fill");
+    const pctEl = document.getElementById("ppct");
+    const stepEl = document.getElementById("pstep");
+    window.__setInstallProgress = function (info) {
+      if (!info || done) return;
+      progressEl.classList.add("show");
+      if (typeof info.pct === "number" && isFinite(info.pct)) {
+        // Clamp below 100 until the server actually answers, and never go backwards.
+        const pct = Math.max(lastPct, Math.min(97, Math.round(info.pct)));
+        lastPct = pct;
+        fillEl.style.width = pct + "%";
+        pctEl.textContent = pct + "%";
+        progressEl.setAttribute("aria-valuenow", String(pct));
+      }
+      if (info.step) stepEl.textContent = String(info.step);
+    };
+
+    function pollProgress() {
+      if (done) return;
+      const s = document.createElement("script");
+      // Sibling of this page (the launcher copies loading.html + progress.js into one writable dir).
+      s.src = "progress.js";
+      s.onload = s.onerror = function () { s.remove(); };
+      document.body.appendChild(s);
+      setTimeout(pollProgress, 700);
+    }
+
+    // ---- Board readiness ------------------------------------------------------------------
     let tries = 0;
+    let done = false;
     async function poll() {
+      if (done) return;
       tries++;
       try {
         // no-cors: we can't read the body cross-origin, but a *successful* connection (opaque
         // response) means the server is listening. Connection-refused rejects → keep waiting.
         await fetch(target + "/api/app-config", { mode: "no-cors", cache: "no-store" });
+        done = true;
+        progressEl.classList.add("show");
+        fillEl.style.width = "100%";
+        pctEl.textContent = "100%";
+        stepEl.textContent = "Ready";
         document.getElementById("msg").textContent = "Ready — opening the board…";
-        location.replace(target);
+        setTimeout(function () { location.replace(target); }, 150);
         return;
       } catch (_) {}
       if (tries === 30) document.getElementById("manual").style.display = "block"; // ~1 min
       if (tries === 75) document.getElementById("slow").style.display = "block";   // ~2.5 min
       setTimeout(poll, 2000);
     }
+    pollProgress();
     poll();
   </script>
 </body>

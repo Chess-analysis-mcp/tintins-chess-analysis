@@ -142,6 +142,7 @@ def _run_batch(
                     _state.update(done=done, total=total, eta_seconds=eta)
 
         sess = analysis_cache.load(pgn, side)  # re-uploaded games skip the sweep entirely
+        was_cached = sess is not None
         if sess is None:
             try:
                 sess = _analyze_game(pgn, player=side, on_progress=_progress)
@@ -157,7 +158,12 @@ def _run_batch(
             if not first_set:
                 session_mod.set_session(sess)  # show the first analysed game on the board
                 first_set = True
-        if config.HISTORY_ENABLED:
+        # A cache hit means the game is already in history (it was recorded on its first
+        # analysis); re-recording it here would append a duplicate line to games.jsonl on every
+        # re-sync/re-upload. Readers dedupe, so counts stay correct either way — this just keeps
+        # the append-only log from bloating. Matches the single-game `start()` path, which also
+        # skips recording on a cache hit.
+        if config.HISTORY_ENABLED and not was_cached:
             try:
                 history.record_game(sess)
             except Exception:  # pragma: no cover - history is best-effort

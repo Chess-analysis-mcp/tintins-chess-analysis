@@ -1,6 +1,6 @@
 [project]
 name = "chess-review-mcp"
-version = "1.16.0"
+version = "2.0.0"
 description = "Local chess review tool: PGN -> Stockfish analysis -> mistakes explained in words, driven from Claude Code via MCP."
 requires-python = ">=3.11"
 license = "MIT"
