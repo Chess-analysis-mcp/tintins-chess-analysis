@@ -419,8 +419,9 @@ PUZZLE_MAX_RD: int = _parse_int("CHESS_PUZZLE_MAX_RD", 130)
 PUZZLE_ANIMATIONS: bool = os.environ.get("CHESS_PUZZLE_ANIMATIONS", "1") != "0"
 # Auto-load the next puzzle a beat after a solve (flow-state grinding) instead of waiting for the
 # "Next puzzle" button. The frontend still holds long enough for the solve animations to finish
-# before advancing. Only fires on a solve, never after "Show solution". Settings toggle.
-PUZZLE_AUTO_ADVANCE: bool = os.environ.get("CHESS_PUZZLE_AUTO_ADVANCE", "1") != "0"
+# before advancing. Only fires on a solve, never after "Show solution". Settings toggle; OFF by
+# default (opt in via ⚙ Settings) so a solve leaves you on the board until you press "Next puzzle".
+PUZZLE_AUTO_ADVANCE: bool = os.environ.get("CHESS_PUZZLE_AUTO_ADVANCE", "0") != "0"
 # "Puzzle storm" timed rush (P4): solve as many as you can before the clock runs out. Base clock in
 # seconds; a combo run grants a small time bonus and a wrong move costs time (see puzzle_storm.py).
 # Unrated by design (fast, ramping difficulty) - it only tracks a best-score highscore in state.json.

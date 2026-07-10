@@ -105,7 +105,7 @@ let puzzleDone = false; // true once solved/failed/given-up (board locked, resul
 let puzzleFailed = false; // user played a wrong move
 let puzzleHinted = false;
 let puzzleAnimations = true; // Settings toggle: play the board solve/miss animations vs. text only
-let puzzleAutoAdvance = true; // Settings toggle: auto-load the next puzzle a beat after a solve
+let puzzleAutoAdvance = false; // Settings toggle: auto-load the next puzzle a beat after a solve (default off)
 let puzzleAdvanceTimer = null; // pending auto-advance timeout handle (cancelled on any nav/interaction)
 // The rating summary from the FIRST wrong move (which already applied the Glicko loss). Kept so the
 // final "Solved (after a miss)" card can surface that the rating already moved, rather than looking
@@ -1137,7 +1137,7 @@ async function loadAll() {
     coachAiAuto = !!cfg.coach_ai_auto;
     personalizeHistory = cfg.personalize_history !== false; // default on
     puzzleAnimations = cfg.puzzle_animations !== false; // default on
-    puzzleAutoAdvance = cfg.puzzle_auto_advance !== false; // default on
+    puzzleAutoAdvance = cfg.puzzle_auto_advance === true; // default off
   } catch (_) {}
   if (appUsername) $("lichess-user").placeholder = appUsername;
   if (chesscomUsername) $("chesscom-user").placeholder = chesscomUsername;
@@ -2214,7 +2214,7 @@ async function openSettings() {
   $("set-coach-ai-persist").checked = s.coach_ai_persist !== false; // remember summaries (default on)
   $("set-personalize").checked = s.personalize_history !== false; // personalize chat (default on)
   $("set-puzzle-animations").checked = s.puzzle_animations !== false; // solve animations (default on)
-  $("set-puzzle-auto-advance").checked = s.puzzle_auto_advance !== false; // auto-next after solve (default on)
+  $("set-puzzle-auto-advance").checked = s.puzzle_auto_advance === true; // auto-next after solve (default off)
   $("set-puzzle-interleave").checked = s.puzzle_mistake_interleave !== false; // mix in own-game mistakes (default on)
   $("set-sf-status").textContent = data.stockfish_ok
     ? "Stockfish engine found ✓"
@@ -2325,7 +2325,7 @@ async function saveSettings(e) {
   coachAiAuto = !!(res.settings && res.settings.coach_ai_auto);
   personalizeHistory = !(res.settings && res.settings.personalize_history === false);
   puzzleAnimations = !(res.settings && res.settings.puzzle_animations === false);
-  puzzleAutoAdvance = !(res.settings && res.settings.puzzle_auto_advance === false);
+  puzzleAutoAdvance = !!(res.settings && res.settings.puzzle_auto_advance === true);
   chesscomSync = !(res.settings && res.settings.chesscom_sync === false);
   chesscomSyncMax = Number(res.settings && res.settings.chesscom_sync_max) || 5;
   const card = $("coach-ai");
