@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tintin's AI Chess Analysis: your mistakes, explained in words</title>
-  <meta name="description" content="Analyze a chess game with Stockfish, find where you went wrong, and, unlike a bare engine, get every mistake explained in plain words by Snowie, your AI coach, grounded in real engine lines. Plus a built-in puzzle trainer with Glicko-2 ratings and a coach that teaches each solution." />
+  <meta name="description" content="Analyze a chess game with Stockfish, find where you went wrong, and, unlike a bare engine, get every mistake explained in plain words by Snowie, your AI coach, grounded in real engine lines. Plus a built-in puzzle trainer with real ratings and a coach that teaches each solution." />
   <!-- Favicon reuses the app's icon (one level up from docs/). -->
   <link rel="icon" type="image/png" href="../frontend/favicon-32.png" />
   <link rel="icon" type="image/svg+xml" href="../frontend/favicon.svg" />
@@ -130,8 +130,8 @@
     <div class="wrap">
       <h2>Tactics that come with a coach</h2>
       <p class="lead">
-        Most puzzle trainers just mark you right or wrong. This one rates you with real
-        <strong>Glicko-2</strong> and explains the idea behind every solution, the same way it
+        Most puzzle trainers just mark you right or wrong. This one gives you a real rating
+        that moves as you solve, and explains the idea behind every solution, the same way it
         explains your games.
       </p>
 
@@ -149,7 +149,7 @@
         <div class="feature">
           <span class="icon">🧩</span>
           <h3>Rated tactics</h3>
-          <p>Puzzles from the CC0 Lichess database, with a real Glicko-2 rating that moves on every solve or miss, plus a "train my weaknesses" filter tuned to your profile.</p>
+          <p>Puzzles from the CC0 Lichess database, with a real rating that moves on every solve or miss, plus a "train my weaknesses" filter tuned to your profile.</p>
         </div>
         <div class="feature">
           <span class="icon">✨</span>
@@ -160,21 +160,6 @@
           <span class="icon">🔁</span>
           <h3>Your own blunders</h3>
           <p>A "From your games" source turns positions you actually botched into engine-checked practice puzzles, with a link back to the full game.</p>
-        </div>
-        <div class="feature">
-          <span class="icon">⚡</span>
-          <h3>Storm rush</h3>
-          <p>A timed sub-mode: solve as many as you can before the clock runs out, with combos and a saved high score. Unrated, so it never touches your Glicko.</p>
-        </div>
-        <div class="feature">
-          <span class="icon">🔥</span>
-          <h3>Daily streak</h3>
-          <p>A quiet flame counts the days you keep solving, with optional auto-advance for flow-state grinding.</p>
-        </div>
-        <div class="feature">
-          <span class="icon">📴</span>
-          <h3>Works offline</h3>
-          <p>The board is vendored, not from a CDN, and a small baseline ships built in, so the first puzzle loads instantly while the full set downloads in the background.</p>
         </div>
       </div>
     </div>
