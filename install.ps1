@@ -96,20 +96,29 @@ if (Get-Command stockfish -ErrorAction SilentlyContinue) {
 # 4) Record your chess username -------------------------------------------------------
 # Saved to the user-level settings.json (shared by app + MCP), NOT a tracked file — so the working
 # tree stays clean and the launcher's one-click update can fast-forward without conflicts.
+#
+# Skipped entirely when non-interactive: the double-click launcher runs this installer with
+# CHESS_NONINTERACTIVE=1 (and the user is watching the BROWSER splash, not this window), so a
+# blocking Read-Host here would hang first-run forever - the server never starts, the splash never
+# redirects, and the app looks frozen. The browser's own first-run prompt collects the username instead.
 Progress 94 "Finishing setup..."
 Write-Host ""
-Info "Your Lichess/Chess.com username lets the tool tell which side is 'you' in a game."
-$ChessUser = Read-Host "Username (press Enter to skip)"
-if ($ChessUser) {
-    $py = @"
+if ($env:CHESS_NONINTERACTIVE) {
+    Info "Set your Lichess/Chess.com username on the app's first-run screen (or in Settings)."
+} else {
+    Info "Your Lichess/Chess.com username lets the tool tell which side is 'you' in a game."
+    $ChessUser = Read-Host "Username (press Enter to skip)"
+    if ($ChessUser) {
+        $py = @"
 import sys
 from server.core import settings
 settings.update({'username': sys.argv[1]})
 "@
-    uv run python -c $py $ChessUser
-    Ok "Saved username"
-} else {
-    Warn "Skipped - set it later in the app's Settings panel if you want auto side-detection."
+        uv run python -c $py $ChessUser
+        Ok "Saved username"
+    } else {
+        Warn "Skipped - set it later in the app's Settings panel if you want auto side-detection."
+    }
 }
 
 # 5) Self-check -----------------------------------------------------------------------

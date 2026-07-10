@@ -66,7 +66,12 @@ goto launch
 
 :install
 echo First-time setup - installing Tintin's AI Chess Analysis (this happens only once)...
+REM Non-interactive: the user is watching the browser splash, not this window, so the installer must
+REM NOT stop at its username prompt (that would hang first-run - the server would never start). The
+REM username is collected on the app's first-run screen instead.
+set "CHESS_NONINTERACTIVE=1"
 powershell -ExecutionPolicy Bypass -File install.ps1
+set "CHESS_NONINTERACTIVE="
 set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 
 :launch

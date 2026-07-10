@@ -144,7 +144,10 @@ fi
 # First-run install: no uv, or the project env hasn't been built yet.
 if ! command -v uv >/dev/null 2>&1 || [ ! -d ".venv" ]; then
   echo "First-time setup — installing Tintin's AI Chess Analysis (this happens only once)…"
-  ./install.sh
+  # Non-interactive: the user is watching the browser splash, not this window, so the installer must
+  # NOT stop at its username prompt (that would hang first-run — the server would never start). The
+  # username is collected on the app's first-run screen instead.
+  CHESS_NONINTERACTIVE=1 ./install.sh
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 

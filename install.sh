@@ -89,19 +89,29 @@ fi
 # 4) Record your chess username (optional). --------------------------------------------
 # Saved to the user-level settings.json (shared by the app + MCP), NOT a tracked file — so the
 # working tree stays clean and the launcher's one-click update can fast-forward without conflicts.
+#
+# Skipped entirely when non-interactive: the double-click launcher runs this installer with
+# CHESS_NONINTERACTIVE=1 (and the user is watching the BROWSER splash, not this terminal), so a
+# blocking `read` here would hang first-run forever — the server never starts, the splash never
+# redirects, and the app looks frozen. The browser's own first-run prompt (#firstrun) collects the
+# username instead. Also skip if stdin isn't a TTY (piped install), as a belt-and-suspenders guard.
 progress 94 "Finishing setup…"
 echo
-info "Your Lichess/Chess.com username lets the tool tell which side is 'you' in a game."
-read -r -p "Username (press Enter to skip): " CHESS_USER || CHESS_USER=""
-if [[ -n "${CHESS_USER}" ]]; then
-  uv run python - "$CHESS_USER" <<'PY'
+if [ -n "${CHESS_NONINTERACTIVE:-}" ] || [ ! -t 0 ]; then
+  info "Set your Lichess/Chess.com username on the app's first-run screen (or in ⚙ Settings)."
+else
+  info "Your Lichess/Chess.com username lets the tool tell which side is 'you' in a game."
+  read -r -p "Username (press Enter to skip): " CHESS_USER || CHESS_USER=""
+  if [[ -n "${CHESS_USER}" ]]; then
+    uv run python - "$CHESS_USER" <<'PY'
 import sys
 from server.core import settings
 settings.update({"username": sys.argv[1]})
 PY
-  ok "Saved username"
-else
-  warn "Skipped — set it later in the app's ⚙ Settings panel if you want auto side-detection."
+    ok "Saved username"
+  else
+    warn "Skipped — set it later in the app's ⚙ Settings panel if you want auto side-detection."
+  fi
 fi
 
 # 5) Self-check. -----------------------------------------------------------------------
