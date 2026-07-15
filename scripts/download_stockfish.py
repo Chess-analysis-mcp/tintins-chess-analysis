@@ -34,16 +34,25 @@ TAG = "sf_18"
 _BASE = f"https://github.com/official-stockfish/Stockfish/releases/download/{TAG}"
 
 
-def _candidates() -> list[str]:
+def _candidates(force_arch: str | None = None) -> list[str]:
     """Asset base-names (no extension) to try, best-performing first → most-compatible last.
 
     Empty when there's no prebuilt static binary for this platform/CPU (e.g. Linux on ARM), so the
-    caller falls back to a manual-install hint.
+    caller falls back to a manual-install hint. ``force_arch`` (or ``CHESS_FORCE_STOCKFISH_ARCH``)
+    pins the CPU family — used to fetch the native arm64 build when this process is translated under
+    Rosetta 2 and ``platform.machine()`` would otherwise lie ``x86_64``.
     """
     machine = (os.environ.get("PROCESSOR_ARCHITECTURE") or "").lower()
     import platform
 
-    machine = (platform.machine() or machine).lower()
+    machine = (force_arch or os.environ.get("CHESS_FORCE_STOCKFISH_ARCH") or platform.machine()
+               or machine).lower()
+    # On macOS, trust the *hardware*: a Rosetta-translated process reports x86_64 from platform.machine()
+    # even on Apple Silicon, which would fetch the slow Intel build. config.is_apple_silicon() reads
+    # the hardware capability via sysctl, so we pick the native arm64 engine.
+    if sys.platform == "darwin" and not force_arch \
+            and not os.environ.get("CHESS_FORCE_STOCKFISH_ARCH") and config.is_apple_silicon():
+        machine = "arm64"
     if sys.platform == "darwin":
         if machine in ("arm64", "aarch64"):
             return ["stockfish-macos-m1-apple-silicon"]
@@ -188,14 +197,19 @@ def _runs_uci(path: str) -> bool:
 
 
 def main() -> int:
-    # A system engine on PATH already satisfies the app — nothing to download.
-    existing = shutil.which("stockfish")
-    if existing:
-        print(existing)
-        return 0
+    # CHESS_FORCE_STOCKFISH_DOWNLOAD=1 forces a fresh managed download even when a (possibly
+    # wrong-arch) engine already exists — the "swap to the native arm64 build" path.
+    force = os.environ.get("CHESS_FORCE_STOCKFISH_DOWNLOAD") == "1"
+
+    if not force:
+        # A system engine on PATH already satisfies the app — nothing to download.
+        existing = shutil.which("stockfish")
+        if existing:
+            print(existing)
+            return 0
 
     dest = config._managed_stockfish_path()
-    if os.path.exists(dest) and _runs_uci(dest):
+    if not force and os.path.exists(dest) and _runs_uci(dest):
         print(dest)  # a previous download is still good
         return 0
 

@@ -1203,6 +1203,7 @@ async function checkSetup() {
   }
   const sf = checks.stockfish || { ok: true };
   const cl = checks.claude || { ok: true };
+  const arch = sf.arch || { suboptimal: false };
 
   if (!sf.ok) {
     showSetupBanner(
@@ -1211,6 +1212,8 @@ async function checkSetup() {
       `<b>Stockfish engine not found.</b> ${escapeHtml(sf.hint || "Install Stockfish to analyze games.")}`,
       null
     );
+  } else if (arch.suboptimal && localStorage.getItem("hideArchBanner") !== "1") {
+    showArchFixBanner(banner);
   } else if (!cl.ok && localStorage.getItem("hideClaudeSetupBanner") !== "1") {
     showSetupBanner(
       banner,
@@ -1224,6 +1227,53 @@ async function checkSetup() {
   } else {
     banner.hidden = true;
   }
+}
+
+// Apple Silicon running the Intel Stockfish under Rosetta 2 (works, but slower for a search-heavy
+// engine — the symptom of the old first-run install bug). Offer a one-click swap to the native
+// arm64 build: POST /api/fix-stockfish-arch downloads it, pins it, and restarts the engine. Amber,
+// dismissible (remembered so we don't nag).
+function showArchFixBanner(banner) {
+  banner.classList.remove("err");
+  const dismiss = () => {
+    banner.hidden = true;
+    localStorage.setItem("hideArchBanner", "1");
+  };
+  banner.innerHTML =
+    '<span class="sb-msg"><b>Stockfish is the Intel build running under Rosetta&nbsp;2.</b> ' +
+    "It works, but the native Apple&nbsp;Silicon (arm64) engine is noticeably faster. " +
+    '<button class="sb-fix" type="button">Download arm64 build</button></span>' +
+    '<button class="sb-x" type="button" aria-label="Dismiss" title="Dismiss">×</button>';
+  banner.querySelector(".sb-x").addEventListener("click", dismiss);
+  const fix = banner.querySelector(".sb-fix");
+  fix.addEventListener("click", async () => {
+    fix.disabled = true;
+    fix.textContent = "Downloading…";
+    let res;
+    try {
+      res = await fetch("/api/fix-stockfish-arch", { method: "POST" }).then((r) => r.json());
+    } catch (_) {
+      res = null;
+    }
+    if (res && res.ok) {
+      banner.classList.remove("err");
+      banner.innerHTML =
+        '<span class="sb-msg"><b>Now using the native arm64 Stockfish.</b> Analyses will run faster.</span>' +
+        '<button class="sb-x" type="button" aria-label="Dismiss" title="Dismiss">×</button>';
+      banner.querySelector(".sb-x").addEventListener("click", () => (banner.hidden = true));
+    } else {
+      fix.disabled = false;
+      fix.textContent = "Retry";
+      const msg = banner.querySelector(".sb-msg");
+      if (msg && !msg.querySelector(".sb-err")) {
+        const err = document.createElement("span");
+        err.className = "sb-err";
+        err.textContent = " " + ((res && res.error) || "Download failed — check your internet connection.");
+        msg.appendChild(err);
+      }
+    }
+  });
+  banner.hidden = false;
 }
 
 function showSetupBanner(banner, isErr, msgHtml, onDismiss) {
@@ -2515,6 +2565,33 @@ function boardSizeBounds() {
 }
 
 let boardRedrawPending = false;
+function scheduleBoardRedraw() {
+  // Chessground caches its bounds, so it needs a redraw to re-place pieces after the board's
+  // rendered size changes (a resize, an override, or the panel scrollbar appearing/disappearing).
+  // Debounced to one redraw per frame — a ResizeObserver can fire many times in a burst.
+  if (!ground || boardRedrawPending) return;
+  boardRedrawPending = true;
+  requestAnimationFrame(() => {
+    boardRedrawPending = false;
+    if (ground) ground.redrawAll();
+  });
+}
+
+// Anchor the fixed drag handle to the board panel's *measured* right edge (+ a small gap) instead
+// of a CSS var that can't see the panel's scrollbar gutter. This keeps the separator and the board
+// reading the same width, so the handle clears the scrollbar in every browser (Chrome overlay,
+// Firefox reserved-gutter) and in puzzle mode (no eval bar) alike. See issue #5.
+const RESIZER_GAP = 6;
+function positionResizer() {
+  const rez = $("col-resizer");
+  const col = document.querySelector(".board-col");
+  if (!rez || !col) return;
+  // Hidden on narrow/stacked layouts (CSS display:none) — nothing to place.
+  if (getComputedStyle(rez).display === "none") return;
+  const right = col.getBoundingClientRect().right; // viewport coords == fixed-position origin
+  rez.style.left = Math.round(right + RESIZER_GAP) + "px";
+}
+
 function applyBoardSize() {
   const root = document.documentElement;
   if (boardSizeUser == null) {
@@ -2524,14 +2601,28 @@ function applyBoardSize() {
     boardSizeUser = Math.round(Math.max(min, Math.min(max, boardSizeUser)));
     root.style.setProperty("--board-user", boardSizeUser + "px");
   }
-  // Chessground caches its bounds, so it needs a redraw to re-place pieces at the new square size.
-  if (ground && !boardRedrawPending) {
-    boardRedrawPending = true;
-    requestAnimationFrame(() => {
-      boardRedrawPending = false;
-      if (ground) ground.redrawAll();
-    });
+  scheduleBoardRedraw();
+  positionResizer();
+}
+
+// Watch the board's rendered size (changes on window resize even with no user override, on an
+// override drag, and when the panel scrollbar toggles) and keep chessground's bounds + the
+// separator in sync. Without this, a responsive resize with no --board-user left the pieces
+// mis-centered against stale bounds (the old window-resize handler only redrew when an override
+// was set). See issue #5.
+function observeBoardLayout() {
+  const board = $("board");
+  const col = document.querySelector(".board-col");
+  if (typeof ResizeObserver === "undefined") return;
+  if (board) {
+    new ResizeObserver(() => {
+      scheduleBoardRedraw();
+      positionResizer();
+    }).observe(board);
   }
+  // The panel's own width changes independently of the board when its scrollbar gutter appears or
+  // the eval bar is hidden (puzzle mode) — reposition the handle for those too.
+  if (col) new ResizeObserver(() => positionResizer()).observe(col);
 }
 
 function restoreBoardSize() {
@@ -2601,8 +2692,11 @@ function initBoardResizer() {
     persistBoardSize();
   });
   // Re-clamp a fixed board size when the window changes (so it can't overflow a now-smaller window).
+  // With no override the responsive board still changes size, so always re-place the handle (and the
+  // ResizeObserver redraws the pieces); with an override, re-clamp too.
   window.addEventListener("resize", () => {
     if (boardSizeUser != null) applyBoardSize();
+    else positionResizer();
   });
 }
 
@@ -2829,7 +2923,10 @@ async function setPuzzleMode(on, opts = {}) {
   // The mode swap hides/shows elements around the board, shifting its on-screen position; chessground
   // caches its bounding rect, so without a redraw grabs land offset from the cursor. Recompute bounds
   // after the layout settles (next frame).
-  requestAnimationFrame(() => { if (ground) ground.redrawAll(); });
+  requestAnimationFrame(() => {
+    if (ground) ground.redrawAll();
+    positionResizer(); // eval bar hides/shows, so the panel's right edge (and the handle) moves
+  });
   if (on) {
     lsSet(PZ_MODE_KEY, "1"); // remember across reloads AND full app restarts (any launcher)
     closeHistoryDrawer();
@@ -4193,6 +4290,8 @@ function init() {
   // Board-resize handle: apply any saved board size now that Chessground exists, then wire drag.
   restoreBoardSize();
   initBoardResizer();
+  observeBoardLayout();
+  positionResizer();
 
   $("back").addEventListener("click", stepBack);
   $("fwd").addEventListener("click", stepForward);

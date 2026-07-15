@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 
 # Repo root (this file is <repo>/server/config.py), used for repo-relative defaults.
@@ -132,6 +133,84 @@ def stockfish_install_hint(path: str | None = None) -> str:
         "download it from https://stockfishchess.org/download/ and set STOCKFISH_PATH "
         "to the binary. See the README 'Installation' section."
     )
+
+
+def is_apple_silicon() -> bool:
+    """True on Apple Silicon *hardware*, even when this process runs translated under Rosetta 2.
+
+    `platform.machine()` / `uname -m` report ``x86_64`` inside a Rosetta-translated process, so they
+    can't be trusted to tell arm64 hardware from Intel here; ``sysctl -n hw.optional.arm64`` reports
+    the hardware capability (``1`` on Apple Silicon) regardless of translation.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        out = subprocess.run(
+            ["sysctl", "-n", "hw.optional.arm64"], capture_output=True, text=True, timeout=3
+        )
+    except Exception:  # noqa: BLE001 - detection is best-effort; assume not-arm on any failure
+        return False
+    return out.stdout.strip() == "1"
+
+
+# Mach-O CPU type for arm64 (base type 12 | the 0x01000000 64-bit ABI bit); x86/x86_64 has base 7.
+_CPU_TYPE_ARM64 = 0x0100000C
+
+
+def macho_arch(path: str) -> str:
+    """The CPU architecture of a Mach-O binary: ``arm64`` | ``x86_64`` | ``universal`` | ``unknown``.
+
+    Dependency-free: reads the Mach-O header (magic + cputype) directly, so no ``lipo``/``file``
+    subprocess is needed. A fat/universal binary reports ``universal`` — it carries a native slice,
+    so it is never the Rosetta-mismatch case.
+    """
+    try:
+        with open(path, "rb") as fh:
+            header = fh.read(8)
+    except OSError:
+        return "unknown"
+    if len(header) < 8:
+        return "unknown"
+    magic = header[:4]
+    # Fat / universal (FAT_MAGIC / FAT_MAGIC_64 and their byte-swapped forms).
+    if magic in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf", b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):
+        return "universal"
+    # Thin Mach-O: the 4-byte cputype follows the magic, in the magic's endianness (64- or 32-bit).
+    if magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+        cputype = int.from_bytes(header[4:8], "little")
+    elif magic in (b"\xfe\xed\xfa\xcf", b"\xfe\xed\xfa\xce"):
+        cputype = int.from_bytes(header[4:8], "big")
+    else:
+        return "unknown"
+    if cputype == _CPU_TYPE_ARM64:
+        return "arm64"
+    if cputype & 0xFF == 0x07:  # x86 / x86_64 (base cputype 7, with or without the 64-bit ABI bit)
+        return "x86_64"
+    return "unknown"
+
+
+def stockfish_arch_report(path: str | None = None) -> dict:
+    """Whether the resolved Stockfish is running sub-optimally under Rosetta 2 on Apple Silicon.
+
+    An Intel (x86_64) Stockfish still runs on Apple Silicon, but translated under Rosetta 2 — notably
+    slower for a search-heavy engine (and the symptom of the old first-run install bug that fetched
+    the wrong build). This flags that case so the UI can offer a one-click swap to the native arm64
+    build. Best-effort and macOS-only; everywhere else ``suboptimal`` is False.
+    """
+    resolved = clean_path(path) or STOCKFISH_PATH
+    resolved = shutil.which(resolved) or (resolved if os.path.isfile(resolved) else "")
+    if not resolved or not is_apple_silicon():
+        return {"suboptimal": False, "hardware": "", "binary": "", "path": resolved, "can_fix": False}
+    binary = macho_arch(resolved)
+    suboptimal = binary == "x86_64"
+    return {
+        "suboptimal": suboptimal,
+        "hardware": "arm64",
+        "binary": binary,
+        "path": resolved,
+        # A native arm64 static Stockfish build (stockfish-macos-m1-apple-silicon) exists to download.
+        "can_fix": suboptimal,
+    }
 
 
 # Path to the Stockfish binary. Auto-detected (PATH + common locations) so a standard

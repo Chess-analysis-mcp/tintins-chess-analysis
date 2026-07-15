@@ -61,7 +61,15 @@ if command -v stockfish >/dev/null 2>&1; then
 else
   info "Installing Stockfish engine…"
   if [[ "$(uname)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
-    brew install stockfish || true
+    # A GUI launcher can run translated under Rosetta 2 on Apple Silicon; the native
+    # /opt/homebrew brew then refuses ("Cannot install under Rosetta 2 in ARM default prefix").
+    # Re-exec brew natively when the hardware is arm64 and brew is the ARM-prefix build.
+    BREW_ARCH=""
+    if [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == "1" \
+          && "$(brew --prefix 2>/dev/null)" == "/opt/homebrew" ]]; then
+      BREW_ARCH="arch -arm64"
+    fi
+    $BREW_ARCH brew install stockfish || true
   elif command -v apt-get >/dev/null 2>&1; then
     { sudo apt-get update && sudo apt-get install -y stockfish; } || true
   elif command -v dnf >/dev/null 2>&1; then
