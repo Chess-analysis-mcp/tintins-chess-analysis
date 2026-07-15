@@ -130,6 +130,14 @@ header h1 { font-size: 23px; font-weight: 700; margin: 0; }
 }
 .setup-banner .sb-btn:hover { filter: brightness(1.08); }
 .setup-banner .sb-btn:disabled { opacity: 0.6; cursor: default; }
+.setup-banner .sb-fix { /* inline "Download arm64 build" action button */
+  background: var(--accent); color: #10243a; border: none; border-radius: 4px;
+  padding: 3px 10px; margin-left: 6px; font-weight: 600; font-size: 12.5px;
+  cursor: pointer; white-space: nowrap;
+}
+.setup-banner .sb-fix:hover { filter: brightness(1.08); }
+.setup-banner .sb-fix:disabled { opacity: 0.6; cursor: default; }
+.setup-banner .sb-err { color: #ffd0a8; }
 /* Expanded step-by-step install guide (the read-only .app channel): stack full-width. */
 .setup-banner.guide { display: block; position: relative; padding-right: 36px; }
 .setup-banner.guide .sb-x { position: absolute; top: 8px; right: 10px; }
@@ -171,6 +179,22 @@ main {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+  /* The internal scrollbar (this column overflows on tall boards / short windows) used to make the
+     panel's effective width diverge per browser: Chrome overlays it (floats over the right edge, so
+     the fixed separator lands on top of it) while Firefox reserves a gutter (narrowing the panel).
+     Reserve the gutter *always* so (a) the board is never clipped and there's no appear/disappear
+     layout shift, and (b) a thin, in-box scrollbar is used in both engines instead of a floating
+     overlay. The separator is then measured off the panel's real right edge (positionResizer in
+     main.js), so it clears the reserved gutter in every browser. See issue #5. */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel2) transparent;
+}
+.board-col::-webkit-scrollbar { width: 8px; }
+.board-col::-webkit-scrollbar-track { background: transparent; }
+.board-col::-webkit-scrollbar-thumb {
+  background: var(--panel2);
+  border-radius: 4px;
 }
 /* On a short window the column's content can exceed max-height. Don't let flex shrink the
    children to fit — the board/controls are floored by their content, but the win graph holds

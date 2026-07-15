@@ -1023,7 +1023,8 @@ def _tactic_role_facts(
             "directly to the move(s) THEY tried (listed under 'Moves the player tried' in the facts), "
             "explain concretely why their move does not work — use that move's engine refutation. "
             "Then teach the winning idea step by step from the verified solution line, naming the "
-            "motif from the Themes. Be encouraging and concrete."
+            "motif from the Themes. Be direct and matter-of-fact — lead with the actual mistake, no "
+            "praise sandwich, no reassuring preamble. Get to why the move fails in the first sentence."
         )
     elif had_miss:
         role = (
@@ -1032,7 +1033,9 @@ def _tactic_role_facts(
             "Briefly acknowledge they found the right move, then — this is the important part — "
             "explain concretely why the move(s) they tried that DID NOT work fail, naming the move "
             "and using its engine refutation from the facts. Then name the motif from the Themes and "
-            "reinforce the pattern so they recognise it next time. Be encouraging."
+            "reinforce the pattern so they recognise it next time. Be direct and matter-of-fact — no "
+            "praise sandwich or reassuring filler; the acknowledgment is one short clause, then get "
+            "straight to why the wrong move was worse than the solution."
         )
     else:
         role = (

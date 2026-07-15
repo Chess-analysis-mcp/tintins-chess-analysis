@@ -104,3 +104,49 @@ def post_settings(patch: SettingsPatch) -> JSONResponse:
         except Exception:  # pragma: no cover - defensive; next analysis would surface a real error
             pass
     return JSONResponse({"settings": eff, "stockfish_ok": _stockfish_ok(eff["stockfish_path"])})
+
+
+@router.post("/fix-stockfish-arch")
+def post_fix_stockfish_arch() -> JSONResponse:
+    """Swap an Intel-under-Rosetta Stockfish for the native arm64 build (Apple Silicon only).
+
+    Downloads the official arm64 static engine to the managed path (forcing the arch + a fresh
+    download even if a wrong-arch binary is already on PATH), pins that path in Settings so it wins,
+    and restarts the engine pool. No-op-with-error when there's nothing to fix.
+    """
+    import os
+    import subprocess
+    import sys
+
+    report = config.stockfish_arch_report()
+    if not report.get("can_fix"):
+        return JSONResponse(
+            {"ok": False, "error": "No architecture mismatch to fix on this machine."},
+            status_code=409,
+        )
+
+    script = os.path.join(config.PROJECT_ROOT, "scripts", "download_stockfish.py")
+    env = {
+        **os.environ,
+        "CHESS_FORCE_STOCKFISH_ARCH": "arm64",
+        "CHESS_FORCE_STOCKFISH_DOWNLOAD": "1",
+    }
+    try:
+        proc = subprocess.run(
+            [sys.executable, script], capture_output=True, text=True, timeout=300, env=env
+        )
+    except Exception as exc:  # noqa: BLE001 - surface any launch/timeout failure to the banner
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+    new_path = (proc.stdout or "").strip().splitlines()[-1].strip() if proc.stdout.strip() else ""
+    if proc.returncode != 0 or not new_path or config.macho_arch(new_path) != "arm64":
+        detail = (proc.stderr or "").strip() or "Could not download the arm64 Stockfish build."
+        return JSONResponse({"ok": False, "error": detail}, status_code=500)
+
+    # Pin the native engine so it wins over the Intel one on PATH, then restart the pool.
+    eff = settings_mod.update({"stockfish_path": new_path})
+    try:
+        engine.restart()
+    except Exception:  # pragma: no cover - defensive; next analysis would surface a real error
+        pass
+    return JSONResponse({"ok": True, "path": new_path, "settings": eff})

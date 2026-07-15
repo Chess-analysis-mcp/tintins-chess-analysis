@@ -200,6 +200,9 @@ progress() {
 download_stockfish() {
   local dest="$1" arch tag tmp asset member
   arch="$(uname -m)"
+  # A GUI-launched .app can run translated under Rosetta 2 on Apple Silicon, where `uname -m` lies
+  # "x86_64" and we'd fetch the slow Intel build. Trust the hardware capability instead.
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then arch="arm64"; fi
   tag="sf_18"
   local candidates=()
   if [ "$arch" = "arm64" ]; then
@@ -281,7 +284,16 @@ elif [ -x "$SF_MANAGED" ]; then
   export STOCKFISH_PATH="$SF_MANAGED"
 elif command -v brew >/dev/null 2>&1; then
   echo "Installing Stockfish via Homebrew…"
-  brew install stockfish || die "Could not install Stockfish via Homebrew. See $LOG."
+  # A GUI-launched .app can run translated under Rosetta 2 on Apple Silicon; the native
+  # /opt/homebrew brew then refuses ("Cannot install under Rosetta 2 in ARM default prefix").
+  # Re-exec brew natively with `arch -arm64` when the hardware is arm64 and brew is the ARM-prefix
+  # build. (Don't force arm64 on an Intel-prefix brew in /usr/local — that binary has no arm64 slice.)
+  BREW_ARCH=""
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] && \
+     [ "$(brew --prefix 2>/dev/null)" = "/opt/homebrew" ]; then
+    BREW_ARCH="arch -arm64"
+  fi
+  $BREW_ARCH brew install stockfish || die "Could not install Stockfish via Homebrew. See $LOG."
 else
   echo "No Stockfish and no Homebrew — downloading Stockfish…"
   download_stockfish "$SF_MANAGED" \
