@@ -9,6 +9,10 @@
   --mistake: #e08000;
   --blunder: #d33;
   --best: #629924;
+  /* Puzzle mode reads as its own place via a cool blue-teal accent, so green stays reserved for
+     "correct" (a solved-tile pulse) and isn't overloaded to mean "puzzle mode". */
+  --puzzle-accent: #4a90c2;
+  --puzzle-partial: #d9a441;
   /* Board scales with viewport height but caps out — and never takes more than ~half the viewport
      width, so on smaller laptops the board and the analysis column still fit side by side (the
      board stays pinned; see .board-col). This is the *default*; the drag handle between the board
@@ -18,7 +22,7 @@
   --board-size: var(--board-user, var(--board-default));
   /* Height reserved for the pinned (sticky) header, so the sticky board column starts below it
      instead of tucking underneath. */
-  --header-h: 52px;
+  --header-h: 64px;
   /* Full width of the board column = eval bar (20) + its gap (8) + the board. The win graph and
      the other under-board panels span this so their right edge lines up with the board's. */
   --col-width: calc(var(--board-size) + 28px);
@@ -34,11 +38,11 @@ body {
 }
 
 header {
-  padding: 12px 20px;
+  padding: 14px 20px;
   border-bottom: 1px solid #000;
   display: flex;
-  align-items: baseline;
-  gap: 16px;
+  align-items: center;
+  gap: 18px;
   /* Pinned so the ⚙ Settings / ☰ Games buttons stay reachable while you scroll the analysis
      column. Opaque background so content doesn't show through; z-index below the slide-in drawer
      (95) and the modal overlays (100) so those still layer on top. */
@@ -47,7 +51,7 @@ header {
   z-index: 90;
   background: var(--bg);
 }
-header h1 { font-size: 18px; margin: 0; }
+header h1 { font-size: 23px; font-weight: 700; margin: 0; }
 .muted { color: var(--muted); font-size: 13px; }
 
 /* keyboard-shortcuts help marker + hover/focus tooltip */
@@ -126,6 +130,14 @@ header h1 { font-size: 18px; margin: 0; }
 }
 .setup-banner .sb-btn:hover { filter: brightness(1.08); }
 .setup-banner .sb-btn:disabled { opacity: 0.6; cursor: default; }
+.setup-banner .sb-fix { /* inline "Download arm64 build" action button */
+  background: var(--accent); color: #10243a; border: none; border-radius: 4px;
+  padding: 3px 10px; margin-left: 6px; font-weight: 600; font-size: 12.5px;
+  cursor: pointer; white-space: nowrap;
+}
+.setup-banner .sb-fix:hover { filter: brightness(1.08); }
+.setup-banner .sb-fix:disabled { opacity: 0.6; cursor: default; }
+.setup-banner .sb-err { color: #ffd0a8; }
 /* Expanded step-by-step install guide (the read-only .app channel): stack full-width. */
 .setup-banner.guide { display: block; position: relative; padding-right: 36px; }
 .setup-banner.guide .sb-x { position: absolute; top: 8px; right: 10px; }
@@ -167,6 +179,22 @@ main {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+  /* The internal scrollbar (this column overflows on tall boards / short windows) used to make the
+     panel's effective width diverge per browser: Chrome overlays it (floats over the right edge, so
+     the fixed separator lands on top of it) while Firefox reserves a gutter (narrowing the panel).
+     Reserve the gutter *always* so (a) the board is never clipped and there's no appear/disappear
+     layout shift, and (b) a thin, in-box scrollbar is used in both engines instead of a floating
+     overlay. The separator is then measured off the panel's real right edge (positionResizer in
+     main.js), so it clears the reserved gutter in every browser. See issue #5. */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel2) transparent;
+}
+.board-col::-webkit-scrollbar { width: 8px; }
+.board-col::-webkit-scrollbar-track { background: transparent; }
+.board-col::-webkit-scrollbar-thumb {
+  background: var(--panel2);
+  border-radius: 4px;
 }
 /* On a short window the column's content can exceed max-height. Don't let flex shrink the
    children to fit — the board/controls are floored by their content, but the win graph holds
@@ -360,6 +388,7 @@ main {
   border-left: 3px solid var(--accent);
   border-radius: 4px;
   padding: 9px 11px;
+  margin-bottom: 12px;
 }
 .comment:empty { display: none; }
 
@@ -368,9 +397,12 @@ main {
   border-radius: 6px;
   padding: 10px 12px;
   min-height: 20px;
+  margin-top: 18px;
   font-size: 14px;
   max-width: var(--col-width);
 }
+/* De-emphasised at the bottom of the analysis column: no empty panel when there's no verdict. */
+.verdict:empty { display: none; }
 .verdict .tag,
 .status .tag {
   display: inline-block;
@@ -493,6 +525,15 @@ main {
 .coach-ai-refresh:hover { opacity: 1; transform: rotate(90deg); }
 
 .side-col { flex: 0 1 380px; width: 380px; min-width: 0; }
+/* Widen the analysis/chat column on wide windows (the board caps at --board-size, so there's dead
+   space to spare) — mirrors the puzzle-rail steps. It can still flex-shrink if the board + Games
+   column leave less room. */
+@media (min-width: 1500px) {
+  .side-col { flex-basis: 440px; width: 440px; }
+}
+@media (min-width: 1900px) {
+  .side-col { flex-basis: 520px; width: 520px; }
+}
 .side-col h2 { font-size: 15px; margin: 0 0 8px; }
 
 /* --- end-of-game coach blurb -------------------------------------------- */
@@ -506,6 +547,19 @@ main {
   line-height: 1.5;
   color: var(--text);
 }
+/* Toggle that collapses the quick summary once the AI (Snowie) summary is shown. */
+.coach-toggle {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 2px 0;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.coach-toggle:hover { color: var(--text); }
+.coach-toggle[hidden] { display: none; }
 
 /* --- move list (clickable notation) ------------------------------------- */
 .movelist-panel { margin-bottom: 18px; }
@@ -793,8 +847,24 @@ body.history-hidden .history-col { display: none; }
 }
 .set-as-me:disabled { opacity: 0.6; cursor: default; }
 
-/* Settings panel (reuses the .firstrun-overlay backdrop + .firstrun-card shell). */
-.settings-card { width: min(440px, 92vw); max-height: 88vh; overflow-y: auto; gap: 14px; }
+/* Settings panel (reuses the .firstrun-overlay backdrop + .firstrun-card shell).
+   Fixed height so the card never resizes between tabs: the header + tab bar stay pinned at the top
+   and the actions at the bottom, while only the content scrolls. Switching tabs then feels like
+   moving left/right, not the whole dialog jumping. */
+.settings-card { width: min(460px, 92vw); height: min(640px, 88vh); overflow: hidden; gap: 12px; }
+/* Category tabs across the top; one panel visible at a time. Pinned (never scroll). */
+.set-tabs { display: flex; gap: 2px; border-bottom: 1px solid #3a372f; flex-wrap: wrap; flex: none; }
+/* The only scrolling region — so the tab bar above and Save/Cancel below hold their positions. */
+.set-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.set-tab-btn {
+  background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  color: var(--muted); font-size: 13px; font-weight: 600; padding: 7px 12px; cursor: pointer;
+}
+.set-tab-btn:hover { color: var(--text); }
+.set-tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+.set-tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.set-panel { display: none; flex-direction: column; gap: 14px; }
+.set-panel.active { display: flex; }
 .set-field { display: flex; flex-direction: column; gap: 5px; }
 .set-label { font-size: 13px; font-weight: 600; color: var(--text); }
 .set-opt { font-weight: 400; color: var(--muted); font-size: 12px; }
@@ -815,10 +885,6 @@ body.history-hidden .history-col { display: none; }
 .set-check input {
   width: auto; padding: 0; margin: 0; flex: none; accent-color: var(--accent); cursor: pointer;
 }
-.set-adv { margin: 2px 0; border-top: 1px solid #3a372f; padding-top: 12px; }
-.set-adv summary { cursor: pointer; font-size: 13px; color: var(--muted); list-style: revert; }
-.set-adv[open] summary { color: var(--text); margin-bottom: 12px; }
-.set-adv .set-field + .set-field { margin-top: 12px; }
 .set-llm-row { display: flex; align-items: center; gap: 10px; margin: 2px 0; }
 .set-llm-row .linklike { white-space: nowrap; }
 .set-sub { display: flex; align-items: center; gap: 8px; }
@@ -832,6 +898,18 @@ body.history-hidden .history-col { display: none; }
 #settings-status:empty { display: none; }
 
 .hist-status { color: var(--muted); font-size: 12.5px; min-height: 16px; margin-bottom: 8px; }
+
+.chesscom-hint {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  background: var(--panel-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.chesscom-hint .linklike { font-size: inherit; }
 
 .history { list-style: none; margin: 0; padding: 0; max-height: 78vh; overflow-y: auto; }
 .history li {
@@ -857,6 +935,26 @@ body.history-hidden .history-col { display: none; }
   border: 1px dashed #3c4a26; padding: 7px 10px;
 }
 .history li.load-more:hover { background: var(--panel); }
+
+/* --- Insights panel (cross-game themes + stats over a chosen time period) ------------------ */
+.insights { margin-top: 14px; border-top: 1px solid #000; padding-top: 10px; }
+.insights-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.insights-head h2 { font-size: 15px; margin: 0; }
+.insights-head select {
+  background: var(--panel2); color: var(--text); border: 1px solid #000; border-radius: 5px;
+  font-size: 12.5px; padding: 3px 6px;
+}
+.insights-body { font-size: 13px; }
+.insights-body h3 {
+  font-size: 12.5px; margin: 10px 0 4px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.insights-body .ins-stat { margin: 3px 0; }
+.insights-body .ins-list { list-style: none; margin: 0; padding: 0; }
+.insights-body .ins-list li {
+  background: var(--panel); border-radius: 5px; padding: 5px 8px; margin-bottom: 4px;
+  display: flex; justify-content: space-between; gap: 8px;
+}
 
 /* --- responsive: smaller laptops / windows -------------------------------------------------
    The third (Games) column needs ~1400px to sit beside the board + analysis columns. Below that
@@ -902,4 +1000,455 @@ body.history-hidden .history-col { display: none; }
   .side-col { width: 100%; flex-basis: auto; }
   /* Columns stack, so there's no left/right boundary to drag. */
   .col-resizer { display: none; }
+}
+
+/* ===================== Puzzle mode ===================================================== */
+
+/* Header activity switch [ Analyze | Puzzles ]. */
+.mode-switch[hidden] { display: none; }
+.mode-switch {
+  display: inline-flex;
+  margin-right: 14px;
+  border: 1px solid var(--panel2);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.mode-seg {
+  background: var(--panel);
+  color: var(--muted);
+  border: 0;
+  padding: 8px 22px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mode-seg:hover { color: var(--text); }
+.mode-seg.active { background: var(--puzzle-accent); color: #fff; }
+.mode-seg#mode-analyze.active { background: var(--accent); }
+
+/* The board feedback overlay lives over the board (eval bar is hidden in puzzle mode, so the board
+   sits at the wrap's left edge and the overlay aligns at left:0). pointer-events:none so it never
+   eats clicks meant for the board. */
+.board-wrap { position: relative; }
+.board-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--board-size);
+  height: var(--board-size);
+  pointer-events: none;
+  display: none;
+  z-index: 5;
+}
+body.puzzle-mode .board-overlay { display: block; }
+
+/* One pulsing cell, positioned by file/rank % (orientation-aware, set in JS). */
+.sq-blink {
+  position: absolute;
+  width: 12.5%;
+  height: 12.5%;
+  border-radius: 4px;
+  pointer-events: none;
+  animation: sq-pulse 0.42s ease-in-out 3;
+}
+/* Solve fill: a soft highlight that eases in and away — no scale, so it sits flush on the square
+   and reads as an integrated highlight rather than a floating tile. Colour tells green vs amber. */
+.sq-blink.ok   { box-shadow: inset 0 0 0 9999px rgba(98, 153, 36, 0.5); animation: sq-solve 0.7s ease-out 1; }
+.sq-blink.part { box-shadow: inset 0 0 0 9999px rgba(224, 128, 0, 0.5); animation: sq-solve 0.7s ease-out 1; }
+.sq-blink.bad  { box-shadow: inset 0 0 0 9999px rgba(211, 51, 51, 0.55); animation: sq-flash 0.5s ease-in-out 1; }
+@keyframes sq-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+@keyframes sq-flash { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes sq-solve { 0% { opacity: 0; } 16% { opacity: 1; } 55% { opacity: 0.85; } 100% { opacity: 0; } }
+
+/* An expanding ripple ring on a solve — the elegant part of the flash. Grows out from the square
+   centre and fades, like a soft Material ripple. */
+.sq-ring {
+  position: absolute;
+  width: 12.5%;
+  height: 12.5%;
+  border-radius: 7px;
+  box-sizing: border-box;
+  pointer-events: none;
+  transform-origin: center;
+  animation: sq-ripple 0.65s cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+.sq-ring.ok   { border: 2.5px solid rgba(98, 153, 36, 0.9); }
+.sq-ring.part { border: 2.5px solid rgba(224, 128, 0, 0.9); }
+@keyframes sq-ripple {
+  0%   { opacity: 0.85; transform: scale(0.8); }
+  100% { opacity: 0;    transform: scale(1.7); }
+}
+
+/* Confetti burst off the solved piece. Each particle is positioned at the square centre in JS,
+   which also sets its colour, size and the --dx/--dy/--rot flight vector. */
+.confetti {
+  position: absolute;
+  border-radius: 1px;
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: confetti-fly 0.8s ease-out forwards;
+}
+@keyframes confetti-fly {
+  0%   { opacity: 1; transform: translate(-50%, -50%) rotate(0deg) scale(1); }
+  70%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(var(--rot)) scale(0.7); }
+}
+
+/* A brief shake on the board element for a wrong move. */
+body.puzzle-mode #board.shake { animation: pz-shake 0.36s ease-in-out 1; }
+@keyframes pz-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+/* In puzzle mode, collapse the dense analysis layout to board + slim rail. */
+body.puzzle-mode #evalbar,
+body.puzzle-mode #graph-wrap,
+body.puzzle-mode .controls,
+body.puzzle-mode #scoreboard,
+body.puzzle-mode .board-col > #status,
+body.puzzle-mode .side-col,
+body.puzzle-mode .history-col,
+body.puzzle-mode #game-meta,
+body.puzzle-mode #history-toggle { display: none !important; }
+body.puzzle-mode .puzzle-rail { display: flex; }
+/* The board/rail drag handle stays live in puzzle mode (same --board-size override). The eval bar
+   it normally budgets for (--col-width = board + 28) is hidden here, so re-anchor the handle to the
+   board's real right edge instead of 28px past it. */
+body.puzzle-mode .col-resizer {
+  left: calc(20px + var(--board-size) + 6px);
+  /* Box the handle to the board's exact vertical extent (board col starts at header + main's 20px
+     top padding and is board-size tall) so the centered grip lines up with the board's center,
+     instead of the viewport's. */
+  top: calc(var(--header-h) + 20px);
+  height: var(--board-size);
+}
+/* In puzzle mode the board column holds ONLY the board (the graph/controls/comments that make the
+   analysis column tall are hidden). The analysis-mode internal scroll (overflow-y:auto + capped
+   max-height) then has nothing to scroll to, but sub-pixel rounding of the board height against the
+   cap still sprouts an ugly vertical scrollbar down the board's edge at certain window sizes. Drop
+   the scroll box here — let the page scroll if a huge board ever exceeds the viewport. */
+body.puzzle-mode .board-col { overflow: visible; max-height: none; }
+/* The rail's panels set `display: flex`, which would otherwise beat the UA `[hidden]` rule (equal
+   specificity, later source order) and leave a hidden panel visible — so toggling `.hidden` in JS
+   wouldn't actually hide it. Make the hidden attribute win inside the rail. */
+.puzzle-rail [hidden] { display: none !important; }
+
+/* The rail. Widens on wider windows (the board doesn't grow past --board-size, so on a big
+   screen there's dead space to the right) — the explanation/coach text is the main reason to
+   have room, and 320px reads cramped. Stays 320px on laptop-ish widths, stepping up past 1500px
+   and again past 1900px. */
+.puzzle-rail {
+  flex: 0 1 320px;
+  width: 320px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 4px;
+}
+@media (min-width: 1500px) {
+  .puzzle-rail { flex-basis: 440px; width: 440px; }
+}
+@media (min-width: 1900px) {
+  .puzzle-rail { flex-basis: 560px; width: 560px; }
+}
+.pz-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 14px;
+}
+.pz-rating { font-weight: 600; color: var(--text); }
+.pz-streak { display: inline-flex; align-items: center; gap: 5px; }
+.pz-pip {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--panel2);
+}
+.pz-pip.ok { background: var(--accent); }
+.pz-pip.bad { background: var(--blunder); }
+.pz-streak-n { margin-left: 4px; color: var(--muted); font-size: 13px; }
+.pz-stats-right { display: inline-flex; align-items: center; gap: 10px; }
+/* Day-over-day practice streak: a quiet flame chip, brightening once it's a real run. */
+.pz-daily {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pz-daily.hot { color: var(--mistake); }
+.pz-daily b { color: var(--text); font-weight: 600; }
+
+/* Rating progress: collapsed to just "Rating <current>" on the rail; a quiet white trend line
+   (styled like the analysis win% plot) reveals when the header dropdown is pressed. */
+.pz-progress { border-top: 1px solid var(--panel2); padding-top: 10px; }
+.pz-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pz-progress-title b { color: var(--text); font-weight: 700; margin-left: 4px; }
+.pz-progress-caret {
+  transition: transform 0.15s ease;
+  color: var(--muted);
+}
+.pz-progress.open .pz-progress-caret { transform: rotate(90deg); }
+.pz-progress-body { display: none; margin-top: 8px; }
+.pz-progress.open .pz-progress-body { display: block; }
+.pz-progress-sub {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.pz-progress-net.up { color: var(--accent); }
+.pz-progress-net.down { color: var(--blunder); }
+.pz-progress-net.flat { color: var(--muted); }
+.pz-curve {
+  display: block;
+  width: 100%;
+  height: 48px;
+  border-radius: 4px;
+}
+
+.pz-card {
+  background: var(--panel);
+  border: 1px solid var(--puzzle-accent);
+  border-left: 4px solid var(--puzzle-accent);
+  border-radius: 9px;
+  padding: 18px 18px;
+}
+.pz-prompt-line { font-size: 24px; font-weight: 700; color: var(--text); }
+.pz-prompt-sub { margin-top: 4px; color: var(--muted); font-size: 15px; }
+
+.pz-ghosts { display: flex; gap: 10px; }
+.pz-ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--panel2);
+  border-radius: 7px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pz-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+.pz-result {
+  background: var(--panel);
+  border-radius: 9px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pz-verdict { font-size: 19px; font-weight: 700; }
+.pz-verdict.ok { color: var(--accent); }
+.pz-verdict.part { color: var(--mistake); } /* orange: solved after a miss (still a win, not a failure) */
+.pz-verdict.bad { color: var(--blunder); }
+.pz-theme { color: var(--muted); font-size: 14px; }
+.pz-theme b { color: var(--text); }
+.pz-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.pz-explain, .pz-next {
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pz-explain { background: var(--panel2); color: var(--text); }
+.pz-explain:hover { background: #3d3a35; }
+.pz-next { background: var(--puzzle-accent); color: #fff; }
+.pz-next:hover { filter: brightness(1.08); }
+.pz-explain-out {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  border-top: 1px solid var(--panel2);
+  padding-top: 10px;
+}
+.pz-explain-out p { margin: 0 0 8px; }
+/* Follow-up chat under the explanation (reuses .chat-messages / .chat-form / .chat-msg). */
+.pz-chat { margin-top: 10px; border-top: 1px solid var(--panel2); padding-top: 10px; }
+.pz-chat .chat-messages { max-height: 240px; }
+.pz-status { color: var(--muted); font-size: 13px; min-height: 18px; }
+
+/* Source segmented control (Tactics | From your games). */
+.pz-source { display: inline-flex; border: 1px solid var(--panel2); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.pz-src-seg {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pz-src-seg.active { background: var(--puzzle-accent); color: #fff; }
+.pz-src-seg:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Solve | Storm activity switch (peer to the source control, slightly more prominent). */
+.pz-mode-seg { display: inline-flex; border: 1px solid var(--panel2); border-radius: 8px; overflow: hidden; align-self: flex-start; }
+.pz-mode-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pz-mode-btn.active { background: var(--puzzle-accent); color: #fff; }
+
+/* Storm scoreboard (the hero while a timed run is on). */
+.pz-storm { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; padding: 6px 0; }
+.pz-storm-clock {
+  position: relative;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.pz-storm-clock.low { color: var(--blunder); animation: pz-clock-pulse 1s ease-in-out infinite; }
+@keyframes pz-clock-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.pz-storm-bonus {
+  position: absolute;
+  top: -6px; right: -44px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  animation: pz-bonus-float 0.9s ease-out forwards;
+}
+@keyframes pz-bonus-float { 0% { opacity: 0; transform: translateY(6px); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateY(-16px); } }
+.pz-storm-line { display: flex; align-items: center; gap: 12px; font-size: 15px; color: var(--muted); }
+.pz-storm-score b { color: var(--text); font-size: 20px; }
+.pz-storm-combo { color: var(--puzzle-partial); font-weight: 600; }
+.pz-storm-side { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--text); }
+.pz-storm-side-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--muted); }
+.pz-storm-side-dot.w { background: #f0f0f0; }
+.pz-storm-side-dot.b { background: #222; }
+.pz-storm-results { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; max-width: 220px; min-height: 8px; }
+.pz-storm-msg { font-size: 13px; color: var(--muted); line-height: 1.45; max-width: 260px; }
+.pz-storm-nh { color: var(--accent); font-weight: 700; }
+.pz-storm-bests { font-size: 12px; color: var(--muted); }
+.pz-storm-bests b { color: var(--text); }
+#pz-storm-start { align-self: center; padding: 9px 22px; }
+
+/* Post-run review: the finished run's puzzles, opened one-by-one into the Solve result card + AI. */
+.pz-storm-review { width: 100%; max-width: 300px; text-align: left; display: flex; flex-direction: column; gap: 8px; margin-top: 4px; border-top: 1px solid var(--border); padding-top: 12px; }
+.pz-storm-review-head { font-size: 13px; font-weight: 600; color: var(--muted); text-align: center; }
+#pz-storm-summary-btn { align-self: center; }
+#pz-storm-summary-out { font-size: 13px; }
+.pz-storm-review-list { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.pz-storm-review-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 9px; background: var(--panel2); border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 6px; color: var(--text); font-size: 13px; cursor: pointer; }
+.pz-storm-review-row:hover { background: #3d3a35; }
+.pz-storm-review-row.ok { border-left-color: var(--accent); }
+.pz-storm-review-row.bad { border-left-color: var(--blunder); }
+.pz-rr-mark { font-weight: 700; width: 12px; }
+.pz-storm-review-row.ok .pz-rr-mark { color: var(--accent); }
+.pz-storm-review-row.bad .pz-rr-mark { color: var(--blunder); }
+.pz-rr-theme { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pz-rr-rating { color: var(--muted); font-size: 12px; }
+
+/* Storm review: step-through-the-solution nav, sits directly below the board. Matches the puzzle
+   rail's calm "ghost" button idiom so it reads as part of the app, not raw OS controls. */
+.pz-review-nav { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px; max-width: var(--col-width); }
+.pz-review-nav button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 46px; height: 34px; padding: 0;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--panel2); border-radius: 7px;
+  font-size: 22px; line-height: 1; cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+/* The ‹ › glyphs sit a hair high in most fonts; nudge them onto the optical centre of the box. */
+.pz-review-nav button { padding-bottom: 2px; }
+.pz-review-nav button:hover:not(:disabled) { color: var(--text); border-color: var(--puzzle-accent); background: var(--panel2); }
+.pz-review-nav button:disabled { opacity: 0.35; cursor: default; }
+.pz-review-label { min-width: 150px; text-align: center; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Difficulty + weakness controls (low-emphasis, so solve mode stays calm). */
+.pz-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pz-weakness { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.pz-diff { display: inline-flex; gap: 8px; }
+.pz-ghost.active { color: var(--text); border-color: var(--puzzle-accent); }
+
+/* "From your game" badge (mistake puzzles): warm amber to read as personal, not curated. */
+.pz-source-badge {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--puzzle-partial) 18%, transparent);
+  color: var(--puzzle-partial);
+  border: 1px solid color-mix(in srgb, var(--puzzle-partial) 45%, transparent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+/* When it's a mistake puzzle, tint the prompt card amber to match the badge. */
+.pz-source-badge:not([hidden]) ~ #pz-prompt { border-color: var(--puzzle-partial); border-left-color: var(--puzzle-partial); }
+
+.pz-replay {
+  color: var(--puzzle-partial);
+  font-size: 13px;
+  text-decoration: none;
+  align-self: center;
+}
+.pz-replay:hover { text-decoration: underline; }
+
+/* Weakest-theme stats card. */
+.pz-statcard {
+  border-top: 1px solid var(--panel2);
+  padding-top: 10px;
+}
+/* Collapsed by default: a quiet "Work on ▸" toggle, revealing the theme chips on click. */
+.pz-statcard-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pz-statcard-toggle:hover { color: var(--text); }
+.pz-statcard-caret { font-size: 10px; }
+.pz-statcard-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.pz-statcard-h { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.pz-weak-theme {
+  background: var(--panel2);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.pz-weak-theme b { color: var(--text); }
+
+@media (max-width: 900px) {
+  .puzzle-rail { flex-basis: auto; width: 100%; }
 }

@@ -95,6 +95,9 @@ def status() -> dict:
             "ok": bool(sf_resolved),
             "path": sf_resolved or "",
             "hint": "" if sf_resolved else config.stockfish_install_hint(),
+            # macOS/Apple-Silicon only: flags an Intel build running under Rosetta 2 so the UI can
+            # offer a one-click swap to the native arm64 engine. Best-effort; {suboptimal:False} off-mac.
+            "arch": config.stockfish_arch_report(sf_resolved) if sf_resolved else {"suboptimal": False},
         },
         "claude": {
             "ok": bool(claude_path) or local_llm_on,

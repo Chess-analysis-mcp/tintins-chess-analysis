@@ -2,8 +2,7 @@ name: Traffic stats snapshot
 
 # Snapshots this (public) repo's download/clone/view stats daily and commits the CSVs to a
 # SEPARATE PRIVATE repo, so the numbers aren't visible to the public. Runs in GitHub's cloud —
-# no local machine needed.
-#
+# no local machine needed. This is just for seeing how popular the project is, not trying to track anyone
 # REQUIRES a repo secret `TRAFFIC_TOKEN`: a classic Personal Access Token with the `repo` scope.
 # It needs to do two things the built-in GITHUB_TOKEN can't: read this repo's /traffic data
 # (owner-only) AND push to the private STATS_REPO below. Create one at

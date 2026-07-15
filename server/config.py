@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 
 # Repo root (this file is <repo>/server/config.py), used for repo-relative defaults.
@@ -134,6 +135,84 @@ def stockfish_install_hint(path: str | None = None) -> str:
     )
 
 
+def is_apple_silicon() -> bool:
+    """True on Apple Silicon *hardware*, even when this process runs translated under Rosetta 2.
+
+    `platform.machine()` / `uname -m` report ``x86_64`` inside a Rosetta-translated process, so they
+    can't be trusted to tell arm64 hardware from Intel here; ``sysctl -n hw.optional.arm64`` reports
+    the hardware capability (``1`` on Apple Silicon) regardless of translation.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        out = subprocess.run(
+            ["sysctl", "-n", "hw.optional.arm64"], capture_output=True, text=True, timeout=3
+        )
+    except Exception:  # noqa: BLE001 - detection is best-effort; assume not-arm on any failure
+        return False
+    return out.stdout.strip() == "1"
+
+
+# Mach-O CPU type for arm64 (base type 12 | the 0x01000000 64-bit ABI bit); x86/x86_64 has base 7.
+_CPU_TYPE_ARM64 = 0x0100000C
+
+
+def macho_arch(path: str) -> str:
+    """The CPU architecture of a Mach-O binary: ``arm64`` | ``x86_64`` | ``universal`` | ``unknown``.
+
+    Dependency-free: reads the Mach-O header (magic + cputype) directly, so no ``lipo``/``file``
+    subprocess is needed. A fat/universal binary reports ``universal`` — it carries a native slice,
+    so it is never the Rosetta-mismatch case.
+    """
+    try:
+        with open(path, "rb") as fh:
+            header = fh.read(8)
+    except OSError:
+        return "unknown"
+    if len(header) < 8:
+        return "unknown"
+    magic = header[:4]
+    # Fat / universal (FAT_MAGIC / FAT_MAGIC_64 and their byte-swapped forms).
+    if magic in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf", b"\xbe\xba\xfe\xca", b"\xbf\xba\xfe\xca"):
+        return "universal"
+    # Thin Mach-O: the 4-byte cputype follows the magic, in the magic's endianness (64- or 32-bit).
+    if magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
+        cputype = int.from_bytes(header[4:8], "little")
+    elif magic in (b"\xfe\xed\xfa\xcf", b"\xfe\xed\xfa\xce"):
+        cputype = int.from_bytes(header[4:8], "big")
+    else:
+        return "unknown"
+    if cputype == _CPU_TYPE_ARM64:
+        return "arm64"
+    if cputype & 0xFF == 0x07:  # x86 / x86_64 (base cputype 7, with or without the 64-bit ABI bit)
+        return "x86_64"
+    return "unknown"
+
+
+def stockfish_arch_report(path: str | None = None) -> dict:
+    """Whether the resolved Stockfish is running sub-optimally under Rosetta 2 on Apple Silicon.
+
+    An Intel (x86_64) Stockfish still runs on Apple Silicon, but translated under Rosetta 2 — notably
+    slower for a search-heavy engine (and the symptom of the old first-run install bug that fetched
+    the wrong build). This flags that case so the UI can offer a one-click swap to the native arm64
+    build. Best-effort and macOS-only; everywhere else ``suboptimal`` is False.
+    """
+    resolved = clean_path(path) or STOCKFISH_PATH
+    resolved = shutil.which(resolved) or (resolved if os.path.isfile(resolved) else "")
+    if not resolved or not is_apple_silicon():
+        return {"suboptimal": False, "hardware": "", "binary": "", "path": resolved, "can_fix": False}
+    binary = macho_arch(resolved)
+    suboptimal = binary == "x86_64"
+    return {
+        "suboptimal": suboptimal,
+        "hardware": "arm64",
+        "binary": binary,
+        "path": resolved,
+        # A native arm64 static Stockfish build (stockfish-macos-m1-apple-silicon) exists to download.
+        "can_fix": suboptimal,
+    }
+
+
 # Path to the Stockfish binary. Auto-detected (PATH + common locations) so a standard
 # install needs no config; override with the STOCKFISH_PATH env var.
 STOCKFISH_PATH: str = _resolve_stockfish()
@@ -166,9 +245,9 @@ MATE_SCORE_CP: int = 10000
 # CHESS_USERNAME), suppressing the first-run prompt.
 #
 # LICHESS_USERNAME is specifically the Lichess handle, which is what drives the "open my latest game"
-# autoload — chess.com has no public game-fetch API, so only a Lichess handle is autoloadable.
-# CHESSCOM_USERNAME is the chess.com handle; it folds into USERNAME's profile as a chesscom-pinned
-# alias. These are derived together by `_compose_identity` (called from env at import and re-applied
+# autoload. CHESSCOM_USERNAME is the chess.com handle; it drives the chess.com game fetch +
+# auto-sync (server.core.chesscom) and folds into USERNAME's profile as a chesscom-pinned alias.
+# These are derived together by `_compose_identity` (called from env at import and re-applied
 # from settings.json), so a chess.com-only user (no Lichess handle) is still canonically identified
 # by their chess.com name.
 USERNAME: str = ""
@@ -279,6 +358,13 @@ def _parse_int(name: str, default: int) -> int:
         return default
 
 
+def _parse_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
 # Coaching profile is a HYBRID of two views so it adapts as a player improves:
 #   - "recent form" = the last CHESS_PROFILE_RECENT games (a sliding window; <=0 means all games).
 #   - "lifetime"    = CHESS_PROFILE_LIFETIME: unset/"all" -> all history (default); a positive N ->
@@ -329,6 +415,16 @@ LICHESS_DEFAULT_MAX: int = int(os.environ.get("CHESS_LICHESS_MAX", "3"))
 # HTTP timeout (seconds) for Lichess requests.
 LICHESS_TIMEOUT: float = float(os.environ.get("CHESS_LICHESS_TIMEOUT", "20"))
 
+# Chess.com game import (server.core.chesscom). Uses the public published-data API (no auth).
+# CHESSCOM_API_BASE is overridable for testing. The auto-sync (POST /api/sync/chesscom) checks the
+# configured user's newest CHESSCOM_SYNC_MAX games on app launch and analyses any not yet in
+# history; CHESS_CHESSCOM_SYNC=0 disables the automatic sync (manual fetch still works). Both the
+# on/off flag and the count are user-editable in the Settings panel (settings.json wins over env).
+CHESSCOM_API_BASE: str = os.environ.get("CHESS_CHESSCOM_API_BASE", "https://api.chess.com").rstrip("/")
+CHESSCOM_TIMEOUT: float = float(os.environ.get("CHESS_CHESSCOM_TIMEOUT", "20"))
+CHESSCOM_SYNC_ENABLED: bool = os.environ.get("CHESS_CHESSCOM_SYNC", "1") != "0"
+CHESSCOM_SYNC_MAX: int = int(os.environ.get("CHESS_CHESSCOM_SYNC_MAX", "5"))
+
 # Endgame tablebase (server.core.tablebase). For <=7-man positions the in-browser chat / AI coach
 # facts include the EXACT theoretical result (win/draw/loss + DTZ/DTM) from the public Lichess
 # tablebase API, so endgame advice is precise instead of trusting a depth-limited eval. Best-effort
@@ -365,6 +461,56 @@ APP_MODE: bool = os.environ.get("CHESS_APP_MODE", "0") == "1"
 # subscription path (headless `claude -p`).
 LOCAL_LLM_BASE_URL: str = os.environ.get("CHESS_LOCAL_LLM_BASE_URL", "").strip()
 LOCAL_LLM_MODEL: str = os.environ.get("CHESS_LOCAL_LLM_MODEL", "").strip()
+
+# --- Puzzle mode (server.core.puzzles / puzzle_rating) ------------------------------------------
+# A tactical-trainer built on the same substrate (board, engine, claude_bridge, DATA_DIR). Puzzles
+# ship as small compressed JSONL: a committed offline baseline (server/data/puzzles/baseline.jsonl.gz,
+# >=100/band) plus dense per-band shards downloaded on demand (P3) from a SEPARATE data repo so the
+# app's Releases tab stays app-versions-only. Per-user state (rating, seen_ids, streak) lives in
+# <DATA_DIR>/puzzles/state.json. CHESS_PUZZLES=0 hides the feature entirely.
+PUZZLES_ENABLED: bool = os.environ.get("CHESS_PUZZLES", "1") != "0"
+# Dedicated puzzle-DATA repo (NOT the app repo) hosting the dense band shards as release assets.
+PUZZLE_SHARD_REPO: str = os.environ.get(
+    "CHESS_PUZZLE_SHARD_REPO", "Chess-analysis-mcp/tintins-chess-puzzles"
+).strip()
+PUZZLE_SHARD_TAG: str = os.environ.get("CHESS_PUZZLE_SHARD_TAG", "puzzles-v1").strip()
+# Allow the background shard fetch (P3). 0 = baseline-only / fully offline. On first puzzle use the
+# whole set (~16 MB / 23 bands) downloads in the background and is kept — no windowing, no LRU.
+PUZZLE_DOWNLOAD: bool = os.environ.get("CHESS_PUZZLE_DOWNLOAD", "1") != "0"
+# How long (seconds) a cached puzzle manifest.json is trusted before re-fetching from the data-repo
+# release (P3), mirroring UPDATE_CHECK_INTERVAL. Best-effort; a failed refresh keeps the stale copy.
+PUZZLE_MANIFEST_INTERVAL: int = _parse_int("CHESS_PUZZLE_MANIFEST_INTERVAL", 6 * 3600)
+# Occasionally mix "from your own games" mistake puzzles (P3.5) into the main tactic stream. Default
+# ON: a small fraction of tactics are replaced by a position from one of your own games, so the
+# trainer surfaces your real weaknesses without you having to switch to the "From your games" source.
+# A Settings toggle turns it off. Needs the engine (mistake puzzles validate live) + analysed games.
+PUZZLE_MISTAKE_INTERLEAVE: bool = os.environ.get("CHESS_PUZZLE_MISTAKE_INTERLEAVE", "1") != "0"
+# Probability (0..1) that a curated-tactic request is swapped for an own-game mistake puzzle when
+# interleave is on. 0.2 = ~1 in 5, occasional enough not to derail a tactics session.
+PUZZLE_MISTAKE_INTERLEAVE_PROB: float = _parse_float("CHESS_PUZZLE_MISTAKE_INTERLEAVE_PROB", 0.2)
+# Only let an attempt move the Glicko rating when the puzzle's own RatingDeviation is below this
+# (mirrors Lichess: well-established puzzles only). Higher-RD puzzles still play, but unrated.
+# Kept generous: Glicko already down-weights a high-RD puzzle in the update, so a low gate here
+# needlessly leaves a big slice of perfectly good puzzles unrated (at 90, ~1/3 of the baseline).
+PUZZLE_MAX_RD: int = _parse_int("CHESS_PUZZLE_MAX_RD", 130)
+# Show the solve/miss board animations (square flash, ripple ring, confetti, shake). Off = the
+# result is conveyed by the verdict text colour alone (green / orange / red). Settings toggle.
+PUZZLE_ANIMATIONS: bool = os.environ.get("CHESS_PUZZLE_ANIMATIONS", "1") != "0"
+# Auto-load the next puzzle a beat after a solve (flow-state grinding) instead of waiting for the
+# "Next puzzle" button. The frontend still holds long enough for the solve animations to finish
+# before advancing. Only fires on a solve, never after "Show solution". Settings toggle; OFF by
+# default (opt in via ⚙ Settings) so a solve leaves you on the board until you press "Next puzzle".
+PUZZLE_AUTO_ADVANCE: bool = os.environ.get("CHESS_PUZZLE_AUTO_ADVANCE", "0") != "0"
+# "Puzzle storm" timed rush (P4): solve as many as you can before the clock runs out. Base clock in
+# seconds; a combo run grants a small time bonus and a wrong move costs time (see puzzle_storm.py).
+# Unrated by design (fast, ramping difficulty) - it only tracks a best-score highscore in state.json.
+PUZZLE_STORM_DURATION: int = _parse_int("CHESS_PUZZLE_STORM_DURATION", 180)
+
+
+def _puzzle_dir() -> str:
+    """Per-user puzzle state + downloaded shards (under DATA_DIR, shared by every entry point)."""
+    return os.path.join(DATA_DIR, "puzzles")
+
 
 # --- Auto-update (server.core.updates) ----------------------------------------------------------
 # The app version (canonical = pyproject.toml). Surfaced via /api/app-config and compared against

@@ -34,16 +34,25 @@ TAG = "sf_18"
 _BASE = f"https://github.com/official-stockfish/Stockfish/releases/download/{TAG}"
 
 
-def _candidates() -> list[str]:
+def _candidates(force_arch: str | None = None) -> list[str]:
     """Asset base-names (no extension) to try, best-performing first → most-compatible last.
 
     Empty when there's no prebuilt static binary for this platform/CPU (e.g. Linux on ARM), so the
-    caller falls back to a manual-install hint.
+    caller falls back to a manual-install hint. ``force_arch`` (or ``CHESS_FORCE_STOCKFISH_ARCH``)
+    pins the CPU family — used to fetch the native arm64 build when this process is translated under
+    Rosetta 2 and ``platform.machine()`` would otherwise lie ``x86_64``.
     """
     machine = (os.environ.get("PROCESSOR_ARCHITECTURE") or "").lower()
     import platform
 
-    machine = (platform.machine() or machine).lower()
+    machine = (force_arch or os.environ.get("CHESS_FORCE_STOCKFISH_ARCH") or platform.machine()
+               or machine).lower()
+    # On macOS, trust the *hardware*: a Rosetta-translated process reports x86_64 from platform.machine()
+    # even on Apple Silicon, which would fetch the slow Intel build. config.is_apple_silicon() reads
+    # the hardware capability via sysctl, so we pick the native arm64 engine.
+    if sys.platform == "darwin" and not force_arch \
+            and not os.environ.get("CHESS_FORCE_STOCKFISH_ARCH") and config.is_apple_silicon():
+        machine = "arm64"
     if sys.platform == "darwin":
         if machine in ("arm64", "aarch64"):
             return ["stockfish-macos-m1-apple-silicon"]
@@ -71,10 +80,67 @@ def _candidates() -> list[str]:
     return []
 
 
+def _progress_band() -> tuple[str, int, int] | None:
+    """Where to report download progress: (file, start_pct, end_pct), or None if not requested.
+
+    The installer sets CHESS_INSTALL_PROGRESS (the splash's progress.js) and, optionally,
+    CHESS_INSTALL_PROGRESS_BAND="start,end" — the percentage slice this download owns on the bar.
+    """
+    path = os.environ.get("CHESS_INSTALL_PROGRESS")
+    if not path:
+        return None
+    band = os.environ.get("CHESS_INSTALL_PROGRESS_BAND", "72,92")
+    try:
+        start_s, end_s = band.split(",")
+        return path, int(start_s), int(end_s)
+    except Exception:  # noqa: BLE001 - a malformed band just disables progress reporting
+        return None
+
+
+def _write_progress(path: str, pct: int, step: str) -> None:
+    """Atomically write the splash's progress.js (tmp+rename) so it never reads a partial file."""
+    step = step.replace("\\", "\\\\").replace('"', '\\"')
+    line = (
+        "window.__setInstallProgress && window.__setInstallProgress("
+        f'{{ pct: {pct}, step: "{step}" }});\n'
+    )
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(line)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 def _download(url: str, dest_file: str) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": "tintins-chess-analysis"})
+    band = _progress_band()
     with urllib.request.urlopen(req, timeout=180) as resp, open(dest_file, "wb") as out:
-        shutil.copyfileobj(resp, out)
+        if band is None:
+            shutil.copyfileobj(resp, out)
+            return
+        # Stream in chunks so we can map bytes-downloaded onto the splash's progress bar. The band
+        # is the slice of the overall bar this engine download owns; we only rewrite progress.js when
+        # the whole-number percent changes, to avoid hammering the disk.
+        path, lo, hi = band
+        try:
+            total = int(resp.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        got = 0
+        last = -1
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            out.write(chunk)
+            got += len(chunk)
+            if total > 0:
+                pct = lo + int((hi - lo) * got / total)
+                if pct != last:
+                    last = pct
+                    _write_progress(path, pct, "Downloading the chess engine (Stockfish)…")
 
 
 def _pick_member(names: list[str], asset: str, want_exe: bool) -> str | None:
@@ -131,14 +197,19 @@ def _runs_uci(path: str) -> bool:
 
 
 def main() -> int:
-    # A system engine on PATH already satisfies the app — nothing to download.
-    existing = shutil.which("stockfish")
-    if existing:
-        print(existing)
-        return 0
+    # CHESS_FORCE_STOCKFISH_DOWNLOAD=1 forces a fresh managed download even when a (possibly
+    # wrong-arch) engine already exists — the "swap to the native arm64 build" path.
+    force = os.environ.get("CHESS_FORCE_STOCKFISH_DOWNLOAD") == "1"
+
+    if not force:
+        # A system engine on PATH already satisfies the app — nothing to download.
+        existing = shutil.which("stockfish")
+        if existing:
+            print(existing)
+            return 0
 
     dest = config._managed_stockfish_path()
-    if os.path.exists(dest) and _runs_uci(dest):
+    if not force and os.path.exists(dest) and _runs_uci(dest):
         print(dest)  # a previous download is still good
         return 0
 
