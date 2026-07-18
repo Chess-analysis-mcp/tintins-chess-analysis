@@ -928,6 +928,12 @@ body.history-hidden .history-col { display: none; }
 .history li .h-title { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
 .history li .h-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
 .history li .h-blunders { color: var(--blunder); font-weight: 600; font-size: 12px; white-space: nowrap; }
+/* "Open this game on Lichess/Chess.com" ↗ link in the board header, right after the player names. */
+.meta-open {
+  text-decoration: none; color: var(--muted); font-weight: 700; margin-left: 5px;
+  padding: 0 3px; border-radius: 3px; white-space: nowrap;
+}
+.meta-open:hover { color: var(--accent); background: var(--panel2); }
 .history li.ph, .mistakes li.ph { background: none; color: var(--muted); font-style: italic; cursor: default; padding: 6px 0; }
 .mistakes li.ph:hover { background: none; }
 .history li.load-more {

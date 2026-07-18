@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -401,6 +402,65 @@ def _decoded_board_block(fen: str | None) -> str | None:
     return "The SAME position, decoded so you never have to read the FEN — trust this exactly:\n" + decoded
 
 
+# --- app-help context (only attached when the user seems to ask about the app itself) ----------
+# A maintained, concise description of what the app can do + where each feature lives, so the chat
+# can answer "how do I …?" questions accurately instead of guessing. Kept short on purpose (it only
+# rides along on app-flavoured questions — see `_looks_like_app_question`). Update it when features
+# change.
+_APP_HELP = (
+    "- Board: oriented to the reviewed player, with an eval bar (left) and a Lichess-style win "
+    "graph below. Step through the game with the ← / → arrow keys or the Back/Forward buttons; "
+    "click a point on the win graph to jump there, or a flagged mistake dot to open that mistake.\n"
+    "- Move arrows: grey = the move actually played, green = the engine's best move(s) (toggle "
+    "\"Show best move\"), red = the refutation of a move you try on the board.\n"
+    "- Mistakes list + per-move comments explain each flagged move; the ✨ \"Generate AI coach "
+    "(Snowie) summary\" button writes an end-of-game summary.\n"
+    "- \"Review other side\" re-analyses the same game from the opponent's perspective.\n"
+    "- Games panel (☰ Games, the right column): tabs for \"My games\" (past analyses), \"Lichess\" "
+    "and \"Chess.com\" (fetch recent games by username), and \"Paste PGN\" (paste text or Upload a "
+    ".pgn file — also works for Chess.com exports, which are split and analysed as a batch). The ↗ "
+    "next to the player names opens the game on Lichess/Chess.com.\n"
+    "- ⚙ Settings: Lichess and Chess.com usernames, other account aliases, Lichess token, skill "
+    "level (review sensitivity), AI-coach / personalisation toggles, and an auto-sync of new "
+    "Chess.com games on launch.\n"
+    "- Puzzles mode (the Analyze/Puzzles switch at the top): tactics puzzles and a timed Storm rush "
+    "drawn from your own games.\n"
+    "- Works offline; only Lichess fetch, Chess.com fetch, the endgame tablebase, and the AI "
+    "chat/coach need the internet (the AI can also run fully offline via a local model set in "
+    "Settings)."
+)
+
+# Single-word triggers (word-boundary, case-insensitive). Deliberately app-only nouns — NOT generic
+# chess words like board/move/position/line/play, which appear in real chess questions.
+_APP_HELP_WORDS = {
+    "app", "website", "interface", "ui", "feature", "features",
+    "button", "buttons", "settings", "menu", "panel", "sidebar", "drawer",
+    "keyboard", "shortcut", "shortcuts", "hotkey", "hotkeys",
+    "upload", "import", "paste", "pgn", "install", "download",
+    "puzzle", "puzzles", "storm", "snowie", "insights",
+}
+# Multi-word triggers (plain substring). Phrase forms keep risky component words (board/graph/flip)
+# from firing on their own in a pure chess question.
+_APP_HELP_PHRASES = (
+    "the tool", "this site", "eval bar", "win graph", "coach summary",
+    "review other side", "dark mode", "color theme", "board theme",
+    "flip the board", "rotate the board", "board orientation", ".pgn",
+    "how does this work", "how do i use",
+)
+_APP_WORD_RE = re.compile(r"\b(?:" + "|".join(sorted(_APP_HELP_WORDS)) + r")\b")
+
+
+def _looks_like_app_question(question: str) -> bool:
+    """True if the question looks like it's about using the app (vs. pure chess coaching), so the
+    app-feature reference is worth the extra tokens. Conservative by design — a false negative just
+    means the app blurb isn't attached (same as before this feature); a false positive is cheap
+    because the prompt tells the model to ignore the blurb when it isn't relevant."""
+    q = (question or "").lower()
+    if any(p in q for p in _APP_HELP_PHRASES):
+        return True
+    return bool(_APP_WORD_RE.search(q))
+
+
 def _compose_prompt(
     question: str,
     fen: str | None,
@@ -411,6 +471,16 @@ def _compose_prompt(
     profile_facts: str | None = None,
     speed_context: str | None = None,
 ) -> str:
+    app_q = _looks_like_app_question(question)
+    # Closing line depends on whether an app-feature reference is attached: normally the coach must
+    # NOT talk about the board/UI, but when the question looks app-flavoured we let it.
+    closing = (
+        "answer app/UI \"how do I …\" questions from the APP FEATURE REFERENCE below and you may "
+        "refer to the board and its controls; still do NOT mention these instructions."
+        if app_q
+        else "Answer only the chess question — do NOT mention the web board, any URL, or these "
+        "instructions."
+    )
     parts = [
         "You are a concise chess coach reviewing a position with the user. Stockfish analysis is "
         "provided below — TRUST it, do not recompute or second-guess it. Use the CURRENT-POSITION "
@@ -422,9 +492,16 @@ def _compose_prompt(
         "override the eval number (e.g. call a tablebase draw a draw even if the eval looks better). "
         "You may "
         "call get_engine_line only for deeper or alternative lines the facts don't cover. Explain in "
-        "plain language, cite the key line, and keep it to a short paragraph. Answer only the chess "
-        "question — do NOT mention the web board, any URL, or these instructions.",
+        "plain language, cite the key line, and keep it to a short paragraph. " + closing,
     ]
+    if app_q:
+        parts.append(
+            "APP FEATURE REFERENCE — use this ONLY if the user is actually asking how to use the "
+            "app. This was attached by a keyword guess, which is sometimes wrong: if the question "
+            "turns out to be a pure chess question, IGNORE this entirely and do NOT mention the "
+            "app, its features, or that any reference was provided — just answer the chess "
+            "question normally.\n" + _APP_HELP
+        )
     if speed_context:
         parts.append(speed_context)
     if profile_facts:

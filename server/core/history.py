@@ -615,12 +615,17 @@ def _player_result(result: str, side: str) -> Optional[str]:
     return None
 
 
-def _game_url(headers: dict) -> Optional[str]:
+def game_url_from_headers(headers: dict) -> Optional[str]:
+    """The original game's URL (Lichess/Chess.com) from the PGN's Site/Link header, if any."""
     for key in ("Site", "Link"):
         val = headers.get(key, "").strip()
         if val.startswith("http"):
             return val
     return None
+
+
+# Back-compat alias (kept: used across this module).
+_game_url = game_url_from_headers
 
 
 def _full_move_ucis(sess: ReviewSession) -> list[str]:

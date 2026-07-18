@@ -15,6 +15,9 @@ let orient = "white"; // board orientation; starts at `player` but the `f` hotke
 let currentPgn = null;
 let gameWhite = "";
 let gameBlack = "";
+// URL of the current game on Lichess/Chess.com (from the PGN's Site/Link header), for the ↗ link
+// in the board header. Null when the PGN carried no such URL (e.g. an offline/local PGN).
+let currentGameUrl = null;
 
 let cur = 0; // current timeline node (valid when !exploring)
 let anchorNode = 0; // the review (mistake) node we started from
@@ -967,9 +970,17 @@ function applySession(session) {
   const sens = session.review_elo
     ? ` · sensitivity ~${Math.round(session.review_elo)} Elo`
     : "";
-  $("game-meta").textContent =
-    `${session.white} vs ${session.black} — ${session.result} · reviewing ${session.player} ` +
-    `(acc W ${session.accuracy_white} / B ${session.accuracy_black}) · ${session.num_mistakes} mistakes${sens}`;
+  // Names first (with an "open on Lichess/Chess.com" ↗ right after them), then the review details.
+  // The names + link live in the always-visible board header so they're reachable even when the
+  // Games panel is collapsed on narrow screens.
+  currentGameUrl = session.game_url || null;
+  setGameMeta(
+    session.white,
+    session.black,
+    currentGameUrl,
+    ` — ${session.result} · reviewing ${session.player} ` +
+      `(acc W ${session.accuracy_white} / B ${session.accuracy_black}) · ${session.num_mistakes} mistakes${sens}`
+  );
   mistakes = session.mistakes;
   // Remember the game (PGN + names) so "Review other side" can re-open it for the opponent.
   if (session.pgn) currentPgn = session.pgn;
@@ -1706,6 +1717,10 @@ function beginProvisional(pgn, side, metaText) {
   } catch (_) {
     prov = null; // unparseable PGN -> fall back to a blocking spinner (phase-2 still works)
   }
+  // Pull names + the source-site URL straight from the PGN headers so the header line (names + ↗
+  // link) is populated during analysis too, not only once phase-2 lands.
+  const hdr = pgnHeaders(pgn);
+  currentGameUrl = hdr.url || null;
   if (prov && prov.length >= 2) {
     timeline = prov;
     player = side === "white" || side === "black" ? side : "white";
@@ -1713,7 +1728,8 @@ function beginProvisional(pgn, side, metaText) {
     applyEvalBarTheme();
     renderMoveList(); // provisional notation: navigable immediately, glyphs fill in later
     gotoNode(0);
-    $("game-meta").textContent = metaText || "Analyzing… you can step through the moves now (← / →).";
+    const tail = metaText || "analyzing… you can step through the moves now (← / →)";
+    setGameMeta(hdr.white, hdr.black, currentGameUrl, ` — ${tail}`);
   } else {
     timeline = [];
     renderMoveList();
@@ -2031,6 +2047,62 @@ function renderHistory(games, mode, who) {
       li.addEventListener("click", () => openGame(g.pgn, side));
     }
     ol.appendChild(li);
+  }
+}
+
+// Build a small "open this game on the source site" ↗ anchor (Lichess / Chess.com), or null if
+// there's no usable URL. Opens in a new tab; stops click-propagation so it never triggers a
+// surrounding row/handler.
+function gameLink(url, className) {
+  if (!url || !/^https?:\/\//i.test(url)) return null;
+  let host = "the source site";
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch (_) {}
+  const a = document.createElement("a");
+  a.className = className || "game-open";
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.textContent = "↗";
+  a.title = `Open this game on ${host}`;
+  a.setAttribute("aria-label", `Open this game on ${host}`);
+  a.addEventListener("click", (e) => e.stopPropagation());
+  return a;
+}
+
+// Render the board-header line: "White vs Black" + an optional ↗ source-site link + a details tail.
+// Built via DOM (not innerHTML) so the URL/names can't break out of an attribute or inject markup.
+function setGameMeta(white, black, url, tail) {
+  const gm = $("game-meta");
+  if (!gm) return;
+  gm.textContent = "";
+  const names = document.createElement("span");
+  names.textContent = `${white || "White"} vs ${black || "Black"}`;
+  gm.appendChild(names);
+  const link = gameLink(url, "meta-open");
+  if (link) gm.appendChild(link);
+  if (tail) gm.appendChild(document.createTextNode(tail));
+}
+
+// The original game's URL from PGN Site/Link headers (mirrors history.game_url_from_headers).
+function gameUrlFromHeaders(h) {
+  for (const k of ["Site", "Link"]) {
+    const v = (h && h[k] != null ? String(h[k]) : "").trim();
+    if (/^https?:\/\//i.test(v)) return v;
+  }
+  return null;
+}
+
+// Parse just the White/Black/URL out of a PGN's headers (chess.js), best-effort.
+function pgnHeaders(pgn) {
+  try {
+    const c = new Chess();
+    c.loadPgn(pgn);
+    const h = c.header();
+    return { white: h.White, black: h.Black, url: gameUrlFromHeaders(h) };
+  } catch (_) {
+    return {};
   }
 }
 
