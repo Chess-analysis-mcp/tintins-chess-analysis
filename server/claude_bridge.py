@@ -340,6 +340,67 @@ def _speed_context() -> str | None:
     )
 
 
+def _piece_list(board: chess.Board) -> str:
+    """List every piece and the square it sits on, grouped by colour.
+
+    This pre-does the spatial decode that models (small local ones especially, but Claude too on
+    crowded boards) get wrong when handed a raw FEN. Square-ordered, matching the format that read
+    100% correct in the local-model A/B."""
+    def side(color: chess.Color) -> str:
+        items = [
+            f"{chess.piece_name(p.piece_type)} {chess.square_name(sq)}"
+            for sq in chess.SQUARES
+            if (p := board.piece_at(sq)) is not None and p.color == color
+        ]
+        return ", ".join(items) if items else "(none)"
+
+    stm = "White" if board.turn == chess.WHITE else "Black"
+    return (
+        f"{stm} to move.\n"
+        f"White: {side(chess.WHITE)}\n"
+        f"Black: {side(chess.BLACK)}"
+    )
+
+
+def _ascii_board(board: chess.Board) -> str:
+    """A labelled 8x8 diagram (rank 8 at top, White UPPERCASE) — the extra belt-and-suspenders
+    board we give ONLY local models, which read a raw FEN least reliably."""
+    rows = str(board).split("\n")
+    labelled = "\n".join(f"{8 - i} | {row}" for i, row in enumerate(rows))
+    return (
+        "Board diagram (rank 8 at top, White pieces UPPERCASE):\n"
+        + labelled
+        + "\n    +----------------\n      a b c d e f g h"
+    )
+
+
+def _decoded_board(fen: str | None, *, include_ascii: bool) -> str | None:
+    """Human-readable board(s) decoded from the FEN so the model never parses FEN spatially.
+
+    The piece list goes to every backend (cheap, unambiguous, tightens even Claude's prose); the
+    ASCII diagram is added only for local models. Best-effort: an unparseable FEN yields None."""
+    if not fen:
+        return None
+    try:
+        board = chess.Board(fen)
+    except (ValueError, IndexError):
+        return None
+    parts = [_piece_list(board)]
+    if include_ascii:
+        parts.append(_ascii_board(board))
+    return "\n".join(parts)
+
+
+def _decoded_board_block(fen: str | None) -> str | None:
+    """Labelled decoded-board block for a prompt, or None. Centralises the one gating rule: the
+    ASCII diagram is added only when a local model is active (they read raw FEN least reliably);
+    the piece list always goes in. Shared by the chat prompt and the puzzle-coach facts."""
+    decoded = _decoded_board(fen, include_ascii=local_llm.is_enabled())
+    if not decoded:
+        return None
+    return "The SAME position, decoded so you never have to read the FEN — trust this exactly:\n" + decoded
+
+
 def _compose_prompt(
     question: str,
     fen: str | None,
@@ -377,6 +438,9 @@ def _compose_prompt(
         )
     if fen:
         parts.append(f"Current position the user is viewing (FEN): {fen}")
+        decoded = _decoded_board_block(fen)
+        if decoded:
+            parts.append(decoded)
     if current_facts:
         parts.append(
             f"Engine analysis of the CURRENT position (Stockfish depth {config.DEFAULT_DEPTH}):\n"
@@ -387,6 +451,12 @@ def _compose_prompt(
             parts.append(
                 f"The user reached this position by playing {last_move} (from FEN {move_fen})."
             )
+            origin = _decoded_board(move_fen, include_ascii=local_llm.is_enabled())
+            if origin:
+                parts.append(
+                    f"That FROM position, decoded so you never have to read its FEN — trust this "
+                    f"exactly (the move {last_move} was played here):\n" + origin
+                )
         else:
             parts.append(f"The move in question is {last_move}, available in the current position.")
     if move_facts:
@@ -812,6 +882,7 @@ def _puzzle_facts(
         f"Themes (the motif to teach): {', '.join(themes) if themes else 'unlabelled tactic'}.",
         f"{side.capitalize()} to move. Puzzle rating: {int(round(float(puzzle.get('rating', 1500))))}.",
         f"Position (FEN): {solve_fen}",
+        _decoded_board_block(solve_fen) or "",
         "This is a VERIFIED forced solution from a curated puzzle. Explain why it works; do NOT "
         "second-guess it or propose alternatives.",
         f"Solution line: {line_text}." if line_text else "",
@@ -859,6 +930,7 @@ def _mistake_facts(puzzle: dict, tried: list[dict] | None) -> str:
         + (f" (vs {opp}, {puzzle.get('speed', 'unknown')})." if opp else ".")
         + f" {side.capitalize()} to move.",
         f"Position (FEN): {fen}",
+        _decoded_board_block(fen) or "",
         f"In the actual game the player played {played_san} here, flagged as a {cls}.",
     ]
     ef = _engine_facts(fen, puzzle.get("played_uci"))
@@ -1203,6 +1275,8 @@ def ask(
     )
     profile_facts = _profile_facts() if use_profile else None
     speed_context = _speed_context()
+    # The decoded board (piece list always; ASCII only for local models) is added inside
+    # _compose_prompt via _decoded_board_block, which reads local_llm.is_enabled() itself.
     prompt = _compose_prompt(
         question, fen, last_move, move_fen, current_facts, move_facts, profile_facts,
         speed_context,
