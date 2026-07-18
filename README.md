@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/chess-analysis-mcp-tintins-chess-analysis-badge.png)](https://mseep.ai/app/chess-analysis-mcp-tintins-chess-analysis)
+
 # Chess Review MCP
 
 [![CI](https://github.com/Chess-analysis-mcp/tintins-chess-analysis/actions/workflows/ci.yml/badge.svg)](https://github.com/Chess-analysis-mcp/tintins-chess-analysis/actions/workflows/ci.yml)
