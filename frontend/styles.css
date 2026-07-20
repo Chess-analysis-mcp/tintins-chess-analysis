@@ -277,6 +277,23 @@ main {
   background: #f0f0f0;
   transition: height 0.25s ease;
 }
+/* Lichess-style "M5" mate label, pinned to the winning side's end of the bar */
+#evalbar-mate {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.3px;
+  padding: 2px 0;
+  pointer-events: none;
+  display: none;
+}
+#evalbar-mate.show { display: block; }
+#evalbar-mate.bottom { bottom: 0; }
+#evalbar-mate.top { top: 0; }
 
 /* --- win graph --- */
 #graph-wrap {

@@ -168,6 +168,7 @@ def best_move(body: FenBody) -> JSONResponse:
             "uci": res["line_uci"][0] if res["line_uci"] else None,
             "san": res["best_san"],
             "win_percent": res["win_percent"],
+            "eval": res["eval"],  # e.g. "#5" for a forced mate (drives the eval-bar mate label)
             "side_to_move": res["side_to_move"],
         }
     )

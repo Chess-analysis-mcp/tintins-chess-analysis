@@ -358,10 +358,38 @@ function applyEvalBarTheme() {
     bar.style.background = light;
   }
 }
-function setEvalBar(winWhite) {
+function setEvalBar(winWhite, mateWhite = null) {
   const w = winWhite == null ? 50 : winWhite; // phase-1 (no eval yet) -> neutral
   const bottomShare = orient === "white" ? w : 100 - w;
   $("evalbar-fill").style.height = `${clamp(bottomShare, 0, 100)}%`;
+  setEvalBarMate(mateWhite);
+}
+
+// Show a Lichess-style "M5" at the winning side's end of the eval bar (or clear it).
+// `mateWhite`: signed mate distance from White's view (+ = White mates, - = White gets mated).
+function setEvalBarMate(mateWhite) {
+  const el = $("evalbar-mate");
+  if (!el) return;
+  if (mateWhite == null || mateWhite === 0) {
+    el.className = "";
+    el.textContent = "";
+    return;
+  }
+  const winnerIsWhite = mateWhite > 0;
+  const winnerIsBottom = winnerIsWhite === (orient === "white"); // bottom = the oriented player
+  // Contrast with the winner's fill colour: White's fill is light (dark text), Black's is dark.
+  el.style.color = winnerIsWhite ? "#2b2a27" : "#f0f0f0";
+  el.textContent = `M${Math.abs(mateWhite)}`;
+  el.className = `show ${winnerIsBottom ? "bottom" : "top"}`;
+}
+
+// Parse a mate distance out of an eval string like "#5" / "#-3" (from /best-move, side-to-move
+// perspective) into White's perspective. Returns null when there's no forced mate.
+function mateWhiteFromEval(evalStr, sideToMove) {
+  if (!evalStr || evalStr[0] !== "#") return null;
+  const n = parseInt(evalStr.slice(1), 10);
+  if (!Number.isFinite(n) || n === 0) return null;
+  return sideToMove === "white" ? n : -n;
 }
 
 // --- verdict / status ----------------------------------------------------
@@ -481,7 +509,7 @@ function gotoNode(n) {
   }
   chess.load(timeline[cur].fen);
   renderBoard();
-  setEvalBar(timeline[cur].win_white);
+  setEvalBar(timeline[cur].win_white, timeline[cur].mate_white);
   renderVerdict(null);
   updateStatus();
   updateNav();
@@ -499,7 +527,10 @@ function flipBoard() {
   orient = orient === "white" ? "black" : "white";
   applyEvalBarTheme();
   renderBoard();
-  setEvalBar(timeline[cur] ? timeline[cur].win_white : 50);
+  setEvalBar(
+    timeline[cur] ? timeline[cur].win_white : 50,
+    timeline[cur] ? timeline[cur].mate_white : null,
+  );
   renderGraph();
 }
 
@@ -551,7 +582,10 @@ async function syncExplore() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fen: chess.fen() }),
     }).then((r) => r.json());
-    setEvalBar(info.side_to_move === "white" ? info.win_percent : 100 - info.win_percent);
+    setEvalBar(
+      info.side_to_move === "white" ? info.win_percent : 100 - info.win_percent,
+      mateWhiteFromEval(info.eval, info.side_to_move),
+    );
   } catch (_) {}
 }
 
@@ -571,7 +605,7 @@ async function onUserMove(orig, dest) {
     chatMove = (fm && fm.san) || null;
     cur += 1;
     renderBoard();
-    setEvalBar(timeline[cur].win_white);
+    setEvalBar(timeline[cur].win_white, timeline[cur].mate_white);
     renderVerdict(null);
     updateStatus();
     updateNav();

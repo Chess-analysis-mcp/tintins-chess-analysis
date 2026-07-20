@@ -40,6 +40,7 @@ class _PosEval:
     cp_stm: float  # signed centipawns for the side to move (mate -> +/-MATE_SCORE_CP)
     best_pv_uci: list[str]  # principal variation (empty if terminal)
     is_terminal: bool
+    mate: int | None = None  # forced mate-in-N from the side-to-move's view (+ = stm mates)
 
 
 def _signed_cp(cp: int | None, mate: int | None) -> float:
@@ -65,6 +66,7 @@ def _evaluate_position(board: chess.Board, *, depth: int) -> _PosEval:
     return _PosEval(
         win_stm=win_percent_from_score(best.cp, best.mate),
         cp_stm=_signed_cp(best.cp, best.mate),
+        mate=best.mate,
         best_pv_uci=list(best.pv_uci),
         is_terminal=False,
     )
@@ -337,6 +339,14 @@ def _win_white(pe: "_PosEval", turn: chess.Color) -> float:
     return pe.win_stm if turn == chess.WHITE else 100.0 - pe.win_stm
 
 
+def _mate_white(pe: "_PosEval", turn: chess.Color) -> int | None:
+    """Forced mate-in-N from White's perspective (+ = White mates, - = White gets mated),
+    or None if there's no forced mate. `pe.mate` is from the side-to-move's view."""
+    if pe.mate is None:
+        return None
+    return pe.mate if turn == chess.WHITE else -pe.mate
+
+
 def _build_timeline(
     steps: list[tuple[chess.Board, chess.Move]],
     pos_evals: list["_PosEval"],
@@ -359,6 +369,7 @@ def _build_timeline(
             "node": k,
             "fen": board.fen(),
             "win_white": round(_win_white(pos_evals[k], turn), 1),
+            "mate_white": _mate_white(pos_evals[k], turn),
             "color": "white" if turn == chess.WHITE else "black",
             "move_number": board.fullmove_number,
         }
