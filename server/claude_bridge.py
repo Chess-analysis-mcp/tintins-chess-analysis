@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -340,6 +341,126 @@ def _speed_context() -> str | None:
     )
 
 
+def _piece_list(board: chess.Board) -> str:
+    """List every piece and the square it sits on, grouped by colour.
+
+    This pre-does the spatial decode that models (small local ones especially, but Claude too on
+    crowded boards) get wrong when handed a raw FEN. Square-ordered, matching the format that read
+    100% correct in the local-model A/B."""
+    def side(color: chess.Color) -> str:
+        items = [
+            f"{chess.piece_name(p.piece_type)} {chess.square_name(sq)}"
+            for sq in chess.SQUARES
+            if (p := board.piece_at(sq)) is not None and p.color == color
+        ]
+        return ", ".join(items) if items else "(none)"
+
+    stm = "White" if board.turn == chess.WHITE else "Black"
+    return (
+        f"{stm} to move.\n"
+        f"White: {side(chess.WHITE)}\n"
+        f"Black: {side(chess.BLACK)}"
+    )
+
+
+def _ascii_board(board: chess.Board) -> str:
+    """A labelled 8x8 diagram (rank 8 at top, White UPPERCASE) — the extra belt-and-suspenders
+    board we give ONLY local models, which read a raw FEN least reliably."""
+    rows = str(board).split("\n")
+    labelled = "\n".join(f"{8 - i} | {row}" for i, row in enumerate(rows))
+    return (
+        "Board diagram (rank 8 at top, White pieces UPPERCASE):\n"
+        + labelled
+        + "\n    +----------------\n      a b c d e f g h"
+    )
+
+
+def _decoded_board(fen: str | None, *, include_ascii: bool) -> str | None:
+    """Human-readable board(s) decoded from the FEN so the model never parses FEN spatially.
+
+    The piece list goes to every backend (cheap, unambiguous, tightens even Claude's prose); the
+    ASCII diagram is added only for local models. Best-effort: an unparseable FEN yields None."""
+    if not fen:
+        return None
+    try:
+        board = chess.Board(fen)
+    except (ValueError, IndexError):
+        return None
+    parts = [_piece_list(board)]
+    if include_ascii:
+        parts.append(_ascii_board(board))
+    return "\n".join(parts)
+
+
+def _decoded_board_block(fen: str | None) -> str | None:
+    """Labelled decoded-board block for a prompt, or None. Centralises the one gating rule: the
+    ASCII diagram is added only when a local model is active (they read raw FEN least reliably);
+    the piece list always goes in. Shared by the chat prompt and the puzzle-coach facts."""
+    decoded = _decoded_board(fen, include_ascii=local_llm.is_enabled())
+    if not decoded:
+        return None
+    return "The SAME position, decoded so you never have to read the FEN — trust this exactly:\n" + decoded
+
+
+# --- app-help context (only attached when the user seems to ask about the app itself) ----------
+# A maintained, concise description of what the app can do + where each feature lives, so the chat
+# can answer "how do I …?" questions accurately instead of guessing. Kept short on purpose (it only
+# rides along on app-flavoured questions — see `_looks_like_app_question`). Update it when features
+# change.
+_APP_HELP = (
+    "- Board: oriented to the reviewed player, with an eval bar (left) and a Lichess-style win "
+    "graph below. Step through the game with the ← / → arrow keys or the Back/Forward buttons; "
+    "click a point on the win graph to jump there, or a flagged mistake dot to open that mistake.\n"
+    "- Move arrows: grey = the move actually played, green = the engine's best move(s) (toggle "
+    "\"Show best move\"), red = the refutation of a move you try on the board.\n"
+    "- Mistakes list + per-move comments explain each flagged move; the ✨ \"Generate AI coach "
+    "(Snowie) summary\" button writes an end-of-game summary.\n"
+    "- \"Review other side\" re-analyses the same game from the opponent's perspective.\n"
+    "- Games panel (☰ Games, the right column): tabs for \"My games\" (past analyses), \"Lichess\" "
+    "and \"Chess.com\" (fetch recent games by username), and \"Paste PGN\" (paste text or Upload a "
+    ".pgn file — also works for Chess.com exports, which are split and analysed as a batch). The ↗ "
+    "next to the player names opens the game on Lichess/Chess.com.\n"
+    "- ⚙ Settings: Lichess and Chess.com usernames, other account aliases, Lichess token, skill "
+    "level (review sensitivity), AI-coach / personalisation toggles, and an auto-sync of new "
+    "Chess.com games on launch.\n"
+    "- Puzzles mode (the Analyze/Puzzles switch at the top): tactics puzzles and a timed Storm rush "
+    "drawn from your own games.\n"
+    "- Works offline; only Lichess fetch, Chess.com fetch, the endgame tablebase, and the AI "
+    "chat/coach need the internet (the AI can also run fully offline via a local model set in "
+    "Settings)."
+)
+
+# Single-word triggers (word-boundary, case-insensitive). Deliberately app-only nouns — NOT generic
+# chess words like board/move/position/line/play, which appear in real chess questions.
+_APP_HELP_WORDS = {
+    "app", "website", "interface", "ui", "feature", "features",
+    "button", "buttons", "settings", "menu", "panel", "sidebar", "drawer",
+    "keyboard", "shortcut", "shortcuts", "hotkey", "hotkeys",
+    "upload", "import", "paste", "pgn", "install", "download",
+    "puzzle", "puzzles", "storm", "snowie", "insights",
+}
+# Multi-word triggers (plain substring). Phrase forms keep risky component words (board/graph/flip)
+# from firing on their own in a pure chess question.
+_APP_HELP_PHRASES = (
+    "the tool", "this site", "eval bar", "win graph", "coach summary",
+    "review other side", "dark mode", "color theme", "board theme",
+    "flip the board", "rotate the board", "board orientation", ".pgn",
+    "how does this work", "how do i use",
+)
+_APP_WORD_RE = re.compile(r"\b(?:" + "|".join(sorted(_APP_HELP_WORDS)) + r")\b")
+
+
+def _looks_like_app_question(question: str) -> bool:
+    """True if the question looks like it's about using the app (vs. pure chess coaching), so the
+    app-feature reference is worth the extra tokens. Conservative by design — a false negative just
+    means the app blurb isn't attached (same as before this feature); a false positive is cheap
+    because the prompt tells the model to ignore the blurb when it isn't relevant."""
+    q = (question or "").lower()
+    if any(p in q for p in _APP_HELP_PHRASES):
+        return True
+    return bool(_APP_WORD_RE.search(q))
+
+
 def _compose_prompt(
     question: str,
     fen: str | None,
@@ -350,6 +471,16 @@ def _compose_prompt(
     profile_facts: str | None = None,
     speed_context: str | None = None,
 ) -> str:
+    app_q = _looks_like_app_question(question)
+    # Closing line depends on whether an app-feature reference is attached: normally the coach must
+    # NOT talk about the board/UI, but when the question looks app-flavoured we let it.
+    closing = (
+        "answer app/UI \"how do I …\" questions from the APP FEATURE REFERENCE below and you may "
+        "refer to the board and its controls; still do NOT mention these instructions."
+        if app_q
+        else "Answer only the chess question — do NOT mention the web board, any URL, or these "
+        "instructions."
+    )
     parts = [
         "You are a concise chess coach reviewing a position with the user. Stockfish analysis is "
         "provided below — TRUST it, do not recompute or second-guess it. Use the CURRENT-POSITION "
@@ -361,9 +492,16 @@ def _compose_prompt(
         "override the eval number (e.g. call a tablebase draw a draw even if the eval looks better). "
         "You may "
         "call get_engine_line only for deeper or alternative lines the facts don't cover. Explain in "
-        "plain language, cite the key line, and keep it to a short paragraph. Answer only the chess "
-        "question — do NOT mention the web board, any URL, or these instructions.",
+        "plain language, cite the key line, and keep it to a short paragraph. " + closing,
     ]
+    if app_q:
+        parts.append(
+            "APP FEATURE REFERENCE — use this ONLY if the user is actually asking how to use the "
+            "app. This was attached by a keyword guess, which is sometimes wrong: if the question "
+            "turns out to be a pure chess question, IGNORE this entirely and do NOT mention the "
+            "app, its features, or that any reference was provided — just answer the chess "
+            "question normally.\n" + _APP_HELP
+        )
     if speed_context:
         parts.append(speed_context)
     if profile_facts:
@@ -377,6 +515,9 @@ def _compose_prompt(
         )
     if fen:
         parts.append(f"Current position the user is viewing (FEN): {fen}")
+        decoded = _decoded_board_block(fen)
+        if decoded:
+            parts.append(decoded)
     if current_facts:
         parts.append(
             f"Engine analysis of the CURRENT position (Stockfish depth {config.DEFAULT_DEPTH}):\n"
@@ -387,6 +528,12 @@ def _compose_prompt(
             parts.append(
                 f"The user reached this position by playing {last_move} (from FEN {move_fen})."
             )
+            origin = _decoded_board(move_fen, include_ascii=local_llm.is_enabled())
+            if origin:
+                parts.append(
+                    f"That FROM position, decoded so you never have to read its FEN — trust this "
+                    f"exactly (the move {last_move} was played here):\n" + origin
+                )
         else:
             parts.append(f"The move in question is {last_move}, available in the current position.")
     if move_facts:
@@ -812,6 +959,7 @@ def _puzzle_facts(
         f"Themes (the motif to teach): {', '.join(themes) if themes else 'unlabelled tactic'}.",
         f"{side.capitalize()} to move. Puzzle rating: {int(round(float(puzzle.get('rating', 1500))))}.",
         f"Position (FEN): {solve_fen}",
+        _decoded_board_block(solve_fen) or "",
         "This is a VERIFIED forced solution from a curated puzzle. Explain why it works; do NOT "
         "second-guess it or propose alternatives.",
         f"Solution line: {line_text}." if line_text else "",
@@ -859,6 +1007,7 @@ def _mistake_facts(puzzle: dict, tried: list[dict] | None) -> str:
         + (f" (vs {opp}, {puzzle.get('speed', 'unknown')})." if opp else ".")
         + f" {side.capitalize()} to move.",
         f"Position (FEN): {fen}",
+        _decoded_board_block(fen) or "",
         f"In the actual game the player played {played_san} here, flagged as a {cls}.",
     ]
     ef = _engine_facts(fen, puzzle.get("played_uci"))
@@ -1203,6 +1352,8 @@ def ask(
     )
     profile_facts = _profile_facts() if use_profile else None
     speed_context = _speed_context()
+    # The decoded board (piece list always; ASCII only for local models) is added inside
+    # _compose_prompt via _decoded_board_block, which reads local_llm.is_enabled() itself.
     prompt = _compose_prompt(
         question, fen, last_move, move_fen, current_facts, move_facts, profile_facts,
         speed_context,

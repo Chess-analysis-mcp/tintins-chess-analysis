@@ -15,6 +15,7 @@ from server import config
 from server.core import app_liveness
 from server.core import lines
 from server.core import local_llm
+from server.core import history as history_mod
 from server.core import session as session_mod
 
 router = APIRouter()
@@ -131,6 +132,9 @@ def get_session() -> dict:
     # The raw PGN, so the board can re-analyse this same game from the other side without a refetch.
     # Web-only (kept off summarize_session so the MCP tool output stays compact).
     summary["pgn"] = sess.pgn
+    # A link back to the game on Lichess/Chess.com (from the PGN's Site/Link header), so the board
+    # header can offer an "open on the source site" arrow. Web-only.
+    summary["game_url"] = history_mod.game_url_from_headers(sess.headers)
     # An already-generated AI coach summary (from this session or restored from cache), so reopening
     # a game shows it immediately instead of making the user press "Generate". Web-only.
     summary["coach_ai_text"] = sess.coach_ai_text
