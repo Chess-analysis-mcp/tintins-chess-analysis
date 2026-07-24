@@ -449,7 +449,24 @@ PRIVATE_NETS = [
 
 # The IP address assigned to the host machine. 
 # This is used to determine if the server is running on a private network.
-ASSIGNED_HOST: str = socket.gethostbyname(socket.gethostname())
+
+# We can't rely on socket.gethostbyname(socket.gethostname()) 
+# all platforms (esp WSL). Instead create a UDP socket and take the
+# IP address of the interface that would be used to reach a public IP
+def get_assigned_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Does not actually establish a connection; sends no packets
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+# Capture the assigned host IP
+ASSIGNED_HOST: str = get_assigned_ip()
 
 # Ensure that the assigned host is a private address space. If not, 
 # default to loopback.
@@ -460,6 +477,14 @@ def _ensure_private_address_space(ip_str):
 # The host address that the server will bind to. If the assigned host is not in a 
 # private address space (public ip, tailscale, etc), it defaults to loopback.
 LOCAL_HOST: str = _ensure_private_address_space(ASSIGNED_HOST)
+
+
+# Environment variables may be set upstream. Only override the default host if the env var 
+# is set to the hardcoded loopback address (as in batch files).
+DEFAULT_HOST: str = os.environ.get("CHESS_WEB_HOST", "NONE")
+
+if DEFAULT_HOST == "127.0.0.1":
+    os.environ["CHESS_WEB_HOST"] = LOCAL_HOST
 
 # Web board (Phase 4). The FastAPI server runs in the same process as the MCP server,
 # sharing the one engine pool and ReviewSession. WEB_AUTOSTART=0 disables the autostart
