@@ -9,6 +9,8 @@ import os
 import shutil
 import subprocess
 import sys
+import socket
+import ipaddress
 
 # Repo root (this file is <repo>/server/config.py), used for repo-relative defaults.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -437,10 +439,57 @@ TABLEBASE_API_BASE: str = os.environ.get(
 ).rstrip("/")
 TABLEBASE_TIMEOUT: float = float(os.environ.get("CHESS_TABLEBASE_TIMEOUT", "6"))
 
+# Define private network ranges so the web board can auto-bind to a private LAN IP 
+# instead of LOOPBACK/localhost (if available)
+PRIVATE_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("172.16.0.0/12"),
+]
+
+# The IP address assigned to the host machine. 
+# This is used to determine if the server is running on a private network.
+
+# We can't rely on socket.gethostbyname(socket.gethostname()) 
+# all platforms (esp WSL). Instead create a UDP socket and take the
+# IP address of the interface that would be used to reach a public IP
+def get_assigned_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Does not actually establish a connection; sends no packets
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+# Capture the assigned host IP
+ASSIGNED_HOST: str = get_assigned_ip()
+
+# Ensure that the assigned host is a private address space. If not, 
+# default to loopback.
+def _ensure_private_address_space(ip_str):
+    ip = ipaddress.ip_address(ip_str)
+    return ip_str if any(ip in net for net in PRIVATE_NETS) else "127.0.0.1"
+
+# The host address that the server will bind to. If the assigned host is not in a 
+# private address space (public ip, tailscale, etc), it defaults to loopback.
+LOCAL_HOST: str = _ensure_private_address_space(ASSIGNED_HOST)
+
+
+# Environment variables may be set upstream. Only override the default host if the env var 
+# is set to the hardcoded loopback address (as in batch files).
+DEFAULT_HOST: str = os.environ.get("CHESS_WEB_HOST", "NONE")
+
+if DEFAULT_HOST == "127.0.0.1":
+    os.environ["CHESS_WEB_HOST"] = LOCAL_HOST
+
 # Web board (Phase 4). The FastAPI server runs in the same process as the MCP server,
 # sharing the one engine pool and ReviewSession. WEB_AUTOSTART=0 disables the autostart
 # (e.g. when driving the web server standalone via scripts/run_web.py).
-WEB_HOST: str = os.environ.get("CHESS_WEB_HOST", "127.0.0.1")
+WEB_HOST: str = os.environ.get("CHESS_WEB_HOST", LOCAL_HOST)
 WEB_PORT: int = int(os.environ.get("CHESS_WEB_PORT", "8765"))
 WEB_AUTOSTART: bool = os.environ.get("CHESS_WEB_AUTOSTART", "1") != "0"
 # Auto-open the board in the default browser the first time a game is analysed, so a
