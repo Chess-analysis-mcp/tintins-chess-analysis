@@ -3148,6 +3148,10 @@ async function setPuzzleMode(on, opts = {}) {
     await loadNextPuzzle();
   } else {
     lsSet(PZ_MODE_KEY, "0"); // back in analyze mode -> next open lands on analyze
+    // Supersede every in-flight puzzle handler (a setup move still animating in, a pending "Next
+    // puzzle" fetch, a solution playback). They all check puzzleGen; without this bump, leaving right
+    // after "Next puzzle" let the delayed setup move land on the analysis board ("Invalid move").
+    puzzleGen++;
     clearSolutionPlayback(); // drop any solution step-through + hide its nav
     // Leaving puzzles entirely: bank + drop any storm run and reset the sub-mode to Solve.
     if (stormShown) {

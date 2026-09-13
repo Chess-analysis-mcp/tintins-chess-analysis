@@ -102,6 +102,16 @@ def test_review_other_side_rechecked_after_timeline_loads():
     assert "updateFlipReviewButton()" in body, "applyTimeline() must re-check the Review other side button"
 
 
+def test_leaving_puzzle_mode_cancels_pending_puzzle_work():
+    # Regression guard: puzzle handlers (the delayed setup move, a pending "Next puzzle" fetch, a
+    # solution playback) only stop when puzzleGen changes. Leaving Puzzles mode didn't bump it, so
+    # "Next puzzle" followed quickly by Analyze played a puzzle move onto the analysis board.
+    main_js = TestClient(app_module.create_app()).get("/main.js").text
+    start = main_js.index("async function setPuzzleMode(")
+    body = main_js[start : main_js.index("\n}\n", start)]
+    assert "puzzleGen++" in body, "leaving Puzzles mode must bump puzzleGen to cancel pending puzzle work"
+
+
 def test_js_served_with_javascript_mime_even_if_registry_says_text_plain(monkeypatch):
     # Windows footgun: some installs map `.js` -> `text/plain` in the registry, which makes the
     # browser refuse `<script type="module">` (and thus the vendored chessground/chess.js imports),
