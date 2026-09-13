@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Tintin's AI Chess Analysis</title>
     <!-- Tintin's AI Chess Analysis favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -41,9 +41,9 @@
       </div>
       <div id="game-meta" class="muted">Waiting to open a game…</div>
       <button id="settings-toggle" class="hist-toggle" title="Settings"
-        aria-label="Settings">⚙ Settings</button>
+        aria-label="Settings"><span class="ico">⚙</span> <span class="lbl">Settings</span></button>
       <button id="history-toggle" class="hist-toggle" title="Show / hide the games panel"
-        aria-label="Toggle games panel">☰ Games</button>
+        aria-label="Toggle games panel"><span class="ico">☰</span> <span class="lbl">Games</span></button>
     </header>
 
     <!-- Setup self-check banner (filled by checkSetup() from /api/doctor): shown only when an
@@ -71,6 +71,9 @@
                wrong-move red flash live here, positioned over the board independent of chessground's
                internals so they survive its redraws + orientation flips. Shown only in puzzle mode. -->
           <div id="board-overlay" class="board-overlay" aria-hidden="true"></div>
+          <!-- Phone layout only (display:none on desktop): a classification badge (?? / ? / ?! / ✓)
+               on the square a move landed on, so the verdict is readable on the board itself. -->
+          <div id="move-badge-layer" class="move-badge-layer" aria-hidden="true"></div>
         </div>
 
         <!-- Storm review: step through a finished puzzle's solution on the board. Puzzle mode only,
@@ -90,23 +93,25 @@
         </div>
 
         <div class="controls">
+          <!-- Icons and labels are wrapped in spans (.ico / .lbl / .lbl-long) only so the phone
+               layout can restyle this row as a bottom toolbar; on desktop they render as plain text. -->
           <div class="ctrl-group">
-            <button id="back" title="Back one move (←)">◀ Back</button>
-            <button id="fwd" title="Forward one move (→ or Space)">Forward ▶</button>
+            <button id="back" title="Back one move (←)"><span class="ico">◀</span> <span class="lbl">Back</span></button>
+            <button id="fwd" title="Forward one move (→ or Space)"><span class="lbl">Forward</span> <span class="ico">▶</span></button>
           </div>
           <div class="ctrl-group">
-            <button id="prev-mistake" title="Previous mistake (p)">‹ Mistake</button>
-            <button id="next-mistake" title="Next mistake (n)">Mistake ›</button>
-            <button id="reset" title="Snap back to the move under review">↩ Reset to move</button>
+            <button id="prev-mistake" title="Previous mistake (p)"><span class="ico">‹</span> <span class="lbl">Mistake</span></button>
+            <button id="next-mistake" title="Next mistake (n)"><span class="lbl">Mistake</span> <span class="ico">›</span></button>
+            <button id="reset" title="Snap back to the move under review"><span class="ico">↩</span> <span class="lbl">Reset<span class="lbl-long"> to move</span></span></button>
           </div>
           <label class="toggle" title="Toggle best-move arrows (l)">
-            <input type="checkbox" id="best-toggle" /> Show best move
+            <input type="checkbox" id="best-toggle" /><span class="ico ico-phone">💡</span> <span class="lbl"><span class="lbl-long">Show </span>best<span class="lbl-long"> move</span></span>
           </label>
           <label class="toggle" title="Toggle threat arrows (t) — what the side that just moved is threatening, in yellow">
-            <input type="checkbox" id="threat-toggle" /> Show threats
+            <input type="checkbox" id="threat-toggle" /><span class="ico ico-phone">⚠</span> <span class="lbl"><span class="lbl-long">Show </span>threats</span>
           </label>
           <button id="flip-review" type="button" hidden
-            title="Re-analyse this same game from the other player's perspective (in case the wrong side was picked)">↺ Review other side</button>
+            title="Re-analyse this same game from the other player's perspective (in case the wrong side was picked)"><span class="ico">↺</span> <span class="lbl"><span class="lbl-long">Review </span>other side</span></button>
         </div>
 
         <div id="status" class="status"></div>

@@ -175,6 +175,10 @@ let solutionGen = 0; // bumped to cancel an in-flight fetch/animation (leaving, 
 
 const $ = (id) => document.getElementById(id);
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+// Phone layout (the "Phone layout" block at the end of styles.css). Only for behaviour CSS can't
+// express; it's false at desktop widths, so every desktop code path stays exactly as it was.
+const PHONE_MQ = window.matchMedia("(max-width: 640px)");
+const isPhone = () => PHONE_MQ.matches;
 
 // --- chess helpers -------------------------------------------------------
 function computeDests() {
@@ -362,6 +366,7 @@ function setEvalBar(winWhite) {
 
 // --- verdict / status ----------------------------------------------------
 function renderVerdict(payload) {
+  delete $("verdict").dataset.cls; // colour key for the phone verdict card (unused by desktop CSS)
   if (!payload) return void ($("verdict").innerHTML = "");
   if (payload.error) return void ($("verdict").innerHTML = `<span class="line">${payload.error}</span>`);
   const m = payload.move;
@@ -370,6 +375,7 @@ function renderVerdict(payload) {
   // "best" classification = within BEST_EPS of the top move. If it's NOT literally the engine's
   // top choice, show it as "good" so the badge doesn't contradict the "Best was …" text.
   const label = m.classification === "best" && !m.is_engine_best ? "good" : m.classification;
+  $("verdict").dataset.cls = label;
   $("verdict").innerHTML =
     `<span class="tag ${label}">${label}</span>` +
     `<b>${m.move_san}</b> — win ${m.win_before}% → ${m.win_after}% ` +
@@ -385,17 +391,19 @@ function nodeLabel(i) {
 }
 
 // Compact verdict for the move just tried in explore mode, shown inline in the status banner.
+// Wrapped in .ev so the phone layout can hide it there (its verdict card shows the same thing).
 function exploreVerdictHtml() {
-  if (exploreVerdict === "pending") return ` <span class="line">evaluating…</span>`;
+  if (exploreVerdict === "pending") return `<span class="ev"> <span class="line">evaluating…</span></span>`;
   if (!exploreVerdict) return "";
-  if (exploreVerdict.error) return ` <span class="line">couldn't evaluate that move</span>`;
+  if (exploreVerdict.error) return `<span class="ev"> <span class="line">couldn't evaluate that move</span></span>`;
   const m = exploreVerdict;
   // Mirror renderVerdict: a "best" that isn't literally the engine's #1 reads as "good".
   const label = m.classification === "best" && !m.is_engine_best ? "good" : m.classification;
   return (
-    ` <span class="tag ${label}">${label}</span>` +
+    `<span class="ev"> <span class="tag ${label}">${label}</span>` +
     `<b>${escapeHtml(m.move_san)}</b> — win ${m.win_before}% → ${m.win_after}%` +
-    (m.is_engine_best ? "" : ` · best was <b>${escapeHtml(m.better_move_san || "")}</b>`)
+    (m.is_engine_best ? "" : ` · best was <b>${escapeHtml(m.better_move_san || "")}</b>`) +
+    `</span>`
   );
 }
 
@@ -418,6 +426,42 @@ function updateStatus() {
     const g = mv >= 0 && timeline[mv] ? classGlyph(timeline[mv].classification) : "";
     el.innerHTML = g + escapeHtml(currentPrompt || nodeLabel(cur));
   }
+  renderMoveBadge();
+}
+
+// Phone only: a chess-app-style badge on the square a move landed on, so good vs. blunder is
+// readable on the board itself (the text verdict sits below it on a small screen). Covers a move you
+// tried (pulsing "…" until the engine answers) and, while stepping through the game, the reviewed
+// player's graded moves. A no-op on desktop, where the badge layer is display:none anyway.
+const MOVE_BADGES = { best: "★", good: "✓", inaccuracy: "?!", mistake: "?", blunder: "??", pending: "…" };
+function renderMoveBadge() {
+  const layer = $("move-badge-layer");
+  if (!layer) return;
+  layer.innerHTML = "";
+  if (!isPhone() || puzzleMode || !timeline.length) return;
+  let square = null;
+  let cls = null;
+  if (exploring) {
+    const last = chess.history({ verbose: true }).pop();
+    if (!last) return;
+    square = last.to;
+    if (exploreVerdict === "pending") cls = "pending";
+    else if (exploreVerdict && !exploreVerdict.error) {
+      const m = exploreVerdict;
+      cls = m.classification === "best" && !m.is_engine_best ? "good" : m.classification;
+    }
+  } else if (!atMistakeAnchor() && cur > 0 && timeline[cur - 1] && timeline[cur - 1].move_uci) {
+    square = timeline[cur - 1].move_uci.slice(2, 4);
+    cls = timeline[cur - 1].classification;
+  }
+  if (!square || !MOVE_BADGES[cls]) return;
+  const xy = squareXY(square, orient);
+  const badge = document.createElement("div");
+  badge.className = `move-badge ${cls}`;
+  badge.style.left = xy.left;
+  badge.style.top = xy.top;
+  badge.innerHTML = `<span><b>${MOVE_BADGES[cls]}</b></span>`;
+  layer.appendChild(badge);
 }
 
 // --- navigation ----------------------------------------------------------
@@ -553,6 +597,7 @@ async function onUserMove(orig, dest) {
   refreshBestMoves(); // live best-move arrows for the new position
 
   $("verdict").innerHTML = `<span class="line">Evaluating…</span>`;
+  $("verdict").dataset.cls = "pending";
   let res;
   try {
     const r = await fetch("/api/evaluate", {
@@ -829,7 +874,10 @@ function highlightCurrentMove() {
     el.classList.toggle("active", on);
     if (on) active = el;
   });
-  if (active) active.scrollIntoView({ block: "nearest" });
+  if (active && isPhone()) {
+    // Phone: the move list is a horizontal strip; scroll just the strip, never the page.
+    ol.scrollLeft = active.offsetLeft - (ol.clientWidth - active.offsetWidth) / 2;
+  } else if (active) active.scrollIntoView({ block: "nearest" });
 }
 
 // Compact (a few rows, scrollable) <-> expanded (whole game). Default is compact.
@@ -4417,6 +4465,11 @@ function init() {
   $("threat-toggle").addEventListener("change", (e) => {
     threatArrowOn = e.target.checked;
     refreshBestMoves();
+  });
+  // Crossing the phone breakpoint (rotating a tablet, resizing a window) swaps layouts.
+  PHONE_MQ.addEventListener("change", () => {
+    renderMoveBadge();
+    highlightCurrentMove();
   });
   $("graph").addEventListener("click", onGraphClick);
   $("movelist-expand").addEventListener("click", toggleMoveList);
