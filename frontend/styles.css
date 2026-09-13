@@ -1458,3 +1458,323 @@ body.puzzle-mode .board-col { overflow: visible; max-height: none; }
 @media (max-width: 900px) {
   .puzzle-rail { flex-basis: auto; width: 100%; }
 }
+
+/* --- 📱 Phone button + popover (header) -----------------------------------------------------
+   A quiet header button next to ⚙ Settings; the popover shows a QR code + the address to open this
+   board on a phone on the same Wi-Fi (or how to turn network access on). 📱 Phone, ⚙ Settings and
+   ☰ Games sit in one right-aligned group so a wrapping header never separates them. */
+.hdr-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.hdr-actions .hist-toggle { margin-left: 0; }
+.phone-pop {
+  position: fixed;
+  z-index: 96; /* over the header (90) and the Games drawer (95), under modal overlays (100) */
+  width: 320px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid #000;
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.phone-pop[hidden] { display: none; }
+.pp-title { font-weight: 700; font-size: 15px; margin-bottom: 8px; }
+.pp-row { display: flex; gap: 14px; align-items: center; }
+.pp-qr { flex: none; width: 136px; height: 136px; padding: 8px; background: #fff; border-radius: 6px; }
+.pp-qr img { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+.pp-url {
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: #1d1b16;
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  user-select: all;
+}
+.pp-note { margin-top: 8px; color: var(--muted); font-size: 12px; }
+.pp-keep {
+  margin-top: 10px;
+  padding: 7px 9px;
+  border-left: 3px solid var(--inaccuracy);
+  border-radius: 4px;
+  background: #3a2f12;
+  color: #f0e3c0;
+  font-size: 12.5px;
+}
+.pp-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.pp-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pp-btn:disabled { opacity: 0.6; cursor: default; }
+.phone-pop { overflow-y: auto; } /* max-height is set in positionPhonePop */
+/* "Problems connecting?": a collapsed <details>, only expanded when pressed. */
+.pp-help { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--panel2); }
+.pp-help summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  user-select: none;
+}
+.pp-help summary::-webkit-details-marker { display: none; }
+.pp-help summary::before { content: "▸ "; }
+.pp-help[open] summary::before { content: "▾ "; }
+.pp-help summary:hover { color: var(--text); }
+.pp-help ul { margin: 8px 0 0; padding-left: 16px; font-size: 12.5px; line-height: 1.45; }
+.pp-help li { margin-bottom: 6px; }
+.pp-help li b { color: #fff; }
+
+/* ===================== Phone layout ====================================================
+   Everything in the media query below applies only at phone widths (<=640px); the desktop layout
+   is untouched. Modeled on phone chess apps: a compact top bar, an edge-to-edge board, the move
+   verdict directly under the board (plus a classification badge on the moved piece), a horizontal
+   move strip, and a fixed bottom toolbar. The board and side columns become `display: contents` so
+   their children can be reordered into one column with `order`. */
+.move-badge-layer,
+.ico-phone { display: none; }
+
+@media (max-width: 640px) {
+  :root {
+    --phone-gutter: 8px;
+    --phone-evalbar: 16px; /* wide enough for the "M5" mate label */
+    --board-size: calc(100vw - 2 * var(--phone-gutter) - var(--phone-evalbar) - 6px);
+    --col-width: 100%;
+    --toolbar-h: 56px;
+  }
+  body.puzzle-mode { --board-size: calc(100vw - 2 * var(--phone-gutter)); }
+
+  /* iOS Safari zooms the whole page when an input under 16px gets focus. */
+  input:not([type="checkbox"]):not([type="range"]):not([type="file"]),
+  select,
+  textarea { font-size: 16px !important; }
+
+  /* --- top bar: [Analyze | Puzzles] ........ [⚙] [☰], then a one-line game summary --- */
+  header { padding: 6px var(--phone-gutter); gap: 6px; row-gap: 2px; flex-wrap: wrap; }
+  header h1 { display: none; }
+  .mode-switch { margin-right: 0; }
+  .mode-seg { padding: 6px 14px; font-size: 14px; }
+  .hist-toggle {
+    width: 40px; height: 34px; padding: 0; font-size: 18px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .hist-toggle .lbl { display: none; }
+  .hdr-actions { gap: 6px; }
+  /* You're already on the phone: no "open on your phone" button or popover here. */
+  #phone-toggle,
+  .phone-pop { display: none !important; }
+  #game-meta {
+    order: 10; flex: 1 0 100%; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .setup-banner { padding: 8px var(--phone-gutter); font-size: 13px; }
+
+  /* --- one column, reordered --- */
+  main {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 8px var(--phone-gutter) calc(var(--toolbar-h) + env(safe-area-inset-bottom) + 16px);
+  }
+  body.puzzle-mode main { padding-bottom: 24px; }
+  .board-col,
+  .side-col { display: contents; }
+  .board-wrap { order: 1; gap: 6px; }
+  .pz-review-nav { order: 2; margin-top: 0; }
+  .pz-review-nav[hidden] { display: none; }
+  .puzzle-rail { order: 3; }
+  #verdict { order: 4; }
+  #status { order: 5; }
+  #comment { order: 6; }
+  #movelist-panel { order: 7; }
+  #graph-wrap { order: 8; }
+  #scoreboard { order: 9; }
+  #coach-toggle, #coach, .coach-ai-wrap { order: 10; }
+  .side-col > h2 { order: 11; margin: 4px 0 0; }
+  #mistakes { order: 12; }
+  .chat-panel { order: 13; }
+
+  /* --- board --- */
+  #evalbar { width: var(--phone-evalbar); flex: none; }
+  #board { flex: none; }
+  /* Chessground's default coordinate offsets are fixed pixels tuned for a big board; on a phone they
+     drift off their squares. Pin each label to its own square instead. */
+  .cg-wrap coords { font-size: 10px; opacity: 0.9; }
+  .cg-wrap coords.ranks { left: 2px; top: 1px; width: auto; }
+  .cg-wrap coords.ranks coord { flex: 1 1 0; transform: none; line-height: 1; }
+  .cg-wrap coords.files { left: 0; bottom: 1px; height: auto; }
+  .cg-wrap coords.files coord { flex: 1 1 0; text-align: right; padding-right: 2px; line-height: 1; }
+
+  /* Classification badge on the square a move landed on (placed by renderMoveBadge in main.js). */
+  .move-badge-layer {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: calc(var(--phone-evalbar) + 6px);
+    width: var(--board-size);
+    height: var(--board-size);
+    pointer-events: none;
+    z-index: 6;
+  }
+  body.puzzle-mode .move-badge-layer { display: none; }
+  .move-badge { position: absolute; width: 12.5%; height: 12.5%; color: var(--muted); }
+  .move-badge::before { content: ""; position: absolute; inset: 0; background: currentColor; opacity: 0.32; }
+  .move-badge span {
+    position: absolute;
+    top: -6px;
+    right: -5px;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 4px;
+    border-radius: 11px;
+    border: 1.5px solid #fff;
+    background: currentColor;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .move-badge span b { color: #fff; font: 800 12px/1 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: -0.5px; }
+  .move-badge.best, .move-badge.good { color: var(--best); }
+  .move-badge.inaccuracy { color: var(--inaccuracy); }
+  .move-badge.mistake { color: var(--mistake); }
+  .move-badge.blunder { color: var(--blunder); }
+  .move-badge.pending { color: #77736b; }
+  .move-badge.pending span { animation: badge-pulse 0.9s ease-in-out infinite; }
+  @keyframes badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+  /* --- move verdict card, right under the board --- */
+  .verdict {
+    margin-top: 0;
+    padding: 10px 12px;
+    font-size: 15px;
+    line-height: 1.45;
+    border-left: 4px solid var(--panel2);
+  }
+  .verdict[data-cls="best"], .verdict[data-cls="good"] { border-left-color: var(--best); }
+  .verdict[data-cls="inaccuracy"] { border-left-color: var(--inaccuracy); }
+  .verdict[data-cls="mistake"] { border-left-color: var(--mistake); }
+  .verdict[data-cls="blunder"] { border-left-color: var(--blunder); }
+  .verdict .tag { font-size: 13px; padding: 2px 10px; text-transform: capitalize; }
+  .verdict .line { font-size: 13.5px; }
+
+  .status { padding: 8px 10px; background: var(--panel); border-radius: 6px; font-size: 14px; }
+  .status .ev { display: none; } /* the verdict card above already shows it */
+  .status > .glyph { margin-right: 6px; font-size: 13px; }
+  .status.away button { padding: 5px 10px; font-size: 13px; }
+  .comment { margin-bottom: 0; }
+
+  /* --- move list as a horizontal strip --- */
+  .movelist-panel { margin-bottom: 0; }
+  .movelist-head { display: none; }
+  .movelist,
+  .movelist.compact,
+  .movelist.expanded {
+    position: relative;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 2px;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px;
+    scrollbar-width: none;
+  }
+  .movelist::-webkit-scrollbar { display: none; }
+  .move-row { display: flex; flex: none; align-items: center; column-gap: 2px; padding: 0; }
+  .move-row:nth-child(odd) { background: none; }
+  .move-row .moveno { padding: 0 1px 0 6px; }
+  .movelist .ply { padding: 6px 7px; font-size: 14px; }
+  .movelist .ply.empty { display: none; }
+
+  #graph-wrap { height: 64px; }
+
+  .scoreboard { gap: 6px 12px; padding: 8px 10px; }
+  .scoreboard[hidden] { display: none; }
+  .sb-opening { flex: 1 0 100%; font-size: 12.5px; }
+  .sb-counts { flex-wrap: wrap; }
+
+  .mistakes { margin: 0; }
+  .mistakes li { padding: 11px 12px; }
+  .chat-messages { max-height: 55vh; }
+
+  /* --- fixed bottom toolbar (the controls row) --- */
+  .controls {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 85; /* under the Games drawer (95) and the modal overlays (100) */
+    max-width: none;
+    flex-wrap: nowrap;
+    justify-content: space-around;
+    gap: 2px;
+    padding: 3px 4px calc(3px + env(safe-area-inset-bottom));
+    background: rgba(22, 21, 18, 0.96);
+    border-top: 1px solid #000;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .controls::-webkit-scrollbar { display: none; }
+  .controls [hidden] { display: none !important; }
+  .ctrl-group { display: contents; }
+  .controls button,
+  .controls .toggle {
+    position: relative;
+    flex: 1 0 48px;
+    min-width: 48px;
+    height: 50px;
+    margin: 0;
+    padding: 2px 0 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 10.5px;
+    line-height: 1.1;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .controls button:hover { background: transparent; }
+  .controls button:active,
+  .controls .toggle:active { background: var(--panel2); }
+  .controls .ico { order: -1; font-size: 19px; line-height: 1; }
+  #prev-mistake .ico, #next-mistake .ico { font-size: 30px; line-height: 19px; font-weight: 700; }
+  .controls .ico-phone { display: block; }
+  .controls .lbl { color: var(--muted); white-space: nowrap; }
+  .controls .lbl-long { display: none; }
+  .controls .toggle .lbl { text-transform: capitalize; }
+  .controls .toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+  .controls .toggle:has(input:checked) { background: #2c3a1c; }
+  .controls .toggle:has(input:checked) .lbl { color: #cfe7b0; }
+  .controls .toggle:has(input:disabled) { opacity: 0.4; }
+  #prev-mistake { order: 1; }
+  #back { order: 2; }
+  #fwd { order: 3; }
+  #next-mistake { order: 4; }
+  #reset { order: 5; }
+  .controls .toggle { order: 6; }
+  #flip-review { order: 7; }
+}
+/* Older small phones (320-360px wide): tighten the toolbar so all seven buttons still fit. */
+@media (max-width: 360px) {
+  .controls button,
+  .controls .toggle { flex-basis: 42px; min-width: 42px; font-size: 9.5px; }
+}

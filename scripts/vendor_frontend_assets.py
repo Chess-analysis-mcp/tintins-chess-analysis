@@ -33,6 +33,9 @@ import httpx
 # --- Pinned versions (bump these, then re-run + commit) ------------------------------------------
 CHESSGROUND_VERSION = "9.2.1"
 CHESS_JS_VERSION = "1.4.0"
+# QR code for the 📱 Phone popover. A classic (non-module) script defining a global `qrcode`, loaded
+# lazily by main.js only when the popover opens. MIT licensed (header kept in the file).
+QRCODE_GENERATOR_VERSION = "2.0.4"
 
 _VENDOR_DIR = Path(__file__).resolve().parents[1] / "frontend" / "vendor"
 
@@ -55,6 +58,9 @@ _ASSETS: dict[str, str] = {
     "chessground.cburnett.css": (
         f"https://cdn.jsdelivr.net/npm/chessground@{CHESSGROUND_VERSION}"
         "/assets/chessground.cburnett.css"
+    ),
+    "qrcode.js": (
+        f"https://cdn.jsdelivr.net/npm/qrcode-generator@{QRCODE_GENERATOR_VERSION}/dist/qrcode.js"
     ),
 }
 

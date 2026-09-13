@@ -5,8 +5,10 @@ Values can be overridden via environment variables.
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import shutil
+import socket
 import subprocess
 import sys
 
@@ -446,6 +448,128 @@ WEB_AUTOSTART: bool = os.environ.get("CHESS_WEB_AUTOSTART", "1") != "0"
 # Auto-open the board in the default browser the first time a game is analysed, so a
 # first-time user never has to be told the URL. Set CHESS_WEB_OPEN=0 to disable.
 WEB_OPEN: bool = os.environ.get("CHESS_WEB_OPEN", "1") != "0"
+
+# Binding to one of these listens on every interface, so other devices on the network can connect
+# (the Settings panel's "Allow other devices on my network to connect" option saves "0.0.0.0").
+WILDCARD_HOSTS = ("0.0.0.0", "::")
+
+
+def normalize_web_host(value: object) -> str | None:
+    """Clean a bind address from settings.json or the Settings API.
+
+    Blank/None -> loopback; an IP literal (brackets allowed) or "localhost" -> its canonical form;
+    anything else (a typo, a non-string from a hand-edited settings.json) -> None, so callers can
+    reject it instead of saving a host the server can never bind (which would stop the app starting).
+    """
+    if value is None:
+        return "127.0.0.1"
+    if not isinstance(value, str):
+        return None
+    host = value.strip()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1].strip()
+    if not host:
+        return "127.0.0.1"
+    if host.lower() == "localhost":
+        return "localhost"
+    try:
+        return str(ipaddress.ip_address(host))
+    except ValueError:
+        return None
+
+
+def _browsable_host(host: str) -> str:
+    """The address a browser on THIS computer uses for a server bound to `host`. A wildcard bind is
+    not a connectable address (Windows browsers refuse http://0.0.0.0), so it maps to loopback."""
+    host = (host or "").strip()
+    if not host or host in WILDCARD_HOSTS:
+        return "127.0.0.1"
+    return f"[{host}]" if ":" in host else host
+
+
+# The host the running web server actually bound, set just before uvicorn starts. A saved web_host
+# only takes effect on the next launch, so "what works right now" reads this rather than WEB_HOST.
+WEB_BOUND_HOST: str | None = None
+
+
+def _live_host() -> str:
+    return WEB_BOUND_HOST if WEB_BOUND_HOST is not None else WEB_HOST
+
+
+def board_url() -> str:
+    """URL to open/print for the board on this computer (never http://0.0.0.0)."""
+    return f"http://{_browsable_host(_live_host())}:{WEB_PORT}"
+
+
+def lan_ip() -> str | None:
+    """Best-effort LAN IPv4 of this computer (what a phone on the same Wi-Fi would type), or None.
+
+    Connecting a UDP socket only selects the outbound interface; no packet is sent.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        ip = s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+    return None if ip.startswith("127.") or ip == "0.0.0.0" else ip
+
+
+def _reachable_from_network(host: str | None) -> bool:
+    """True if a server bound to `host` accepts connections from other devices (not loopback-only)."""
+    host = (host or "").strip()
+    if host in WILDCARD_HOSTS:
+        return True
+    if not host or host == "localhost":
+        return False
+    try:
+        return not ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def phone_access() -> dict:
+    """Can a phone or tablet on the same network open the board, and at what address?
+
+    `active`: the running server listens beyond loopback right now. `enabled`: the saved setting asks
+    for it (it only takes effect on restart, so the two differ until then). `url`: the address to open
+    on the phone: the live one when active, otherwise the one it will have after turning it on and
+    restarting (None when this computer has no network address). Shared by the 📱 Phone popover and
+    the AI chat, so both always give the same answer.
+    """
+    active = _reachable_from_network(_live_host())
+    enabled = _reachable_from_network(WEB_HOST)
+    if active:
+        url = lan_board_url()
+    elif enabled:
+        url = lan_board_url(WEB_HOST)
+    else:
+        ip = lan_ip()
+        url = f"http://{ip}:{WEB_PORT}" if ip else None
+    return {
+        "active": active,
+        "enabled": enabled,
+        "restart_needed": active != enabled,
+        "url": url,
+        "port": WEB_PORT,
+    }
+
+
+def lan_board_url(host: str | None = None) -> str | None:
+    """URL other devices use to reach a board bound to `host` (default: the live bind), else None."""
+    host = ((_live_host() if host is None else host) or "").strip()
+    if host in WILDCARD_HOSTS:
+        ip = lan_ip()
+    elif not host or host == "localhost":
+        ip = None
+    else:
+        try:
+            ip = None if ipaddress.ip_address(host).is_loopback else _browsable_host(host)
+        except ValueError:
+            ip = None
+    return f"http://{ip}:{WEB_PORT}" if ip else None
 # "App mode": set by the double-click launcher (Tintin's AI Chess Analysis.command / .bat) when serving the
 # board standalone for users who never touch a terminal. The frontend reads it via
 # /api/app-config and, when on, auto-loads the user's most recent Lichess game on open. Left off

@@ -69,8 +69,11 @@ def analyze_game(
     analysis_cache.store(sess)  # so reopening this game on the board is instant
 
     summary = session_mod.summarize_session(sess)
-    board_url = f"http://{config.WEB_HOST}:{config.WEB_PORT}"
+    board_url = config.board_url()
     summary["board_url"] = board_url
+    lan_url = config.lan_board_url()
+    if lan_url:  # network access is on: other devices (a phone on the same Wi-Fi) can open this
+        summary["board_lan_url"] = lan_url
     # Auto-open the board so a first-time user never depends on the URL being printed.
     web_runner.open_board_once()
     # Persist the game for personalised coaching. Best-effort: history must never break a review.

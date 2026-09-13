@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from typing import Optional
 
 from server import config
@@ -38,6 +39,7 @@ KEYS = (
     "puzzle_mistake_interleave",
     "local_llm_base_url",
     "local_llm_model",
+    "web_host",
 )
 
 
@@ -113,6 +115,20 @@ def apply(settings: dict) -> None:
         config.LOCAL_LLM_BASE_URL = (settings["local_llm_base_url"] or "").strip()
     if "local_llm_model" in settings:
         config.LOCAL_LLM_MODEL = (settings["local_llm_model"] or "").strip()
+    if "web_host" in settings:
+        # The server is already bound by the time a live save happens, so this only takes effect
+        # on the next launch (apply_saved() reads it before uvicorn binds); still applied live so
+        # effective() reflects it immediately for the Settings panel. An unusable value (only possible
+        # by hand-editing settings.json; the API rejects it) falls back to loopback so the app starts.
+        host = config.normalize_web_host(settings["web_host"])
+        if host is None:
+            print(
+                f"[chess-settings] ignoring invalid web_host {settings['web_host']!r}; using 127.0.0.1",
+                file=sys.stderr,
+                flush=True,
+            )
+            host = "127.0.0.1"
+        config.WEB_HOST = host
 
 
 def apply_saved(data_dir: Optional[str] = None) -> dict:
@@ -143,6 +159,7 @@ def effective() -> dict:
         "puzzle_mistake_interleave": config.PUZZLE_MISTAKE_INTERLEAVE,
         "local_llm_base_url": config.LOCAL_LLM_BASE_URL or "",
         "local_llm_model": config.LOCAL_LLM_MODEL or "",
+        "web_host": config.WEB_HOST or "127.0.0.1",
     }
 
 

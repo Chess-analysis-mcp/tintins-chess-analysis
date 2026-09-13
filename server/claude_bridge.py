@@ -423,6 +423,20 @@ _APP_HELP = (
     "- ⚙ Settings: Lichess and Chess.com usernames, other account aliases, Lichess token, skill "
     "level (review sensitivity), AI-coach / personalisation toggles, and an auto-sync of new "
     "Chess.com games on launch.\n"
+    "- 📱 Phone (top bar, next to ⚙ Settings): use this board on a phone or tablet on the same "
+    "Wi-Fi. It shows a QR code to scan with the phone's camera plus the address to type. It needs "
+    "network access: ⚙ Settings → Engine & AI → \"Allow other devices on my network to connect\" "
+    "(or the Turn on button in the 📱 Phone panel), then restart the app. Only turn it on on a "
+    "network you trust (e.g. home Wi-Fi). On the phone the board uses a phone layout with a bottom "
+    "toolbar.\n"
+    "- If the phone can't connect (same list as \"Problems connecting?\" in the 📱 Phone panel): the "
+    "phone must be on the same Wi-Fi, not mobile data; guest, hotel, school and many office networks "
+    "block devices from reaching each other; allow the firewall prompt on Windows (or a Mac with its "
+    "firewall on), or on Windows use Windows Security → Firewall & network protection → Allow an app "
+    "through firewall; the address can change after a router or computer restart, so open 📱 Phone "
+    "again and rescan; a VPN on the computer can show the wrong address or block it, so pause it; "
+    "the app must stay open and the computer awake; a \"Not secure\" label in the phone browser is "
+    "expected (the board is served from the user's own computer without https).\n"
     "- Puzzles mode (the Analyze/Puzzles switch at the top): tactics puzzles and a timed Storm rush "
     "drawn from your own games.\n"
     "- Works offline; only Lichess fetch, Chess.com fetch, the endgame tablebase, and the AI "
@@ -438,6 +452,8 @@ _APP_HELP_WORDS = {
     "keyboard", "shortcut", "shortcuts", "hotkey", "hotkeys",
     "upload", "import", "paste", "pgn", "install", "download",
     "puzzle", "puzzles", "storm", "snowie", "insights",
+    "phone", "phones", "iphone", "android", "tablet", "ipad", "mobile",
+    "wifi", "wi-fi", "qr", "lan", "ip", "network", "vpn", "firewall", "router",
 }
 # Multi-word triggers (plain substring). Phrase forms keep risky component words (board/graph/flip)
 # from firing on their own in a pure chess question.
@@ -446,6 +462,7 @@ _APP_HELP_PHRASES = (
     "review other side", "dark mode", "color theme", "board theme",
     "flip the board", "rotate the board", "board orientation", ".pgn",
     "how does this work", "how do i use",
+    "other device", "another device", "ip address", "same wifi", "same wi-fi",
 )
 _APP_WORD_RE = re.compile(r"\b(?:" + "|".join(sorted(_APP_HELP_WORDS)) + r")\b")
 
@@ -459,6 +476,41 @@ def _looks_like_app_question(question: str) -> bool:
     if any(p in q for p in _APP_HELP_PHRASES):
         return True
     return bool(_APP_WORD_RE.search(q))
+
+
+def _phone_access_facts() -> str:
+    """Live phone-access state for app questions, so the chat can hand over the exact address to open
+    (the same source as the 📱 Phone popover). Best-effort: returns "" rather than break an answer."""
+    try:
+        st = config.phone_access()
+    except Exception:  # noqa: BLE001
+        return ""
+    url = st.get("url")
+    if st.get("active"):
+        if url:
+            return (
+                "PHONE ACCESS RIGHT NOW: ON. On a phone or tablet connected to the same Wi-Fi as this "
+                f"computer, open {url} (or press 📱 Phone and scan the QR code). When the user asks how "
+                "to use it on their phone, give them this exact address, and mention that this "
+                "computer has to stay on with the app running (not asleep or closed) or the phone "
+                "can't reach the board."
+            )
+        return (
+            "PHONE ACCESS RIGHT NOW: ON, but this computer's network address couldn't be found (is it "
+            "connected to Wi-Fi?). The 📱 Phone panel shows the address once it is."
+        )
+    if st.get("enabled"):
+        after = f"the address will be {url}" if url else "the 📱 Phone panel will show the address"
+        return (
+            "PHONE ACCESS RIGHT NOW: turned on in Settings, but it only takes effect after the app is "
+            f"restarted; after restarting, {after}."
+        )
+    then = f" The phone address will then be {url}." if url else ""
+    return (
+        "PHONE ACCESS RIGHT NOW: OFF (only this computer can open the board). To use a phone: press "
+        "📱 Phone → Turn on (or ⚙ Settings → Engine & AI → \"Allow other devices on my network to "
+        "connect\"), restart the app, then open the address on a phone on the same Wi-Fi." + then
+    )
 
 
 def _compose_prompt(
@@ -500,7 +552,7 @@ def _compose_prompt(
             "app. This was attached by a keyword guess, which is sometimes wrong: if the question "
             "turns out to be a pure chess question, IGNORE this entirely and do NOT mention the "
             "app, its features, or that any reference was provided — just answer the chess "
-            "question normally.\n" + _APP_HELP
+            "question normally.\n" + _APP_HELP + "\n" + _phone_access_facts()
         )
     if speed_context:
         parts.append(speed_context)
