@@ -6,6 +6,7 @@ to stderr and never crashes the MCP server, since stdout is owned by the MCP pro
 """
 from __future__ import annotations
 
+import socket
 import sys
 import threading
 import webbrowser
@@ -35,7 +36,7 @@ def open_board_once() -> None:
         if _opened:
             return
         _opened = True
-    url = f"http://{config.WEB_HOST}:{config.WEB_PORT}"
+    url = config.board_url()
     try:
         if webbrowser.open(url):
             print(f"[chess-web] opened board in browser: {url}", file=sys.stderr, flush=True)
@@ -50,7 +51,32 @@ def open_board_once() -> None:
               file=sys.stderr, flush=True)
 
 
+def board_port_in_use(host: str, port: int) -> bool:
+    """True if a board (or anything) already answers on this computer's loopback at `port`.
+
+    Checked before binding: a wildcard (0.0.0.0) listener and a loopback listener can share one port
+    on macOS/Windows, silently splitting traffic between two servers instead of the second one
+    failing to bind. Only relevant when `host` covers loopback (wildcard or a loopback name).
+    """
+    host = (host or "").strip()
+    if host not in config.WILDCARD_HOSTS and host not in ("", "127.0.0.1", "localhost"):
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def _serve() -> None:
+    if board_port_in_use(config.WEB_HOST, config.WEB_PORT):
+        print(
+            f"[chess-web] port {config.WEB_PORT} is already in use on this computer (another board "
+            "still running?); board disabled for this process.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
     try:
         cfg = uvicorn.Config(
             create_app(),
@@ -79,8 +105,10 @@ def start_in_thread() -> None:
             return
         _thread = threading.Thread(target=_serve, name="chess-web", daemon=True)
         _thread.start()
+        lan_url = config.lan_board_url()
         print(
-            f"[chess-web] serving board at http://{config.WEB_HOST}:{config.WEB_PORT}",
+            f"[chess-web] serving board at {config.board_url()}"
+            + (f" (other devices on your network: {lan_url})" if lan_url else ""),
             file=sys.stderr,
             flush=True,
         )

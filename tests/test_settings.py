@@ -102,6 +102,56 @@ def test_web_host_blank_falls_back_to_loopback(restore_config):
     assert config.WEB_HOST == "127.0.0.1"
 
 
+@pytest.mark.parametrize("bad", ["not a host!", "0.0.0.0:8765", True, 123, ["0.0.0.0"]])
+def test_invalid_saved_web_host_falls_back_to_loopback(bad, restore_config):
+    # A hand-edited settings.json must never stop the app starting (a bool used to crash apply(),
+    # a typo used to make uvicorn fail to bind): fall back to loopback instead.
+    config.WEB_HOST = "0.0.0.0"
+    settings.apply({"web_host": bad})
+    assert config.WEB_HOST == "127.0.0.1"
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, "127.0.0.1"), ("", "127.0.0.1"), ("  0.0.0.0 ", "0.0.0.0"), ("[::]", "::"),
+        ("LOCALHOST", "localhost"), ("192.168.1.20", "192.168.1.20"), ("::1", "::1"),
+        ("my-laptop.local", None), ("0.0.0.0:8765", None), (7, None),
+    ],
+)
+def test_normalize_web_host(raw, expected):
+    assert config.normalize_web_host(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "host, expected",
+    [
+        ("127.0.0.1", "http://127.0.0.1:8765"), ("0.0.0.0", "http://127.0.0.1:8765"),
+        ("::", "http://127.0.0.1:8765"), ("", "http://127.0.0.1:8765"),
+        ("192.168.1.20", "http://192.168.1.20:8765"), ("::1", "http://[::1]:8765"),
+    ],
+)
+def test_board_url_is_always_browsable(host, expected, monkeypatch):
+    # http://0.0.0.0 can't be opened on Windows, so a wildcard bind must print/open loopback.
+    monkeypatch.setattr(config, "WEB_HOST", host)
+    monkeypatch.setattr(config, "WEB_PORT", 8765)
+    assert config.board_url() == expected
+
+
+def test_lan_board_url_only_when_reachable_from_other_devices(monkeypatch):
+    monkeypatch.setattr(config, "WEB_PORT", 8765)
+    monkeypatch.setattr(config, "lan_ip", lambda: "192.168.1.20")
+    monkeypatch.setattr(config, "WEB_HOST", "127.0.0.1")
+    assert config.lan_board_url() is None
+    monkeypatch.setattr(config, "WEB_HOST", "0.0.0.0")
+    assert config.lan_board_url() == "http://192.168.1.20:8765"
+    monkeypatch.setattr(config, "WEB_HOST", "10.0.0.5")  # bound to one specific interface
+    assert config.lan_board_url() == "http://10.0.0.5:8765"
+    monkeypatch.setattr(config, "WEB_HOST", "0.0.0.0")
+    monkeypatch.setattr(config, "lan_ip", lambda: None)  # offline / no network interface
+    assert config.lan_board_url() is None
+
+
 def test_personalize_history_toggle_persists(tmp_path, restore_config):
     d = str(tmp_path)
     settings.update({"personalize_history": False}, data_dir=d)  # opt-out (default is on)

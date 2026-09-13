@@ -391,6 +391,11 @@ panel (no file editing): your **username** and other accounts, an optional **Lic
 toggles. Saving applies immediately, to both the standalone app and the Claude Code workflow (they
 share one `settings.json`).
 
+To use the board from a **phone or tablet**, turn on *Settings → Engine & AI → Allow other devices on
+my network to connect* and restart the app; the Settings panel then shows the address to open (e.g.
+`http://192.168.1.20:8765`) on any device on the same Wi-Fi. Only do this on a network you trust:
+anyone on it can open the board and use your AI coach.
+
 Everything is also settable via environment variables (`settings.json` wins where both are set). The
 handful worth knowing:
 

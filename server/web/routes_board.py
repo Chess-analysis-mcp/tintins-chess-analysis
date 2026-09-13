@@ -7,7 +7,7 @@ the same singleton ReviewSession + engine pool the MCP tools use.
 from __future__ import annotations
 
 import chess
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -17,6 +17,7 @@ from server.core import lines
 from server.core import local_llm
 from server.core import history as history_mod
 from server.core import session as session_mod
+from server.web.local_client import is_local_client
 
 router = APIRouter()
 
@@ -49,18 +50,22 @@ def _probe_online() -> bool:
 
 
 @router.post("/ping")
-def post_ping() -> dict:
+def post_ping(request: Request) -> dict:
     """App-mode heartbeat (backstop): the open tab calls this periodically. A long silence means the
-    tab is gone; the app-liveness watchdog then shuts the standalone server down. No-op otherwise."""
-    app_liveness.beat()
+    tab is gone; the app-liveness watchdog then shuts the standalone server down. No-op otherwise.
+    Only this computer's tab counts: the app's lifetime follows its own window, not a phone's."""
+    if is_local_client(request):
+        app_liveness.beat()
     return {"ok": True}
 
 
 @router.post("/closing")
-def post_closing() -> dict:
+def post_closing(request: Request) -> dict:
     """App-mode close beacon: the tab fires this on `pagehide` (close/refresh). After a short grace
-    with no heartbeat (i.e. not a refresh) the server exits. Sent via navigator.sendBeacon."""
-    app_liveness.closing()
+    with no heartbeat (i.e. not a refresh) the server exits. Sent via navigator.sendBeacon.
+    Ignored from other devices, so closing the board on a phone never quits the app."""
+    if is_local_client(request):
+        app_liveness.closing()
     return {"ok": True}
 
 

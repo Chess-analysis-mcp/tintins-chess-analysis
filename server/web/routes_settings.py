@@ -9,13 +9,14 @@ from __future__ import annotations
 import shutil
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server import config
 from server.core import engine
 from server.core import settings as settings_mod
+from server.web.local_client import is_local_client
 
 router = APIRouter()
 
@@ -51,14 +52,20 @@ def _stockfish_ok(path: str) -> bool:
 
 
 @router.get("/settings")
-def get_settings() -> dict:
+def get_settings(request: Request) -> dict:
     """Current effective settings + a couple of read-only status flags for the panel."""
     eff = settings_mod.effective()
+    # With network access on, other devices can open Settings too; don't hand them the saved token.
+    token_hidden = bool(eff["lichess_token"]) and not is_local_client(request)
+    if token_hidden:
+        eff["lichess_token"] = ""
     return {
         "settings": eff,
         "stockfish_ok": _stockfish_ok(eff["stockfish_path"]),
         "data_dir": config.DATA_DIR,
         "web_port": config.WEB_PORT,
+        "lan_ip": config.lan_ip(),  # for the network-access hint ("on your phone, open http://...")
+        "lichess_token_hidden": token_hidden,
     }
 
 
@@ -86,9 +93,23 @@ def ollama_models(url: str = "") -> dict:
 
 
 @router.post("/settings")
-def post_settings(patch: SettingsPatch) -> JSONResponse:
+def post_settings(patch: SettingsPatch, request: Request) -> JSONResponse:
     """Persist + apply a settings patch. Returns the new effective settings (or a 400 on bad input)."""
     data = {k: v for k, v in patch.model_dump().items() if v is not None}
+
+    # Another device never saw the real token (GET hides it), so its blank field must not wipe it.
+    if data.get("lichess_token") == "" and not is_local_client(request):
+        del data["lichess_token"]
+
+    # A host the server can't bind would stop the app from starting next launch: reject it now.
+    if "web_host" in data:
+        host = config.normalize_web_host(data["web_host"])
+        if host is None:
+            return JSONResponse(
+                {"error": f"Invalid network address '{data['web_host']}'. Use 127.0.0.1 or 0.0.0.0."},
+                status_code=400,
+            )
+        data["web_host"] = host
 
     # A new Stockfish path is the only setting with a side effect: validate it, then restart the
     # engine pool so the next analysis uses it. An unusable path is rejected before anything changes.

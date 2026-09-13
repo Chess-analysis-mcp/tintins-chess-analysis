@@ -34,6 +34,7 @@ from server.core import session as session_mod
 from server.core import settings
 from server.core.game_analysis import analyze_game
 from server.web.app import create_app
+from server.web.runner import board_port_in_use
 
 
 def main() -> int:
@@ -67,8 +68,15 @@ def main() -> int:
         # (it reads /api/app-config; the launcher sets CHESS_APP_MODE=1).
         print("Starting Chess Review (app mode) — your most recent Lichess game opens in the browser.", flush=True)
 
-    url = f"http://{config.WEB_HOST}:{config.WEB_PORT}"
+    if board_port_in_use(config.WEB_HOST, config.WEB_PORT):
+        print(f"Port {config.WEB_PORT} is already in use on this computer (another board still "
+              "running?). Close it and try again.", flush=True)
+        return 1
+    url = config.board_url()
     print(f"Serving board at {url}  (keep this window open; close it or press Ctrl-C to quit)", flush=True)
+    lan_url = config.lan_board_url()
+    if lan_url:
+        print(f"Other devices on your network can open {lan_url}", flush=True)
     if config.WEB_OPEN:  # CHESS_WEB_OPEN=0 keeps the browser from opening (e.g. tests/headless)
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 

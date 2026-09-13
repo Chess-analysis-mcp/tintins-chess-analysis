@@ -98,6 +98,7 @@ let personalizeHistory = true;
 // changed and warn that a restart is needed for a bind-address change to actually take effect.
 let initialLanAccess = false;
 let settingsWebPort = 8765; // last-known port, for the LAN-access hint text
+let settingsLanIp = null; // this computer's LAN address (from /api/settings), for the same hint
 
 // --- puzzle mode ---------------------------------------------------------
 // A focused tactical trainer that reuses the same chessground board + chess.js instance. When
@@ -2293,22 +2294,13 @@ function updateChesscomSyncUI() {
   $("chesscom-sync-max-field").hidden = !$("set-chesscom-sync").checked;
 }
 
-// Warn about the security tradeoff + restart requirement, and (once checked) show where the board
-// would be reachable so the user knows what to type on their phone.
-function updateLanHint(webPort) {
-  const base = "Off (default): the board only answers requests from this computer (binds to " +
-    "127.0.0.1). On: binds to 0.0.0.0 so phones/tablets/other computers on your network can open " +
-    "the board too — anyone on your network could then reach it, and it also turns off the " +
-    "local-only request guard, so only enable this on a network you trust. <b>If this computer has " +
-    "a public IP (e.g. port forwarding, a cloud VM, or a direct internet connection) this exposes " +
-    "the board to the entire internet</b>, not just your network. Requires restarting the app to " +
-    "take effect.";
-  const port = webPort || settingsWebPort;
-  // innerHTML (for the <b> above), so the placeholder's angle brackets must be entities or the
-  // browser silently swallows them as a bogus tag instead of showing them as literal text.
-  $("set-lan-hint").innerHTML = $("set-lan-access").checked
-    ? `${base} Once restarted, other devices connect at http://&lt;this computer's LAN IP&gt;:${port}.`
-    : base;
+// The warning text is static in index.html; once the box is checked, append where the board will
+// be reachable so the user knows exactly what to type on their phone.
+function updateLanHint() {
+  const host = settingsLanIp || "<this computer's LAN IP>";
+  $("set-lan-connect").textContent = $("set-lan-access").checked
+    ? `Once restarted, on a phone or tablet on the same Wi-Fi open http://${host}:${settingsWebPort}`
+    : "";
 }
 
 // Show/hide the slider to match the checkbox and refresh the readout.
@@ -2339,6 +2331,10 @@ async function openSettings() {
   updateChesscomSyncUI();
   $("set-aliases").value = s.aliases || "";
   $("set-token").value = s.lichess_token || "";
+  // Opened from another device: the saved token isn't sent here, and a blank field keeps it.
+  $("set-token").placeholder = data.lichess_token_hidden
+    ? "saved (hidden on other devices)"
+    : "for higher rate limits";
   // Coaching memory: load the raw windows into the Advanced fields, then point the
   // dropdown at whichever preset they match (or "Custom" for any other combination).
   $("set-recent").value = s.profile_recent || "";
@@ -2353,7 +2349,8 @@ async function openSettings() {
   $("set-lan-access").checked = !["", "127.0.0.1", "localhost", "::1"].includes(lan);
   initialLanAccess = $("set-lan-access").checked;
   settingsWebPort = data.web_port || settingsWebPort;
-  updateLanHint(settingsWebPort);
+  settingsLanIp = data.lan_ip || null;
+  updateLanHint();
   $("set-stockfish").value = s.stockfish_path || "";
   $("set-local-llm-url").value = s.local_llm_base_url || "";
   $("set-local-llm-model").value = s.local_llm_model || "";
@@ -2435,7 +2432,6 @@ async function saveSettings(e) {
     chesscom_sync_max: $("set-chesscom-sync-max").value.trim(),
     aliases: $("set-aliases").value.trim(),
     lichess_token: $("set-token").value.trim(),
-    web_host: $("set-lan-access").checked ? "0.0.0.0" : "127.0.0.1",
     stockfish_path: $("set-stockfish").value.trim(),
     local_llm_base_url: $("set-local-llm-url").value.trim(),
     local_llm_model: $("set-local-llm-model").value.trim(),
@@ -2451,6 +2447,10 @@ async function saveSettings(e) {
   patch.profile_lifetime = $("set-lifetime").value.trim();
   // Auto-scale on -> blank (read each game's Elo); off -> the slider's chosen Elo.
   patch.player_elo = $("set-skill-auto").checked ? "" : $("set-elo").value.trim();
+  // Only send the bind address when the box actually changed, so saving anything else never
+  // overwrites a host set another way (e.g. CHESS_WEB_HOST pointing at one specific interface).
+  const lanChanged = $("set-lan-access").checked !== initialLanAccess;
+  if (lanChanged) patch.web_host = $("set-lan-access").checked ? "0.0.0.0" : "127.0.0.1";
   let res;
   try {
     res = await fetch("/api/settings", {
@@ -2469,11 +2469,11 @@ async function saveSettings(e) {
   appUsername = (res.settings && res.settings.username) || "";
   chesscomUsername = (res.settings && res.settings.chesscom_username) || "";
   if (appUsername) $("lichess-user").placeholder = appUsername;
-  const lanChanged = $("set-lan-access").checked !== initialLanAccess;
   if (lanChanged) {
     // The socket is already bound; the new host only takes effect after a full app restart, so
     // keep the panel open a beat with an explicit note instead of silently closing as usual.
-    $("settings-status").textContent = "Saved — restart the app for the network-access change to take effect.";
+    initialLanAccess = $("set-lan-access").checked;
+    $("settings-status").textContent = "Saved. Restart the app for the network-access change to take effect.";
     setTimeout(() => { $("settings").hidden = true; }, 2200);
   } else {
     $("settings").hidden = true;

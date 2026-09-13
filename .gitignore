@@ -63,14 +63,7 @@ scripts/download_stats.sh
 # Local Claude Code guidance — kept out of the shared repo
 CLAUDE.md
 
-# Local claude settings and mcp directory (used by playwright-cli and others during testing)
-.claude
-
 # Shared cross-account Claude memory store (project-local; personal notes, never committed)
 memory/
 
 puzzle_mode_plan.md
-
-#Ignore vscode AI rules (even if they arent created yet)
-.github/instructions/codacy.instructions.md
-.github/instructions/
