@@ -1210,6 +1210,9 @@ function applyTimeline(tl) {
   orient = player; // orientation follows the reviewed side until the user flips (f)
   applyEvalBarTheme();
   renderMoveList();
+  // Re-check "Review other side" now that the timeline exists: applySession() runs first and checks
+  // it too early (with an empty timeline), which used to leave the button hidden for every game.
+  updateFlipReviewButton();
 }
 
 async function loadAll() {

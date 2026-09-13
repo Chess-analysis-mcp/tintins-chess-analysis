@@ -92,6 +92,16 @@ def test_vendored_assets_are_served():
     assert ct.startswith(("text/javascript", "application/javascript")), ct
 
 
+def test_review_other_side_rechecked_after_timeline_loads():
+    # Regression guard: "Review other side" needs the game's timeline, but applySession() checks the
+    # button BEFORE applyTimeline() fills it in, so the button stayed hidden for every opened game.
+    # applyTimeline() must re-check it once the timeline exists.
+    main_js = TestClient(app_module.create_app()).get("/main.js").text
+    start = main_js.index("function applyTimeline(")
+    body = main_js[start : main_js.index("\n}\n", start)]
+    assert "updateFlipReviewButton()" in body, "applyTimeline() must re-check the Review other side button"
+
+
 def test_js_served_with_javascript_mime_even_if_registry_says_text_plain(monkeypatch):
     # Windows footgun: some installs map `.js` -> `text/plain` in the registry, which makes the
     # browser refuse `<script type="module">` (and thus the vendored chessground/chess.js imports),
