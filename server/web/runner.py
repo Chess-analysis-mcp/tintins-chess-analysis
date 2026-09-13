@@ -77,6 +77,7 @@ def _serve() -> None:
             flush=True,
         )
         return
+    config.WEB_BOUND_HOST = config.WEB_HOST  # what this process actually serves on (see phone_access)
     try:
         cfg = uvicorn.Config(
             create_app(),

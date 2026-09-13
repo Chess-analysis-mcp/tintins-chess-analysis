@@ -487,9 +487,18 @@ def _browsable_host(host: str) -> str:
     return f"[{host}]" if ":" in host else host
 
 
+# The host the running web server actually bound, set just before uvicorn starts. A saved web_host
+# only takes effect on the next launch, so "what works right now" reads this rather than WEB_HOST.
+WEB_BOUND_HOST: str | None = None
+
+
+def _live_host() -> str:
+    return WEB_BOUND_HOST if WEB_BOUND_HOST is not None else WEB_HOST
+
+
 def board_url() -> str:
     """URL to open/print for the board on this computer (never http://0.0.0.0)."""
-    return f"http://{_browsable_host(WEB_HOST)}:{WEB_PORT}"
+    return f"http://{_browsable_host(_live_host())}:{WEB_PORT}"
 
 
 def lan_ip() -> str | None:
@@ -508,9 +517,49 @@ def lan_ip() -> str | None:
     return None if ip.startswith("127.") or ip == "0.0.0.0" else ip
 
 
-def lan_board_url() -> str | None:
-    """URL other devices use to reach the board when it listens beyond loopback, else None."""
-    host = (WEB_HOST or "").strip()
+def _reachable_from_network(host: str | None) -> bool:
+    """True if a server bound to `host` accepts connections from other devices (not loopback-only)."""
+    host = (host or "").strip()
+    if host in WILDCARD_HOSTS:
+        return True
+    if not host or host == "localhost":
+        return False
+    try:
+        return not ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def phone_access() -> dict:
+    """Can a phone or tablet on the same network open the board, and at what address?
+
+    `active`: the running server listens beyond loopback right now. `enabled`: the saved setting asks
+    for it (it only takes effect on restart, so the two differ until then). `url`: the address to open
+    on the phone: the live one when active, otherwise the one it will have after turning it on and
+    restarting (None when this computer has no network address). Shared by the 📱 Phone popover and
+    the AI chat, so both always give the same answer.
+    """
+    active = _reachable_from_network(_live_host())
+    enabled = _reachable_from_network(WEB_HOST)
+    if active:
+        url = lan_board_url()
+    elif enabled:
+        url = lan_board_url(WEB_HOST)
+    else:
+        ip = lan_ip()
+        url = f"http://{ip}:{WEB_PORT}" if ip else None
+    return {
+        "active": active,
+        "enabled": enabled,
+        "restart_needed": active != enabled,
+        "url": url,
+        "port": WEB_PORT,
+    }
+
+
+def lan_board_url(host: str | None = None) -> str | None:
+    """URL other devices use to reach a board bound to `host` (default: the live bind), else None."""
+    host = ((_live_host() if host is None else host) or "").strip()
     if host in WILDCARD_HOSTS:
         ip = lan_ip()
     elif not host or host == "localhost":

@@ -80,6 +80,7 @@ def main() -> int:
     if config.WEB_OPEN:  # CHESS_WEB_OPEN=0 keeps the browser from opening (e.g. tests/headless)
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
+    config.WEB_BOUND_HOST = config.WEB_HOST  # what this process actually serves on (see phone_access)
     try:
         uvicorn.run(create_app(), host=config.WEB_HOST, port=config.WEB_PORT, log_level="info")
     finally:

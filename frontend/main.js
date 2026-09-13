@@ -2347,7 +2347,7 @@ function updateChesscomSyncUI() {
 function updateLanHint() {
   const host = settingsLanIp || "<this computer's LAN IP>";
   $("set-lan-connect").textContent = $("set-lan-access").checked
-    ? `Once restarted, on a phone or tablet on the same Wi-Fi open http://${host}:${settingsWebPort}`
+    ? `Once restarted, on a phone or tablet on the same Wi-Fi open http://${host}:${settingsWebPort} (or scan the QR code under 📱 Phone at the top).`
     : "";
 }
 
@@ -4424,6 +4424,160 @@ function setPuzzleDifficulty(which) {
   loadNextPuzzle();
 }
 
+// --- 📱 Phone popover ------------------------------------------------------
+// Opened only from the header button (it never pops up by itself). Shows a QR code + the address for
+// opening this board on a phone on the same Wi-Fi, or explains how to turn network access on. The
+// state comes from /api/phone-access, the same source the AI chat uses, so both agree.
+// "Problems connecting?": collapsed by default (a native <details>), opened only if the user presses it.
+// Keep in sync with the troubleshooting line in claude_bridge._APP_HELP so the chat says the same.
+const PHONE_HELP_HTML =
+  `<details class="pp-help"><summary>Problems connecting?</summary><ul>` +
+  `<li><b>Same Wi-Fi.</b> The phone has to be on the same Wi-Fi as this computer. Mobile data (4G/5G) won't work, so turn Wi-Fi on on the phone.</li>` +
+  `<li><b>Guest or public Wi-Fi.</b> Guest, hotel, school and many office networks block devices from reaching each other. Use your main home network.</li>` +
+  `<li><b>Firewall.</b> The first time, Windows (or a Mac with its firewall on) asks whether to allow incoming connections: choose Allow. On Windows, if you missed it: Windows Security, then Firewall &amp; network protection, then Allow an app through firewall.</li>` +
+  `<li><b>The address changed.</b> After a router or computer restart the address can change. Open 📱 Phone again and scan the new code.</li>` +
+  `<li><b>VPN.</b> A VPN on this computer can show the wrong address or block local connections. Pause it, then open 📱 Phone again.</li>` +
+  `<li><b>Keep the app running.</b> The phone connects to this computer, so leave the app open and don't let the computer sleep.</li>` +
+  `<li><b>"Not secure" in the browser</b> is expected: the board comes straight from your own computer over your Wi-Fi, without https.</li>` +
+  `</ul></details>`;
+
+let qrLibPromise = null;
+function loadQrLib() {
+  // Vendored (offline) and loaded lazily, so a normal page load never pays for it.
+  if (window.qrcode) return Promise.resolve(window.qrcode);
+  if (!qrLibPromise) {
+    qrLibPromise = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "/vendor/qrcode.js";
+      s.onload = () => (window.qrcode ? resolve(window.qrcode) : reject(new Error("qrcode missing")));
+      s.onerror = () => {
+        qrLibPromise = null;
+        reject(new Error("qrcode failed to load"));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  return qrLibPromise;
+}
+
+// True when this page was opened on the computer running the app (not from a phone over Wi-Fi).
+function isLocalPage() {
+  return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(location.hostname);
+}
+
+function positionPhonePop() {
+  const pop = $("phone-pop");
+  const r = $("phone-toggle").getBoundingClientRect();
+  const w = pop.offsetWidth || 320;
+  pop.style.top = Math.round(r.bottom + 8) + "px";
+  pop.style.left = Math.round(clamp(r.right - w, 8, window.innerWidth - w - 8)) + "px";
+  // Opening "Problems connecting?" makes it taller: scroll inside rather than run off a short window.
+  pop.style.maxHeight = Math.max(160, Math.round(window.innerHeight - r.bottom - 20)) + "px";
+}
+
+async function openPhonePop() {
+  const pop = $("phone-pop");
+  pop.hidden = false;
+  $("phone-toggle").setAttribute("aria-expanded", "true");
+  pop.innerHTML = `<div class="pp-title">📱 Use this board on your phone</div><div class="pp-note">Checking…</div>`;
+  positionPhonePop();
+  let st = null;
+  try {
+    st = await fetch("/api/phone-access").then((r) => r.json());
+  } catch (_) {}
+  if (pop.hidden) return; // closed while we were checking
+  await renderPhonePop(st);
+  positionPhonePop();
+}
+
+function closePhonePop() {
+  $("phone-pop").hidden = true;
+  $("phone-toggle").setAttribute("aria-expanded", "false");
+}
+
+async function renderPhonePop(st) {
+  const pop = $("phone-pop");
+  const title = `<div class="pp-title">📱 Use this board on your phone</div>`;
+  if (!st) {
+    pop.innerHTML = title + `<div class="pp-note">Couldn't check right now. Try again in a moment.</div>`;
+    return;
+  }
+  if (st.active && st.url) {
+    let qr = "";
+    try {
+      const lib = await loadQrLib();
+      const code = lib(0, "M");
+      code.addData(st.url);
+      code.make();
+      qr = `<div class="pp-qr"><img alt="QR code for ${escapeHtml(st.url)}" src="${code.createDataURL(4, 0)}"></div>`;
+    } catch (_) {} // no QR: the address below still works
+    pop.innerHTML =
+      title +
+      `<div class="pp-row">${qr}<div>Scan the code with your phone's camera, or type this address in its browser:</div></div>` +
+      `<div class="pp-url">${escapeHtml(st.url)}</div>` +
+      `<div class="pp-keep">💻 Keep this computer on and the app running while you use your phone. ` +
+      `If the computer sleeps, shuts down, or the app is closed, the phone can't reach the board.</div>` +
+      `<div class="pp-note">Your phone must be on the same Wi-Fi as this computer.` +
+      (st.restart_needed ? " Network access is switched off in Settings and stops after the next restart." : "") +
+      `</div>` +
+      PHONE_HELP_HTML;
+    return;
+  }
+  if (st.active) {
+    pop.innerHTML =
+      title +
+      `<div class="pp-note">This computer doesn't seem to be on a network right now. Connect it to Wi-Fi and try again.</div>` +
+      PHONE_HELP_HTML;
+    return;
+  }
+  if (st.enabled) {
+    pop.innerHTML =
+      title +
+      `<div>Almost there: restart the app so your phone can connect. The QR code will show up here afterwards.</div>`;
+    return;
+  }
+  pop.innerHTML =
+    title +
+    `<div>Review your games on a phone or tablet on the same Wi-Fi. Turning this on lets devices on ` +
+    `your network connect to this computer; it takes effect after you restart the app.</div>` +
+    `<div class="pp-note">Anyone on the same network could open the board, so only turn this on on ` +
+    `a network you trust, like your home Wi-Fi.</div>` +
+    `<div class="pp-actions"><button type="button" class="pp-btn" id="pp-turn-on">Turn on</button>` +
+    `<button type="button" class="linklike" id="pp-settings">More in Settings</button></div>`;
+  $("pp-turn-on").onclick = turnOnPhoneAccess;
+  $("pp-settings").onclick = async () => {
+    closePhonePop();
+    await openSettings();
+    activateSettingsTab("system");
+  };
+}
+
+async function turnOnPhoneAccess() {
+  const btn = $("pp-turn-on");
+  btn.disabled = true;
+  btn.textContent = "Turning on…";
+  let ok = false;
+  try {
+    const r = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ web_host: "0.0.0.0" }),
+    });
+    ok = r.ok;
+  } catch (_) {}
+  if (!ok) {
+    btn.disabled = false;
+    btn.textContent = "Turn on";
+    return;
+  }
+  let st = null;
+  try {
+    st = await fetch("/api/phone-access").then((r) => r.json());
+  } catch (_) {}
+  await renderPhonePop(st);
+  positionPhonePop();
+}
+
 function init() {
   // On small screens the Games panel is a drawer that overlays the board, so start it closed.
   closeHistoryDrawer();
@@ -4470,6 +4624,23 @@ function init() {
   PHONE_MQ.addEventListener("change", () => {
     renderMoveBadge();
     highlightCurrentMove();
+  });
+  // 📱 Phone: hidden when this page is itself open on another device (you're already on the phone).
+  if (!isLocalPage()) $("phone-toggle").hidden = true;
+  $("phone-toggle").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if ($("phone-pop").hidden) openPhonePop();
+    else closePhonePop();
+  });
+  document.addEventListener("click", (e) => {
+    const pop = $("phone-pop");
+    if (!pop.hidden && !pop.contains(e.target)) closePhonePop();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("phone-pop").hidden) closePhonePop();
+  });
+  window.addEventListener("resize", () => {
+    if (!$("phone-pop").hidden) positionPhonePop();
   });
   $("graph").addEventListener("click", onGraphClick);
   $("movelist-expand").addEventListener("click", toggleMoveList);

@@ -69,6 +69,12 @@ def get_settings(request: Request) -> dict:
     }
 
 
+@router.get("/phone-access")
+def get_phone_access() -> dict:
+    """For the 📱 Phone popover: can a phone on this Wi-Fi open the board right now, and where."""
+    return config.phone_access()
+
+
 @router.get("/ollama/models")
 def ollama_models(url: str = "") -> dict:
     """List the models a local Ollama install has pulled, so the Settings panel can offer a picker.

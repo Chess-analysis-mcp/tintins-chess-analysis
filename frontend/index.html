@@ -40,11 +40,22 @@
         <button id="mode-puzzles" class="mode-seg" type="button">Puzzles</button>
       </div>
       <div id="game-meta" class="muted">Waiting to open a game…</div>
-      <button id="settings-toggle" class="hist-toggle" title="Settings"
-        aria-label="Settings"><span class="ico">⚙</span> <span class="lbl">Settings</span></button>
-      <button id="history-toggle" class="hist-toggle" title="Show / hide the games panel"
-        aria-label="Toggle games panel"><span class="ico">☰</span> <span class="lbl">Games</span></button>
+      <!-- Right-aligned header actions, kept together as one group so they never split across rows
+           when the header wraps on narrower windows. -->
+      <div class="hdr-actions">
+        <button id="phone-toggle" class="hist-toggle" type="button" title="Use this board on your phone"
+          aria-label="Use this board on your phone" aria-expanded="false" aria-controls="phone-pop"><span class="ico">📱</span> <span class="lbl">Phone</span></button>
+        <button id="settings-toggle" class="hist-toggle" title="Settings"
+          aria-label="Settings"><span class="ico">⚙</span> <span class="lbl">Settings</span></button>
+        <button id="history-toggle" class="hist-toggle" title="Show / hide the games panel"
+          aria-label="Toggle games panel"><span class="ico">☰</span> <span class="lbl">Games</span></button>
+      </div>
     </header>
+
+    <!-- 📱 Phone popover (openPhonePop in main.js): a QR code + address for opening this board on a
+         phone on the same Wi-Fi, or a one-click "Turn on" when network access is off. Opens only when
+         the header button is clicked; never pops up on its own. -->
+    <div id="phone-pop" class="phone-pop" role="dialog" aria-label="Use this board on your phone" hidden></div>
 
     <!-- Setup self-check banner (filled by checkSetup() from /api/doctor): shown only when an
          environment dependency is missing — red for a blocker (Stockfish), amber for the optional

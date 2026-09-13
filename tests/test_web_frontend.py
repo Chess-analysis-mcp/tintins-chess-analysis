@@ -82,6 +82,7 @@ def test_vendored_assets_are_served():
         "/vendor/chessground.base.css",
         "/vendor/chessground.brown.css",
         "/vendor/chessground.cburnett.css",
+        "/vendor/qrcode.js",  # 📱 Phone popover's QR code (loaded lazily)
     ):
         r = client.get(path)
         assert r.status_code == 200, f"{path} should be served, not {r.status_code}"
