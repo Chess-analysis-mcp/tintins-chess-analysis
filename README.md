@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/Chess-analysis-mcp/tintins-chess-analysis/actions/workflows/ci.yml/badge.svg)](https://github.com/Chess-analysis-mcp/tintins-chess-analysis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Website](https://img.shields.io/badge/Website-chess--analysis--mcp.github.io-2ea44f)](https://chess-analysis-mcp.github.io/tintins-chess-analysis/)
 
 A chess coach you can actually **talk to**, and one that **doesn't make things up**. Ask why a move
 was a mistake or what you should have played, and get a straight answer **in words**, grounded in
@@ -34,6 +35,7 @@ It has **two modes**, side by side in the same board:
 > **New here? Pick your goal:**
 > - 🎯 **I just want to review my games (and train puzzles)** → [get the app](#-i-just-want-to-review-my-games) (download on Mac, or double-click the launcher on Windows/Linux; it sets itself up).
 > - 🤖 **I want chess analysis inside Claude Code** → [run the installer](#-i-want-it-inside-claude-code).
+> - 🌐 **I just want to see what it looks like** → [the project website](https://chess-analysis-mcp.github.io/tintins-chess-analysis/) (screenshots, a tour of both modes, and the download button).
 
 ---
 
@@ -497,6 +499,8 @@ restart the app (or reload Claude Code) and the AI coach will work. Full details
 ## License & credits
 
 Created and developed by **[Dmitri Demler](https://github.com/DimaPdemler)**.
+
+Project website: **[chess-analysis-mcp.github.io/tintins-chess-analysis](https://chess-analysis-mcp.github.io/tintins-chess-analysis/)**.
 
 This project is licensed under the **MIT License**. See [`LICENSE`](LICENSE).
 

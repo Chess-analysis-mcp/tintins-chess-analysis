@@ -12,7 +12,91 @@
   <meta property="og:title" content="Tintin's AI Chess Analysis: your mistakes, explained in words" />
   <meta property="og:description" content="Stockfish finds where you went wrong; this tool tells you why, in plain English." />
   <meta property="og:image" content="screenshots/chess_new_pipeline.png" />
+  <link rel="canonical" href="https://chess-analysis-mcp.github.io/tintins-chess-analysis/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://chess-analysis-mcp.github.io/tintins-chess-analysis/" />
+  <meta name="twitter:card" content="summary_large_image" />
   <link rel="stylesheet" href="style.css" />
+
+  <!-- Structured data: what the app is (SoftwareApplication) + the on-page FAQ (FAQPage).
+       Answers here must stay in sync with the visible FAQ text further down this file. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://chess-analysis-mcp.github.io/tintins-chess-analysis/#app",
+        "name": "Tintin's AI Chess Analysis",
+        "alternateName": "Chess Review MCP",
+        "url": "https://chess-analysis-mcp.github.io/tintins-chess-analysis/",
+        "description": "An open-source chess coach that pairs a Stockfish engine review with an LLM: it finds every inaccuracy, mistake and blunder in your game, then explains each one in plain English, grounded in the real engine lines rather than guessed. Includes an interactive board, a cross-game coaching profile, and a rated puzzle trainer.",
+        "applicationCategory": "GameApplication",
+        "applicationSubCategory": "Chess analysis",
+        "operatingSystem": "macOS, Windows, Linux",
+        "softwareVersion": "2.0.2",
+        "downloadUrl": "https://github.com/Chess-analysis-mcp/tintins-chess-analysis/releases/latest",
+        "installUrl": "https://github.com/Chess-analysis-mcp/tintins-chess-analysis/releases/latest",
+        "codeRepository": "https://github.com/Chess-analysis-mcp/tintins-chess-analysis",
+        "programmingLanguage": "Python",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "screenshot": "https://chess-analysis-mcp.github.io/tintins-chess-analysis/screenshots/chess_new_pipeline.png",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "author": {
+          "@type": "Person",
+          "name": "DimaPdemler",
+          "url": "https://github.com/DimaPdemler"
+        },
+        "featureList": [
+          "Full-game Stockfish review with Lichess-style inaccuracy, mistake and blunder thresholds",
+          "Every mistake explained in plain English by an LLM coach, grounded in real engine lines",
+          "Interactive board with eval bar, win graph, and played, best and refutation move arrows",
+          "Imports games from Lichess, Chess.com, or any pasted PGN",
+          "Cross-game history and a coaching profile that tracks recurring mistake motifs",
+          "Puzzle trainer with Glicko-2 ratings, a timed Storm rush, and AI-explained solutions",
+          "Runs locally; works as a Model Context Protocol (MCP) server inside Claude Code",
+          "Optional fully offline AI via a local LLM such as Ollama or LM Studio",
+          "Use the board on your phone or tablet over your Wi-Fi, opened by scanning a QR code"
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://chess-analysis-mcp.github.io/tintins-chess-analysis/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "How do I install the claude CLI, and how is it different from the Claude app?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The claude CLI (Claude Code) is a separate program that runs in your computer's terminal. It is not the Claude desktop app or the claude.ai website, but it signs in with the same Claude subscription, so there is no extra account, no API key, and no per-token bill. This app uses the CLI behind the scenes to write the plain-English coaching, which is why you need it installed and logged in. Note: the engine review itself (the mistake list, eval bar, win graph, and arrows) works without the CLI. You only need it for the conversational coaching and the AI summaries."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I run the AI coach on a local model instead of Claude?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The AI chat and coach summaries can run on a model on your own machine, with no Claude subscription, no login, and not even the claude CLI. The app talks to your local model directly. It works with any local server that exposes an OpenAI-compatible API: Ollama, LM Studio, llama.cpp, a LiteLLM proxy, and others. Quality depends on the local model, so small models explain less well than Claude. The Stockfish engine review is always fully local either way."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I use it on my phone or tablet?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The app keeps running on your computer, and your phone opens the same board over your Wi-Fi, with a layout made for small screens: a full-width board, a bottom toolbar, and a badge on each move showing at a glance whether it was a blunder or the best move. Note: keep the computer on and the app running while you use your phone. Only turn this on at home or on another network you trust, since anyone on that network could open the board."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
 
@@ -93,7 +177,7 @@
         <div class="feature">
           <span class="icon">♟️</span>
           <h3>Interactive board</h3>
-          <p>Replay each mistake, drag a piece to try your own idea, and free-explore any variation with instant engine feedback.</p>
+          <p>Replay each mistake, drag a piece to try your own idea, and free-explore any variation with instant engine feedback. Works on your phone too: scan a QR code to open it over your Wi-Fi.</p>
         </div>
         <div class="feature">
           <span class="icon">📈</span>
@@ -312,6 +396,40 @@ ollama pull qwen2.5-coder</code></pre>
           <p class="muted">
             Note: quality depends on the local model, so small models explain less well than Claude. The
             Stockfish engine review is always fully local either way.
+          </p>
+        </div>
+      </details>
+
+      <details class="faq">
+        <summary>Can I use it on my phone or tablet?</summary>
+        <div class="faq-body">
+          <p>
+            Yes. The app keeps running on your computer, and your phone opens the same board over your
+            <strong>Wi-Fi</strong>, with a layout made for small screens: a full-width board, a bottom
+            toolbar, and a badge on each move showing at a glance whether it was a blunder or the best move.
+          </p>
+
+          <details class="faq-sub">
+            <summary>Show setup steps</summary>
+            <div class="faq-body">
+              <p>
+                In the board on your computer, click <strong>📱 Phone</strong> at the top, press
+                <strong>Turn on</strong>, and restart the app.
+              </p>
+              <p>
+                Click <strong>📱 Phone</strong> again and scan the QR code with your phone's camera (or type
+                the address it shows). Your phone has to be on the same Wi-Fi as the computer.
+              </p>
+              <p>
+                Not connecting? Open <strong>Problems connecting?</strong> in the same panel. The usual
+                causes are a guest Wi-Fi network, a firewall prompt that needs <strong>Allow</strong>, or a VPN.
+              </p>
+            </div>
+          </details>
+
+          <p class="muted">
+            Note: keep the computer on and the app running while you use your phone. Only turn this on at
+            home or on another network you trust, since anyone on that network could open the board.
           </p>
         </div>
       </details>
