@@ -27,9 +27,10 @@ It has **two modes**, side by side in the same board:
 > (Snowie), the whole "explained in words" part, run on **headless `claude`, using your existing
 > Claude subscription** (no API key, no per-token billing). You need the [`claude`
 > CLI](https://docs.claude.com/en/docs/claude-code/overview) installed and logged in
-> (`claude login`). Prefer to stay fully offline? You can instead point the AI coach at a **local
-> model** (Ollama, LM Studio, …) with no Claude account at all; see
-> [Run the AI on a local model](#run-the-ai-on-a-local-model-instead-of-claude). Either way, the
+> (`claude login`). Prefer your own model? You can instead point the AI coach at a **local model**
+> (Ollama, LM Studio, …) or **any OpenAI-compatible provider** (with its API key), and use no Claude
+> account at all; see
+> [Run the AI on your own model](#run-the-ai-on-your-own-model-instead-of-claude). Either way, the
 > engine review itself (mistake list, eval bar, win graph, arrows) works without any of it.
 
 > **New here? Pick your goal:**
@@ -218,8 +219,9 @@ that interpreter instead of `uv run python`.
 - **Internet** is needed for first-time setup only (Python, Stockfish, and the puzzle set). After
   that the board runs fully offline: chessground and chess.js are vendored, with no build step or CDN.
 - **The `claude` CLI + a Claude subscription** power the AI coach and chat, on your existing
-  subscription (no API key, no per-token billing), or use a
-  [local model](#run-the-ai-on-a-local-model-instead-of-claude) instead. The engine review works
+  subscription (no API key, no per-token billing), or use
+  [your own model](#run-the-ai-on-your-own-model-instead-of-claude) instead (local, or any
+  OpenAI-compatible provider). The engine review works
   without either; only the plain-English explanations need it.
 
 ---
@@ -299,20 +301,47 @@ Each question is handed the **current board** (for *"what should I do here?"*) a
 question** (for *"why is this bad?"*), each with pre-computed Stockfish facts, so Snowie reasons
 from real lines. Follow-up questions remember the conversation.
 
-### Run the AI on a local model (instead of Claude)
+### Run the AI on your own model (instead of Claude)
 
-The chat and AI coach can run on a model **on your own machine** instead of your Claude subscription,
-with no Claude account or `claude` CLI at all. It works with any local server exposing an
-OpenAI-compatible `/v1/chat/completions` endpoint ([Ollama](https://ollama.com), LM Studio,
-llama.cpp, a [LiteLLM](https://github.com/BerriAI/litellm) proxy, …).
+The chat and AI coach can run on a model of your choosing instead of your Claude subscription, with
+no Claude account or `claude` CLI at all. Anything exposing an OpenAI-compatible
+`/v1/chat/completions` endpoint works, whether it runs on your own machine
+([Ollama](https://ollama.com), LM Studio, llama.cpp, a [LiteLLM](https://github.com/BerriAI/litellm)
+proxy) or is a hosted provider (OpenRouter, Groq, Together, DeepSeek, Mistral, Azure OpenAI, …).
 
-- **Ollama (one click):** pull a model (`ollama pull qwen2.5-coder`), then in **⚙ Settings → Advanced
-  → Local AI model** click **Detect Ollama**, pick a model, and **Save**.
-- **Anything else:** in the same place, fill in the server **URL** (e.g. `http://localhost:1234/v1`
-  for LM Studio) and the **Model** name. Clear the field to switch back to Claude.
+Everything lives in **⚙ Settings → Advanced → Local or custom AI model**:
 
-Quality depends on the local model, and the Stockfish analysis stays local either way. The terminal
-MCP workflow still uses Claude; this covers the in-browser chat and coach summary.
+- **Ollama (one click):** pull a model (`ollama pull qwen2.5-coder`), then click **Detect Ollama**,
+  pick a model, and **Save**.
+- **Another local server:** fill in the server **URL** (e.g. `http://localhost:1234/v1` for LM
+  Studio) and the **Model** name. Leave **API key** empty; local servers do not want one.
+- **A hosted provider:** fill in its **URL** and **Model**, and paste its **API key**. The key is
+  sent as `Authorization: Bearer <key>`, which is what almost every provider expects, so no gateway
+  in front of it is needed. Azure OpenAI is auto-detected and gets its own `api-key` header instead.
+  If a provider uses some other header, pick it under **Send key as** (or set
+  `CHESS_LOCAL_LLM_API_KEY_HEADER` to the literal header name, e.g. `X-Api-Key`).
+
+Clear the **URL** to switch back to Claude. The key is stored in `settings.json` under your data
+directory, and is never sent to other devices that open the board over your network.
+
+Quality depends on the model you point at, and the Stockfish analysis stays local either way. The
+terminal MCP workflow still uses Claude; this covers the in-browser chat and coach summary.
+
+### Use an Anthropic API key instead of a Claude subscription
+
+Also in **⚙ Settings → Engine & AI**, under **Claude API key**. Paste a key from
+`console.anthropic.com` and the chat and coach run on the Anthropic API directly, with no `claude`
+CLI and no login. Pick the model from the dropdown (Opus 5, Sonnet 5 or Haiku 4.5, with prices
+shown); Opus 5 is the default.
+
+This **bills your Anthropic account per token**, so it is not the cheap path: if you have a Claude
+subscription, the default `claude` CLI already covers the AI at no extra cost. The key is worth it
+only if you would rather pay per use than hold a subscription. A settings line always tells you
+which backend is active, and a custom model URL takes precedence over the key if you set both.
+
+Both this key and the custom-model key are stored on the computer running the app, in a
+`settings.json` that is written owner-only, and neither is ever sent to a phone or any other device
+that opens the board over your network.
 
 ---
 
@@ -385,6 +414,25 @@ off entirely, set `CHESS_HISTORY=0`.
 
 ---
 
+## Updating
+
+Every install checks for a new release on launch and shows a banner when one is out. The banner is
+dismissible per version, and **⚙ Settings → About** has a **Check for updates** button that always
+re-checks on demand, plus the version you are on and where your data lives.
+
+How the update is applied depends on how you installed:
+
+| Install | Update |
+| --- | --- |
+| macOS `.app` | The banner walks you through it: download the new `…-macos.zip`, unzip, drag into Applications replacing the old one. A launched `.app` is read-only, so it cannot replace itself. |
+| Double-click launcher (`.command` / `.bat`) | **Update now** stages it; the launcher applies it the next time you open the app. |
+| `git clone`, run directly or via Claude Code | **Update now** runs `git pull --ff-only` right away, then asks you to restart. A checkout with uncommitted changes is refused untouched, so your work in progress is never stashed or clobbered; run `git pull` yourself once it is clean. |
+
+Your games, analysis cache, puzzle progress and settings live outside the app folder, so updates
+never touch them. Set `CHESS_UPDATE_CHECK=0` to turn the check off entirely.
+
+---
+
 ## Configuration
 
 Most people never need to configure anything. The common options live in the in-app **⚙ Settings**
@@ -405,7 +453,10 @@ handful worth knowing:
 | --- | --- |
 | `STOCKFISH_PATH` | Force a specific Stockfish binary (otherwise auto-detected). |
 | `CHESS_USERNAME` / `CHESS_ALIASES` | Your handle(s), for side-detection and merging history across accounts. |
-| `CHESS_LOCAL_LLM_BASE_URL` / `CHESS_LOCAL_LLM_MODEL` | Run the AI on a [local model](#run-the-ai-on-a-local-model-instead-of-claude) instead of Claude. |
+| `CHESS_LOCAL_LLM_BASE_URL` / `CHESS_LOCAL_LLM_MODEL` | Run the AI on [your own model](#run-the-ai-on-your-own-model-instead-of-claude) instead of Claude. |
+| `CHESS_LOCAL_LLM_API_KEY` / `CHESS_LOCAL_LLM_API_KEY_HEADER` | API key for a hosted provider, and (rarely needed) which header to send it in. |
+| `CHESS_ANTHROPIC_API_KEY` / `CHESS_ANTHROPIC_MODEL` | Run the AI on the Anthropic API with your own key (billed per token) instead of a Claude subscription. |
+| `CHESS_UPDATE_CHECK=0` | Don't check for new releases. |
 | `CHESS_HISTORY=0` / `CHESS_PUZZLES=0` | Turn off game history, or the puzzle trainer. |
 
 The full list (analysis depths, ports, cache sizes, profile windows, data directory, puzzle knobs, …)
@@ -450,8 +501,8 @@ tests/               # pytest suite
 - The web board is **no-build and vendored** (chessground & chess.js ship with it), so once set up
   it renders fully offline; only first-time setup needs the network.
 - In-browser chat requires the `claude` CLI installed and logged in, and draws from your Agent SDK
-  credit; the terminal path is the zero-extra-cost fallback. (Or point it at a
-  [local model](#run-the-ai-on-a-local-model-instead-of-claude) to skip Claude entirely.)
+  credit; the terminal path is the zero-extra-cost fallback. (Or point it at
+  [your own model](#run-the-ai-on-your-own-model-instead-of-claude) to skip Claude entirely.)
 - Engine analysis is fixed-depth and cached for reproducibility, so evals can differ slightly from
   Lichess near classification boundaries. That's expected.
 

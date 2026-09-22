@@ -395,6 +395,7 @@
           <button type="button" class="set-tab-btn" data-tab="coaching" role="tab">Coaching</button>
           <button type="button" class="set-tab-btn" data-tab="puzzles" role="tab">Puzzles</button>
           <button type="button" class="set-tab-btn" data-tab="system" role="tab">Engine &amp; AI</button>
+          <button type="button" class="set-tab-btn" data-tab="about" role="tab">About</button>
         </div>
 
         <!-- Scrolling content area: the tab bar above and the actions below stay pinned. -->
@@ -572,12 +573,14 @@
             <span id="set-sf-status" class="set-hint"></span>
           </label>
           <div class="set-field">
-            <span class="set-label">Local AI model <span class="set-opt">(optional — run the AI locally instead of Claude)</span></span>
-            <span class="set-hint">Run the “why?” chat + AI coach entirely on your own machine instead
+            <span class="set-label">Local or custom AI model <span class="set-opt">(optional — use your own model instead of Claude)</span></span>
+            <span class="set-hint">Run the “why?” chat + AI coach on your own model instead
               of your Claude subscription — <b>no <code>claude</code> CLI or login needed</b>. Connects
-              directly to any local server with an OpenAI-compatible API (Ollama, LM Studio, llama.cpp,
-              a LiteLLM proxy, and more). <b>Ollama is easiest:</b> just click <b>Detect Ollama</b>
-              below. For anything else, fill in the URL (and model) by hand. Leave blank to use Claude.</span>
+              directly to anything with an OpenAI-compatible API: a local server (Ollama, LM Studio,
+              llama.cpp, a LiteLLM proxy) or a <b>hosted provider</b> (OpenRouter, Groq, Together,
+              Azure OpenAI, …) — for a hosted one, paste its <b>API key</b> below. <b>Ollama is
+              easiest:</b> just click <b>Detect Ollama</b>. For anything else, fill in the URL (and
+              model) by hand. Leave the URL blank to use Claude.</span>
             <div class="set-llm-row">
               <button type="button" id="set-ollama-detect" class="linklike">Detect Ollama</button>
               <span id="set-ollama-status" class="set-hint"></span>
@@ -594,6 +597,61 @@
               <span class="set-sub-label">Model</span>
               <input id="set-local-llm-model" type="text" autocomplete="off" placeholder="e.g. qwen2.5-coder" />
             </label>
+            <label class="set-sub">
+              <span class="set-sub-label">API key</span>
+              <input id="set-local-llm-key" type="password" autocomplete="off"
+                placeholder="only for hosted providers (a local server needs none)" />
+            </label>
+            <label class="set-sub" id="set-llm-key-header-row" hidden>
+              <span class="set-sub-label">Send as</span>
+              <select id="set-local-llm-key-header">
+                <option value="">Automatic (Bearer, or api-key for Azure)</option>
+                <option value="bearer">Authorization: Bearer</option>
+                <option value="api-key">api-key (Azure OpenAI)</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="set-field">
+            <span class="set-label">Claude API key <span class="set-opt">(optional — pay per token instead of using a subscription)</span></span>
+            <span class="set-hint">By default the AI coach runs on the <code>claude</code> CLI with
+              your <b>Claude subscription</b>, at no extra cost. If you'd rather use an
+              <b>Anthropic API key</b> (from <code>console.anthropic.com</code>), paste it here and
+              no CLI or login is needed. <b>This bills your Anthropic account per token</b>, so only
+              do it if you actually want that; a subscription is cheaper for normal use. The key is
+              stored on this computer only, and is never sent to devices that open the board over
+              your network.</span>
+            <label class="set-sub">
+              <span class="set-sub-label">API key</span>
+              <input id="set-anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…" />
+            </label>
+            <label class="set-sub">
+              <span class="set-sub-label">Model</span>
+              <select id="set-anthropic-model">
+                <option value="claude-opus-5">Claude Opus 5 — most capable ($5 / $25 per 1M tokens)</option>
+                <option value="claude-sonnet-5">Claude Sonnet 5 — balanced ($2 / $10)</option>
+                <option value="claude-haiku-4-5">Claude Haiku 4.5 — cheapest ($1 / $5)</option>
+              </select>
+            </label>
+            <span id="set-ai-backend" class="set-hint"></span>
+          </div>
+        </div>
+
+        <div class="set-panel" data-panel="about">
+          <div class="set-field">
+            <span class="set-label">Version</span>
+            <span class="set-hint" id="set-version">Tintin's AI Chess Analysis</span>
+            <div class="set-llm-row">
+              <button type="button" id="set-check-update" class="linklike">Check for updates</button>
+              <span id="set-update-status" class="set-hint"></span>
+            </div>
+            <span class="set-hint" id="set-update-detail"></span>
+          </div>
+          <div class="set-field">
+            <span class="set-label">Data folder</span>
+            <span class="set-hint">Your games, analysis cache, puzzle progress and this settings
+              file live here. Updates never touch it.</span>
+            <input id="set-data-dir" type="text" readonly />
           </div>
         </div>
         </div><!-- /.set-body -->

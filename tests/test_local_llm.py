@@ -33,6 +33,8 @@ def local_on(monkeypatch):
     """Configure a local-LLM URL + model for the duration of a test."""
     monkeypatch.setattr(config, "LOCAL_LLM_BASE_URL", "http://localhost:11434", raising=False)
     monkeypatch.setattr(config, "LOCAL_LLM_MODEL", "qwen2.5-coder", raising=False)
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY", "", raising=False)
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY_HEADER", "", raising=False)
     # Each test starts with a clean conversation store.
     local_llm._CONVOS.clear()
 
@@ -42,10 +44,11 @@ def captured(monkeypatch):
     """Capture the outgoing POST and return a programmable fake response."""
     box: dict = {}
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         box["url"] = url
         box["json"] = json or {}
         box["timeout"] = timeout
+        box["headers"] = headers
         resp = box["response"]
         if isinstance(resp, Exception):
             raise resp
@@ -69,6 +72,16 @@ def captured(monkeypatch):
             "http://host:8000/v1/chat/completions",
             "http://host:8000/v1/chat/completions",
         ),
+        # Azure OpenAI's endpoint is complete already, query string and all: don't glue /v1/... on.
+        (
+            "https://r.openai.azure.com/openai/deployments/gpt/chat/completions?api-version=2024-02-01",
+            "https://r.openai.azure.com/openai/deployments/gpt/chat/completions?api-version=2024-02-01",
+        ),
+        (
+            "https://api.example.com/v1/?beta=1",
+            "https://api.example.com/v1/chat/completions?beta=1",
+        ),
+        ("", ""),
     ],
 )
 def test_completions_url(base, expected):
@@ -155,6 +168,29 @@ def test_connection_error(local_on, captured):
         local_llm.complete("q")
 
 
+def test_connection_error_to_remote_provider_says_check_the_url(local_on, captured, monkeypatch):
+    """"Is Ollama running?" is the wrong advice for a hosted provider: name the real fix."""
+    monkeypatch.setattr(config, "LOCAL_LLM_BASE_URL", "https://openrouter.ai/api/v1", raising=False)
+    captured["response"] = httpx.ConnectError("no route")
+    with pytest.raises(local_llm.LocalLLMError, match="reach the AI provider"):
+        local_llm.complete("q")
+
+
+@pytest.mark.parametrize(
+    "base,local",
+    [
+        ("http://localhost:11434", True),
+        ("http://127.0.0.1:1234/v1", True),
+        ("http://192.168.1.50:11434", True),
+        ("http://my-box.local:8080/v1", True),
+        ("https://openrouter.ai/api/v1", False),
+        ("https://r.openai.azure.com/openai/deployments/gpt/chat/completions", False),
+    ],
+)
+def test_is_local_host(base, local):
+    assert local_llm._is_local_host(base) is local
+
+
 def test_timeout(local_on, captured):
     captured["response"] = httpx.TimeoutException("slow")
     with pytest.raises(local_llm.LocalLLMError, match="too long"):
@@ -176,6 +212,81 @@ def test_empty_content(local_on, captured):
 def test_bad_shape(local_on, captured):
     captured["response"] = _FakeResponse(200, {"unexpected": True})
     with pytest.raises(local_llm.LocalLLMError, match="unexpected format"):
+        local_llm.complete("q")
+
+
+# --- auth headers (hosted OpenAI-compatible providers) -------------------------------------------
+
+
+def test_no_key_sends_no_headers(local_on, captured):
+    """A local server wants no auth: don't invent a header for it."""
+    captured["response"] = _FakeResponse(200, _ok_payload("hi"))
+    local_llm.complete("q")
+    assert captured["headers"] is None
+
+
+def test_key_defaults_to_bearer(local_on, captured, monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY", "sk-abc123", raising=False)
+    captured["response"] = _FakeResponse(200, _ok_payload("hi"))
+    local_llm.complete("q")
+    assert captured["headers"] == {"Authorization": "Bearer sk-abc123"}
+
+
+def test_key_with_scheme_is_not_double_prefixed(local_on, monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY", "Bearer sk-abc", raising=False)
+    assert local_llm._auth_headers() == {"Authorization": "Bearer sk-abc"}
+
+
+def test_azure_url_auto_selects_api_key_header(local_on, monkeypatch):
+    monkeypatch.setattr(
+        config,
+        "LOCAL_LLM_BASE_URL",
+        "https://r.openai.azure.com/openai/deployments/gpt/chat/completions?api-version=2024-02-01",
+        raising=False,
+    )
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY", "azkey", raising=False)
+    assert local_llm._auth_headers() == {"api-key": "azkey"}
+
+
+@pytest.mark.parametrize(
+    "style,expected",
+    [
+        ("bearer", {"Authorization": "Bearer k"}),
+        ("Authorization", {"Authorization": "Bearer k"}),
+        ("api-key", {"api-key": "k"}),
+        ("API-Key", {"api-key": "k"}),
+        ("auto", {"Authorization": "Bearer k"}),
+        ("X-Api-Key", {"X-Api-Key": "k"}),  # anything else: a literal header name
+    ],
+)
+def test_key_header_styles(local_on, monkeypatch, style, expected):
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY", "k", raising=False)
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY_HEADER", style, raising=False)
+    assert local_llm._auth_headers() == expected
+
+
+def test_explicit_header_overrides_azure_autodetect(local_on, monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_LLM_BASE_URL", "https://x.openai.azure.com/v1", raising=False)
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY", "k", raising=False)
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY_HEADER", "bearer", raising=False)
+    assert local_llm._auth_headers() == {"Authorization": "Bearer k"}
+
+
+def test_header_style_without_key_sends_nothing(local_on, monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY_HEADER", "api-key", raising=False)
+    assert local_llm._auth_headers() == {}
+
+
+def test_401_points_at_the_api_key(local_on, captured, monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_LLM_API_KEY", "wrong", raising=False)
+    captured["response"] = _FakeResponse(401, text="invalid api key")
+    with pytest.raises(local_llm.LocalLLMError, match="Check the API key"):
+        local_llm.complete("q")
+
+
+def test_403_without_key_suggests_adding_one(local_on, captured):
+    captured["response"] = _FakeResponse(403, text="missing credentials")
+    with pytest.raises(local_llm.LocalLLMError, match="wants an API key"):
         local_llm.complete("q")
 
 

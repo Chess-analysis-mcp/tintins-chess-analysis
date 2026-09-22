@@ -16,6 +16,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 import threading
 import time
 
@@ -200,3 +203,83 @@ def request_update(latest: str = "") -> dict:
     with open(sentinel_path(), "w", encoding="utf-8") as fh:
         json.dump({"latest": latest, "channel": update_channel(), "requested_at": time.time()}, fh)
     return {"ok": True, "restart_required": True}
+
+
+# --- immediate apply: for installs started WITHOUT one of our launchers ------------------------
+# The sentinel above is consumed by `Tintin's AI Chess Analysis.command` / `.bat` on their next
+# start. Someone who cloned the repo and runs `uv run python scripts/run_web.py` (or reaches the
+# board through the MCP server in Claude Code) has no launcher, so a sentinel would sit there
+# forever and "Update now" would silently do nothing. For those sessions we update the checkout
+# right here instead, and tell the user to restart. Deps take care of themselves: `uv run` syncs
+# the environment on the next start.
+
+
+def _git(*args: str, timeout: int = 180) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", config.PROJECT_ROOT, *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _last_line(*candidates: str) -> str:
+    for text in candidates:
+        lines = [ln.strip() for ln in (text or "").strip().splitlines() if ln.strip()]
+        if lines:
+            return lines[-1][:300]
+    return ""
+
+
+def apply_now() -> dict:
+    """Update this install in place, right now. Returns {ok, restart_required, detail} or
+    {ok: False, error}. Never raises; the caller gates on can_self_update()."""
+    channel = update_channel()
+    if channel == "git":
+        if not shutil.which("git"):
+            return {
+                "ok": False,
+                "error": "Git isn't installed, so this checkout can't pull. Install Git from "
+                "https://git-scm.com/downloads, or download the latest release instead.",
+            }
+        try:
+            dirty = _git("status", "--porcelain")
+            # Refuse rather than stash: on a developer's checkout those edits are the work in
+            # progress, and a web button is the wrong place to move someone's uncommitted changes.
+            if dirty.returncode == 0 and dirty.stdout.strip():
+                return {
+                    "ok": False,
+                    "error": "This checkout has uncommitted changes, so nothing was touched. "
+                    "Commit or stash them and try again (or just run `git pull` yourself).",
+                }
+            pull = _git("pull", "--ff-only")
+        except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001 - reported, not raised
+            return {"ok": False, "error": f"Couldn't run git: {exc}"}
+        if pull.returncode != 0:
+            return {
+                "ok": False,
+                "error": "git pull --ff-only failed: "
+                + (_last_line(pull.stderr, pull.stdout) or "unknown error"),
+            }
+        return {"ok": True, "restart_required": True, "detail": _last_line(pull.stdout)}
+
+    if channel == "zip":
+        script = os.path.join(config.PROJECT_ROOT, "scripts", "apply_update.py")
+        try:
+            proc = subprocess.run(
+                [sys.executable, script], capture_output=True, text=True, timeout=900
+            )
+        except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"Couldn't run the updater: {exc}"}
+        if proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": _last_line(proc.stderr, proc.stdout)
+                or "The updater failed. Download the latest release instead.",
+            }
+        return {"ok": True, "restart_required": True, "detail": _last_line(proc.stdout)}
+
+    return {
+        "ok": False,
+        "error": "This install can't update itself; download the latest from Releases.",
+    }

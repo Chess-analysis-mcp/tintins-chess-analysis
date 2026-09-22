@@ -24,6 +24,7 @@ import chess
 from server import config
 from server.core import history
 from server.core import lines
+from server.core import anthropic_api
 from server.core import local_llm
 from server.core import session as session_mod
 from server.core.evaluation import time_control_clock
@@ -31,6 +32,11 @@ from server.core.evaluation import time_control_clock
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _MCP_CONFIG = _REPO_ROOT / ".mcp.json"
 _ALLOWED_TOOLS = "mcp__chess__get_engine_line,mcp__chess__analyze_game"
+
+# The two "bring your own model" backends. Both expose the same tiny interface (`is_enabled`,
+# `complete`, `chat`, `DEFAULT_TIMEOUT`) so every call site below is one branch, and both raise
+# their own error type, which we surface as ChatError.
+_BYO_ERRORS = (local_llm.LocalLLMError, anthropic_api.AnthropicError)
 
 # How many candidate moves to pre-compute, and how close (in win%-points) an alternative
 # must be to the best move to count as "also good" — so Claude can offer the more human,
@@ -91,6 +97,20 @@ def _is_login_response(data: dict, answer: str) -> bool:
         usage.get("output_tokens") in (0, None)
     )
     return bool(zero_tokens or data.get("total_cost_usd") in (0, 0.0, None))
+
+
+def _byo_backend():
+    """The user-configured AI backend module, or None to use the default headless `claude -p`.
+
+    Precedence when both are set: the local/custom model URL wins over a saved Anthropic API key,
+    because the URL is the more deliberate choice (and running someone's own server costs nothing,
+    while the key bills per token). Documented in Settings.
+    """
+    if local_llm.is_enabled():
+        return local_llm
+    if anthropic_api.is_enabled():
+        return anthropic_api
+    return None
 
 
 def _child_env() -> dict:
@@ -1255,17 +1275,18 @@ def _run_puzzle_coach(prompt: str, timeout: int) -> tuple[str, str | None]:
     Returns `(answer, session_id)`; `session_id` is the `claude -p` conversation id (None on the
     local-LLM path) so a follow-up chat can `--resume` the explanation.
     """
-    if local_llm.is_enabled():
+    backend = _byo_backend()
+    if backend is not None:
         try:
-            return local_llm.complete(prompt, timeout=max(timeout, local_llm.DEFAULT_TIMEOUT)), None
-        except local_llm.LocalLLMError as exc:
+            return backend.complete(prompt, timeout=max(timeout, backend.DEFAULT_TIMEOUT)), None
+        except _BYO_ERRORS as exc:
             raise ChatError(str(exc))
 
     claude = shutil.which("claude")
     if not claude:
         raise ChatError(
             "The `claude` CLI isn't on PATH, so the AI puzzle coach is unavailable. Install the "
-            "Claude CLI (or set a local AI model in Settings) to get explanations."
+            "Claude CLI (or set your own model / Claude API key in Settings) to get explanations."
         )
     cmd = [claude, "-p", prompt, "--output-format", "json"]
     env = _child_env()
@@ -1338,19 +1359,20 @@ def coach_summary_ai(sess, *, timeout: int = 120) -> str:
     prompt_parts.append("This game's facts:\n" + _game_facts(sess))
     prompt = "\n\n".join(prompt_parts)
 
-    # Local LLM: write the summary over direct HTTP, no `claude` CLI.
-    if local_llm.is_enabled():
+    # Own model or own API key: write the summary over direct HTTP, no `claude` CLI.
+    backend = _byo_backend()
+    if backend is not None:
         try:
-            return local_llm.complete(prompt, timeout=max(timeout, local_llm.DEFAULT_TIMEOUT))
-        except local_llm.LocalLLMError as exc:
+            return backend.complete(prompt, timeout=max(timeout, backend.DEFAULT_TIMEOUT))
+        except _BYO_ERRORS as exc:
             raise ChatError(str(exc))
 
     claude = shutil.which("claude")
     if not claude:
         raise ChatError(
             "The `claude` CLI isn't on PATH, so the AI coach summary is unavailable. The free "
-            "summary above still works; install the Claude CLI (or set a local AI model in "
-            "Settings) for the AI version."
+            "summary above still works; install the Claude CLI (or set your own model / Claude "
+            "API key in Settings) for the AI version."
         )
     cmd = [claude, "-p", prompt, "--output-format", "json"]
 
@@ -1411,19 +1433,20 @@ def ask(
         speed_context,
     )
 
-    # Local LLM: answer over direct HTTP, no `claude` CLI. The prompt already embeds every engine
-    # fact, so no tools are needed (local models are unreliable at tool-calling anyway).
-    if local_llm.is_enabled():
+    # Own model or own API key: answer over direct HTTP, no `claude` CLI. The prompt already embeds
+    # every engine fact, so no tools are needed (and local models are unreliable at tool-calling).
+    backend = _byo_backend()
+    if backend is not None:
         try:
-            return local_llm.chat(prompt, session_id=session_id)
-        except local_llm.LocalLLMError as exc:
+            return backend.chat(prompt, session_id=session_id)
+        except _BYO_ERRORS as exc:
             raise ChatError(str(exc))
 
     claude = shutil.which("claude")
     if not claude:
         raise ChatError(
             "The `claude` CLI isn't on PATH, so in-browser chat is unavailable. Use the Claude "
-            "Code terminal to ask 'why?' instead, or set a local AI model in Settings."
+            "Code terminal to ask 'why?' instead, or set your own model / Claude API key in Settings."
         )
 
     cmd = [
