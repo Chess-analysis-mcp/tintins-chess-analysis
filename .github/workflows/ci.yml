@@ -7,7 +7,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # The app ships to all three (Linux/macOS via the .command launcher, Windows via the .bat, macOS
+    # via the .app), and several code paths are platform-sensitive: settings.json permissions, the
+    # git/zip self-updater's subprocess calls, and DATA_DIR resolution. Run the suite everywhere so
+    # a Windows- or Linux-only regression fails here rather than on a user's machine.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 

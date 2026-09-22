@@ -585,6 +585,24 @@ APP_MODE: bool = os.environ.get("CHESS_APP_MODE", "0") == "1"
 # subscription path (headless `claude -p`).
 LOCAL_LLM_BASE_URL: str = os.environ.get("CHESS_LOCAL_LLM_BASE_URL", "").strip()
 LOCAL_LLM_MODEL: str = os.environ.get("CHESS_LOCAL_LLM_MODEL", "").strip()
+# Optional credentials for the same path, so a *hosted* OpenAI-compatible provider works directly
+# (OpenRouter, Together, Groq, DeepSeek, Mistral, Azure OpenAI, a remote LiteLLM proxy, ...) instead
+# of needing a local gateway in front of it purely to attach the header. Blank for a truly local
+# server (Ollama, LM Studio), which wants no auth. LOCAL_LLM_API_KEY_HEADER selects how the key is
+# sent: blank/"auto" means `Authorization: Bearer <key>`, except Azure-looking hosts, which get
+# Azure OpenAI's `api-key: <key>`; "bearer"/"authorization" or "api-key" force one of those; any
+# other value is used as a literal header name (e.g. "X-Api-Key") carrying the raw key.
+LOCAL_LLM_API_KEY: str = os.environ.get("CHESS_LOCAL_LLM_API_KEY", "").strip()
+LOCAL_LLM_API_KEY_HEADER: str = os.environ.get("CHESS_LOCAL_LLM_API_KEY_HEADER", "").strip()
+
+# "Bring your own Claude": the chat/coach over the Anthropic Messages API with the user's own key
+# (see server.core.anthropic_api), billed per token instead of riding the Claude subscription that
+# headless `claude -p` uses. Opt-in only: blank means the default subscription path.
+# NOTE the CHESS_ prefix. We deliberately do NOT read ANTHROPIC_API_KEY, because a developer with
+# that exported would otherwise be silently switched onto per-token billing; claude_bridge strips
+# it from the `claude -p` child env for the same reason.
+ANTHROPIC_API_KEY: str = os.environ.get("CHESS_ANTHROPIC_API_KEY", "").strip()
+ANTHROPIC_MODEL: str = os.environ.get("CHESS_ANTHROPIC_MODEL", "").strip()
 
 # --- Puzzle mode (server.core.puzzles / puzzle_rating) ------------------------------------------
 # A tactical-trainer built on the same substrate (board, engine, claude_bridge, DATA_DIR). Puzzles

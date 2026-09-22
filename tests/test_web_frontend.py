@@ -92,11 +92,22 @@ def test_vendored_assets_are_served():
     assert ct.startswith(("text/javascript", "application/javascript")), ct
 
 
+def _served_main_js() -> str:
+    """main.js as served, with line endings normalised to \n.
+
+    On Windows git checks the file out with CRLF (core.autocrlf), so the function-body scans below
+    would look for "\n}\n" in text that actually contains "\r\n}\r\n" and raise ValueError. The
+    browser doesn't care either way; only these string searches do.
+    """
+    text = TestClient(app_module.create_app()).get("/main.js").text
+    return text.replace("\r\n", "\n")
+
+
 def test_review_other_side_rechecked_after_timeline_loads():
     # Regression guard: "Review other side" needs the game's timeline, but applySession() checks the
     # button BEFORE applyTimeline() fills it in, so the button stayed hidden for every opened game.
     # applyTimeline() must re-check it once the timeline exists.
-    main_js = TestClient(app_module.create_app()).get("/main.js").text
+    main_js = _served_main_js()
     start = main_js.index("function applyTimeline(")
     body = main_js[start : main_js.index("\n}\n", start)]
     assert "updateFlipReviewButton()" in body, "applyTimeline() must re-check the Review other side button"
@@ -106,7 +117,7 @@ def test_leaving_puzzle_mode_cancels_pending_puzzle_work():
     # Regression guard: puzzle handlers (the delayed setup move, a pending "Next puzzle" fetch, a
     # solution playback) only stop when puzzleGen changes. Leaving Puzzles mode didn't bump it, so
     # "Next puzzle" followed quickly by Analyze played a puzzle move onto the analysis board.
-    main_js = TestClient(app_module.create_app()).get("/main.js").text
+    main_js = _served_main_js()
     start = main_js.index("async function setPuzzleMode(")
     body = main_js[start : main_js.index("\n}\n", start)]
     assert "puzzleGen++" in body, "leaving Puzzles mode must bump puzzleGen to cancel pending puzzle work"

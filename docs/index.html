@@ -78,10 +78,10 @@
           },
           {
             "@type": "Question",
-            "name": "Can I run the AI coach on a local model instead of Claude?",
+            "name": "Can I use my own model or API key instead of a Claude subscription?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Yes. The AI chat and coach summaries can run on a model on your own machine, with no Claude subscription, no login, and not even the claude CLI. The app talks to your local model directly. It works with any local server that exposes an OpenAI-compatible API: Ollama, LM Studio, llama.cpp, a LiteLLM proxy, and others. Quality depends on the local model, so small models explain less well than Claude. The Stockfish engine review is always fully local either way."
+              "text": "Yes, in two ways. Run a model on your own machine, with no Claude subscription, no login, and not even the claude CLI, using any server with an OpenAI-compatible API such as Ollama, LM Studio or llama.cpp. Or paste the API key of a hosted provider (OpenRouter, Groq, Together, DeepSeek, Azure OpenAI and others) and the app talks to it directly, with no gateway needed in front of it. There is also an Anthropic API key option if you want Claude itself without a subscription, billed per token. Your keys are stored on the computer running the app and are never sent to other devices that open the board over your network. Quality depends on the model you point at, so small local models explain less well than Claude. The Stockfish engine review is always fully local either way."
             }
           },
           {
@@ -365,14 +365,17 @@ irm https://claude.ai/install.ps1 | iex</code></pre>
       </details>
 
       <details class="faq">
-        <summary>Can I run the AI coach on a local model instead of Claude?</summary>
+        <summary>Can I use my own model or API key instead of a Claude subscription?</summary>
         <div class="faq-body">
           <p>
-            Yes. The AI chat and coach summaries can run on a model <strong>on your own machine</strong>,
-            with <strong>no Claude subscription, no login, and not even the <code>claude</code> CLI</strong>.
-            The app talks to your local model directly. It works with any local server that exposes an
-            OpenAI-compatible API: <a href="https://ollama.com">Ollama</a>, LM Studio, llama.cpp, a
-            LiteLLM proxy, and others.
+            Yes, in two ways. Run a model <strong>on your own machine</strong>, with
+            <strong>no Claude subscription, no login, and not even the <code>claude</code> CLI</strong>,
+            using any server with an OpenAI-compatible API (<a href="https://ollama.com">Ollama</a>,
+            LM Studio, llama.cpp). Or paste the <strong>API key</strong> of a hosted provider
+            (OpenRouter, Groq, Together, DeepSeek, Azure OpenAI and others) and the app talks to it
+            directly, with no gateway needed in front of it. There is also an
+            <strong>Anthropic API key</strong> option if you want Claude itself without a subscription,
+            billed per token.
           </p>
 
           <details class="faq-sub">
@@ -382,20 +385,36 @@ irm https://claude.ai/install.ps1 | iex</code></pre>
               <pre><code># install Ollama, then pull any chat model
 ollama pull qwen2.5-coder</code></pre>
               <p>
-                In the board, open <strong>&#9881; Settings &rarr; Advanced &rarr; Local AI model</strong>,
-                click <strong>Detect Ollama</strong>, pick a model, and <strong>Save</strong>. That's it.
+                In the board, open <strong>&#9881; Settings &rarr; Engine &amp; AI &rarr; Local or custom
+                AI model</strong>, click <strong>Detect Ollama</strong>, pick a model, and
+                <strong>Save</strong>. That's it.
               </p>
               <p>
-                <strong>With anything else:</strong> under the same setting, fill in the server's
+                <strong>With another local server:</strong> under the same setting, fill in the server's
                 <strong>URL</strong> (for example <code>http://localhost:1234/v1</code> for LM Studio) and
-                the <strong>Model</strong> name. Leave the field blank to switch back to Claude.
+                the <strong>Model</strong> name. Leave the API key empty; a local server does not want one.
+              </p>
+              <p>
+                <strong>With a hosted provider:</strong> fill in its <strong>URL</strong> and
+                <strong>Model</strong>, then paste its <strong>API key</strong>. The key is sent as
+                <code>Authorization: Bearer</code>, which is what almost every provider expects, and
+                Azure OpenAI is detected automatically and gets its own <code>api-key</code> header.
+              </p>
+              <p>
+                <strong>With Claude, billed per token:</strong> paste an Anthropic API key under
+                <strong>Claude API key</strong> in the same place and pick a model. Clear the model URL
+                to go back to your Claude subscription.
+              </p>
+              <p>
+                Your keys are stored on the computer running the app, and are never sent to other devices
+                that open the board over your network.
               </p>
             </div>
           </details>
 
           <p class="muted">
-            Note: quality depends on the local model, so small models explain less well than Claude. The
-            Stockfish engine review is always fully local either way.
+            Note: quality depends on the model you point at, so small local models explain less well
+            than Claude. The Stockfish engine review is always fully local either way.
           </p>
         </div>
       </details>

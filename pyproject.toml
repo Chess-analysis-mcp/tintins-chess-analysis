@@ -1,6 +1,6 @@
 [project]
 name = "chess-review-mcp"
-version = "2.1.0"
+version = "2.2.0"
 description = "Local chess review tool: PGN -> Stockfish analysis -> mistakes explained in words, driven from Claude Code via MCP."
 requires-python = ">=3.11"
 license = "MIT"
@@ -13,6 +13,9 @@ dependencies = [
     "uvicorn>=0.49",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
+    # Optional AI backend: the Claude API option in Settings (server/core/anthropic_api.py).
+    # Imported lazily, so a missing install degrades to a friendly message, not a broken app.
+    "anthropic>=0.49",
 ]
 
 [project.optional-dependencies]

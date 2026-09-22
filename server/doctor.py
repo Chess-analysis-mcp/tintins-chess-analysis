@@ -56,19 +56,28 @@ def _local_llm_enabled() -> bool:
     return bool((config.LOCAL_LLM_BASE_URL or "").strip())
 
 
+def _byo_ai() -> str:
+    """A short label for a configured own-AI backend that replaces the `claude` CLI, else ""."""
+    if _local_llm_enabled():
+        return f"a local AI model ({config.LOCAL_LLM_BASE_URL})"
+    if (config.ANTHROPIC_API_KEY or "").strip():
+        return "your Anthropic API key"
+    return ""
+
+
 def _check_claude() -> bool:
     path = shutil.which("claude")
     if path:
         print(f"{OK} claude CLI: {path}")
         return True
-    if _local_llm_enabled():
-        print(f"{OK} AI features: using a local AI model ({config.LOCAL_LLM_BASE_URL}) — "
-              "the claude CLI isn't needed.")
+    byo = _byo_ai()
+    if byo:
+        print(f"{OK} AI features: using {byo} — the claude CLI isn't needed.")
         return True
     print(f"{WARN} claude CLI: not found (optional)")
     print("    Only needed for the in-browser 'why?' chat and the Claude Code terminal "
           "workflow. Install from https://code.claude.com/docs/en/quickstart and run `claude login`, "
-          "or set a local AI model in Settings.")
+          "or set your own model / Claude API key in Settings.")
     return True  # optional: never fails the overall check
 
 
@@ -83,9 +92,10 @@ def status() -> dict:
     sf_path = config.STOCKFISH_PATH
     sf_resolved = shutil.which(sf_path) or (sf_path if "/" in sf_path else None)
     claude_path = shutil.which("claude")
-    # A configured local AI model serves the chat/coach over direct HTTP, so the `claude` CLI is
-    # not needed at all — report the check satisfied so the UI doesn't nag to install it.
-    local_llm_on = _local_llm_enabled()
+    # An own-AI backend (local model or Anthropic API key) serves the chat/coach over direct HTTP,
+    # so the `claude` CLI isn't needed at all — report the check satisfied so the UI doesn't nag.
+    byo = _byo_ai()
+    local_llm_on = bool(byo)
     return {
         "python": {
             "ok": (v.major, v.minor) >= (3, 11),
@@ -103,12 +113,12 @@ def status() -> dict:
             "ok": bool(claude_path) or local_llm_on,
             "optional": True,
             "path": claude_path or "",
-            "detail": "not needed — using local AI" if (local_llm_on and not claude_path) else "",
+            "detail": f"not needed — using {byo}" if (local_llm_on and not claude_path) else "",
             "hint": ""
             if (claude_path or local_llm_on)
             else "Needed only for the in-browser AI chat and the AI coach summary. Install from "
-            "https://code.claude.com/docs/en/quickstart, then run `claude login` — or set a local "
-            "AI model in Settings.",
+            "https://code.claude.com/docs/en/quickstart, then run `claude login` — or set your own "
+            "model / Claude API key in Settings.",
         },
     }
 

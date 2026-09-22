@@ -905,7 +905,7 @@ body.history-hidden .history-col { display: none; }
 .set-llm-row { display: flex; align-items: center; gap: 10px; margin: 2px 0; }
 .set-llm-row .linklike { white-space: nowrap; }
 .set-sub { display: flex; align-items: center; gap: 8px; }
-.set-sub-label { font-size: 12px; color: var(--muted); width: 44px; flex: none; }
+.set-sub-label { font-size: 12px; color: var(--muted); width: 62px; flex: none; }
 .set-sub input, .set-sub select { flex: 1; }
 .set-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 4px; }
 .set-actions button[type="submit"] {

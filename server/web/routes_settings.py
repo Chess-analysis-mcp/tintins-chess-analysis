@@ -44,6 +44,10 @@ class SettingsPatch(BaseModel):
     puzzle_mistake_interleave: bool | None = None
     local_llm_base_url: str | None = None
     local_llm_model: str | None = None
+    local_llm_api_key: str | None = None
+    local_llm_api_key_header: str | None = None
+    anthropic_api_key: str | None = None
+    anthropic_model: str | None = None
     web_host: str | None = None
 
 
@@ -55,17 +59,21 @@ def _stockfish_ok(path: str) -> bool:
 def get_settings(request: Request) -> dict:
     """Current effective settings + a couple of read-only status flags for the panel."""
     eff = settings_mod.effective()
-    # With network access on, other devices can open Settings too; don't hand them the saved token.
-    token_hidden = bool(eff["lichess_token"]) and not is_local_client(request)
-    if token_hidden:
-        eff["lichess_token"] = ""
+    # With network access on, other devices can open Settings too; don't hand them saved secrets.
+    hidden = [] if is_local_client(request) else settings_mod.redact(eff)
     return {
         "settings": eff,
         "stockfish_ok": _stockfish_ok(eff["stockfish_path"]),
         "data_dir": config.DATA_DIR,
         "web_port": config.WEB_PORT,
+        "current_version": config.APP_VERSION,  # shown on the Settings -> About tab
         "lan_ip": config.lan_ip(),  # for the network-access hint ("on your phone, open http://...")
-        "lichess_token_hidden": token_hidden,
+        "secrets_hidden": hidden,  # which credential fields were withheld from this client
+        # Kept as individual flags too: the frontend reads these to label the blank fields
+        # ("saved (hidden on other devices)") rather than looking like the value was lost.
+        "lichess_token_hidden": "lichess_token" in hidden,
+        "local_llm_api_key_hidden": "local_llm_api_key" in hidden,
+        "anthropic_api_key_hidden": "anthropic_api_key" in hidden,
     }
 
 
@@ -145,10 +153,14 @@ def ollama_models(url: str = "") -> dict:
 def post_settings(patch: SettingsPatch, request: Request) -> JSONResponse:
     """Persist + apply a settings patch. Returns the new effective settings (or a 400 on bad input)."""
     data = {k: v for k, v in patch.model_dump().items() if v is not None}
+    local_client = is_local_client(request)
 
-    # Another device never saw the real token (GET hides it), so its blank field must not wipe it.
-    if data.get("lichess_token") == "" and not is_local_client(request):
-        del data["lichess_token"]
+    # Another device never saw the real secrets (GET hides them), so its blank fields must not
+    # wipe them. Clearing a key stays possible from the machine running the app.
+    if not local_client:
+        for secret in settings_mod.SECRET_KEYS:
+            if data.get(secret) == "":
+                del data[secret]
 
     # A host the server can't bind would stop the app from starting next launch: reject it now.
     if "web_host" in data:
@@ -175,7 +187,13 @@ def post_settings(patch: SettingsPatch, request: Request) -> JSONResponse:
             engine.restart()
         except Exception:  # pragma: no cover - defensive; next analysis would surface a real error
             pass
-    return JSONResponse({"settings": eff, "stockfish_ok": _stockfish_ok(eff["stockfish_path"])})
+    stockfish_ok = _stockfish_ok(eff["stockfish_path"])
+    # The response echoes the new effective settings, so it needs the same redaction as GET: saving
+    # any unrelated field from a phone must not hand that phone the stored API keys.
+    hidden = [] if local_client else settings_mod.redact(eff)
+    return JSONResponse(
+        {"settings": eff, "stockfish_ok": stockfish_ok, "secrets_hidden": hidden}
+    )
 
 
 @router.post("/fix-stockfish-arch")

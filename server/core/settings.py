@@ -39,8 +39,39 @@ KEYS = (
     "puzzle_mistake_interleave",
     "local_llm_base_url",
     "local_llm_model",
+    "local_llm_api_key",
+    "local_llm_api_key_header",
+    "anthropic_api_key",
+    "anthropic_model",
     "web_host",
 )
+
+
+# The settings that are credentials. They get three extra guarantees, all enforced through this one
+# list so a newly added key can't silently miss them: settings.json is written owner-only, they are
+# stripped from any API response to a non-local client (Settings opened from a phone over LAN
+# access), and a blank field from such a client never overwrites the stored value. See
+# `server/web/routes_settings.py`.
+SECRET_KEYS = (
+    "lichess_token",
+    "local_llm_api_key",
+    "anthropic_api_key",
+)
+
+
+# Owner read+write. The write bit matters on Windows: os.chmod there maps a mode without S_IWRITE
+# onto the read-only attribute, which would make the *next* save fail.
+FILE_MODE = 0o600
+
+
+def redact(values: dict) -> list[str]:
+    """Blank every non-empty secret in `values` (in place). Returns the keys that were hidden."""
+    hidden = []
+    for key in SECRET_KEYS:
+        if values.get(key):
+            values[key] = ""
+            hidden.append(key)
+    return hidden
 
 
 def _path(data_dir: Optional[str] = None) -> str:
@@ -62,6 +93,14 @@ def save(settings: dict, data_dir: Optional[str] = None) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(settings, fh, ensure_ascii=False, indent=2)
+    # This file can hold API keys (SECRET_KEYS), so make it owner-only rather than leaving it at
+    # whatever the umask gives. Best-effort: on Windows os.chmod only toggles the read-only
+    # attribute (FILE_MODE keeps the owner-write bit, so the file stays writable there), and some
+    # filesystems refuse chmod outright. Neither may break saving settings.
+    try:
+        os.chmod(path, FILE_MODE)
+    except OSError:
+        pass
 
 
 def apply(settings: dict) -> None:
@@ -115,6 +154,14 @@ def apply(settings: dict) -> None:
         config.LOCAL_LLM_BASE_URL = (settings["local_llm_base_url"] or "").strip()
     if "local_llm_model" in settings:
         config.LOCAL_LLM_MODEL = (settings["local_llm_model"] or "").strip()
+    if "local_llm_api_key" in settings:
+        config.LOCAL_LLM_API_KEY = (settings["local_llm_api_key"] or "").strip()
+    if "local_llm_api_key_header" in settings:
+        config.LOCAL_LLM_API_KEY_HEADER = (settings["local_llm_api_key_header"] or "").strip()
+    if "anthropic_api_key" in settings:
+        config.ANTHROPIC_API_KEY = (settings["anthropic_api_key"] or "").strip()
+    if "anthropic_model" in settings:
+        config.ANTHROPIC_MODEL = (settings["anthropic_model"] or "").strip()
     if "web_host" in settings:
         # The server is already bound by the time a live save happens, so this only takes effect
         # on the next launch (apply_saved() reads it before uvicorn binds); still applied live so
@@ -159,6 +206,10 @@ def effective() -> dict:
         "puzzle_mistake_interleave": config.PUZZLE_MISTAKE_INTERLEAVE,
         "local_llm_base_url": config.LOCAL_LLM_BASE_URL or "",
         "local_llm_model": config.LOCAL_LLM_MODEL or "",
+        "local_llm_api_key": config.LOCAL_LLM_API_KEY or "",
+        "local_llm_api_key_header": config.LOCAL_LLM_API_KEY_HEADER or "",
+        "anthropic_api_key": config.ANTHROPIC_API_KEY or "",
+        "anthropic_model": config.ANTHROPIC_MODEL or "",
         "web_host": config.WEB_HOST or "127.0.0.1",
     }
 

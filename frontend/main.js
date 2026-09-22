@@ -98,6 +98,10 @@ let personalizeHistory = true;
 // changed and warn that a restart is needed for a bind-address change to actually take effect.
 let initialLanAccess = false;
 let settingsWebPort = 8765; // last-known port, for the LAN-access hint text
+// True when a custom-model API key is saved but was withheld from this device (see openSettings).
+let llmKeyHidden = false;
+// Same for the Anthropic API key: saved on the host, blanked for anyone on the network.
+let anthropicKeyHidden = false;
 let settingsLanIp = null; // this computer's LAN address (from /api/settings), for the same hint
 
 // --- puzzle mode ---------------------------------------------------------
@@ -1428,7 +1432,11 @@ async function checkOnline() {
 // read-only .app gets a download link. Dismissal is remembered per version, so a newer release
 // re-notifies. Fire-and-forget; failures are silent.
 async function checkUpdates() {
-  if (!appMode) return; // only nag end-user app launches, never MCP/dev sessions
+  // Shown on EVERY launch, not just the double-click app: someone who cloned the repo and runs
+  // `uv run python scripts/run_web.py` (or reaches the board through Claude Code) has no other way
+  // to find out a release is out. It stays unobtrusive: per-version dismissal, a throttled check,
+  // CHESS_UPDATE_CHECK=0 to turn it off, and nothing at all unless this install is actually behind
+  // (a dev checkout whose pyproject is already ahead of the latest tag never sees it).
   const banner = $("update-banner");
   if (!banner) return;
   let info;
@@ -1446,10 +1454,14 @@ async function checkUpdates() {
   banner.classList.toggle("update", !major);
   const v = escapeHtml(info.latest);
   const lead = major ? `<b>Major update v${v} available.</b>` : `<b>Update available — v${v}.</b>`;
-  // git/zip self-update in place; the read-only .app needs a guided manual download.
-  const how = info.can_self_update
-    ? "Click Update now, then reopen the app to finish. Your games &amp; settings are kept."
-    : "A new version is ready.";
+  // git/zip self-update in place; the read-only .app needs a guided manual download. Without a
+  // launcher there's nothing to apply a staged update on the next start, so we update immediately
+  // and the user restarts however they started it.
+  const how = !info.can_self_update
+    ? "A new version is ready."
+    : appMode
+      ? "Click Update now, then reopen the app to finish. Your games &amp; settings are kept."
+      : "Click Update now, then restart the server to finish. Your games &amp; settings are kept.";
   const action = info.can_self_update
     ? `<button class="sb-btn" type="button" id="update-now">Update now</button>`
     : `<button class="sb-btn" type="button" id="update-guide">How to update</button>`;
@@ -1494,17 +1506,41 @@ function showAppUpdateGuide(banner, info) {
   wireDismiss(banner, info);
 }
 
-// Stage a one-click update: POST /api/apply-update writes a sentinel the launcher applies on the
-// next start. We can't reliably relaunch from a browser tab, so we just tell the user to reopen.
+// POST /api/apply-update, the one place that knows WHICH apply path this session has:
+//   * launcher-started app (app mode) -> stage a sentinel; the launcher applies it on the next
+//     start, when nothing is running from the files being replaced. The safer path, so it stays
+//     the default.
+//   * anything else (clone run directly, the MCP board) -> `{now: true}`: update the checkout
+//     right away, because no launcher will ever consume a sentinel. Deps sort themselves out,
+//     since `uv run` syncs the environment on the next start.
+async function requestUpdateApply() {
+  try {
+    const res = await fetch("/api/apply-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(appMode ? {} : { now: true }),
+    }).then((r) => r.json());
+    return res || { ok: false };
+  } catch (_) {
+    return { ok: false, error: "Couldn't reach the server." };
+  }
+}
+
+// The banner's Update button. We can't reliably relaunch from a browser tab, so the end state is
+// always an instruction: reopen the app (staged) or restart the server (applied in place).
 async function applyUpdate(btn) {
   btn.disabled = true;
-  btn.textContent = "Staging…";
+  btn.textContent = appMode ? "Staging…" : "Updating…";
   const msg = $("update-banner").querySelector(".sb-msg");
-  let res = {};
-  try {
-    res = await fetch("/api/apply-update", { method: "POST" }).then((r) => r.json());
-  } catch (_) {}
+  const res = await requestUpdateApply();
   if (res && res.ok) {
+    if (!appMode) {
+      if (msg)
+        msg.innerHTML =
+          "<b>Updated.</b> Restart the app (stop and re-run it) to load the new version.";
+      btn.remove();
+      return;
+    }
     if (msg) msg.innerHTML = "<b>Update staged.</b> Quit and reopen the app to finish updating.";
     btn.textContent = "Quit now";
     btn.disabled = false;
@@ -1517,9 +1553,76 @@ async function applyUpdate(btn) {
   } else {
     if (msg)
       msg.innerHTML =
-        "<b>Couldn't stage the update.</b> " + escapeHtml((res && res.error) || "Try again later.");
+        "<b>Couldn't update.</b> " + escapeHtml((res && res.error) || "Try again later.");
     btn.textContent = "Update now";
     btn.disabled = false;
+  }
+}
+
+// Settings -> About -> "Check for updates". The startup banner only runs in app mode and is
+// dismissible per version, so this is the way anyone else (a git checkout, a dev run, the board
+// behind Claude Code) can find out a release is out, and re-check after dismissing. Forces a fresh
+// GitHub lookup rather than trusting the throttled cache.
+async function checkUpdateFromSettings() {
+  const btn = $("set-check-update");
+  const status = $("set-update-status");
+  const detail = $("set-update-detail");
+  btn.disabled = true;
+  status.textContent = "Checking…";
+  detail.textContent = "";
+  let info;
+  try {
+    info = await fetch("/api/update-check?force=1").then((r) => r.json());
+  } catch (_) {
+    info = null;
+  }
+  btn.disabled = false;
+  if (!info || (!info.latest && !info.current)) {
+    status.textContent = "Couldn't check right now (are you online?).";
+    return;
+  }
+  if (!info.update_available) {
+    status.textContent = info.latest
+      ? `Up to date (v${info.latest} is the latest).`
+      : "Up to date.";
+    return;
+  }
+  status.textContent = `v${info.latest} is available.`;
+  if (info.can_self_update) {
+    // git / zip installs can apply in place: same sentinel the banner's button writes.
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "sb-btn";
+    go.textContent = "Update now";
+    go.addEventListener("click", async () => {
+      go.disabled = true;
+      go.textContent = appMode ? "Staging…" : "Updating…";
+      const res = await requestUpdateApply();
+      if (res && res.ok) {
+        detail.textContent = appMode
+          ? "Update staged. Quit and reopen the app to finish. Your games and settings are kept."
+          : "Updated. Restart the app (stop and re-run it) to load the new version. Your games and settings are kept.";
+        go.remove();
+      } else {
+        detail.textContent = (res && res.error) || "Couldn't update. Try again later.";
+        go.disabled = false;
+        go.textContent = "Update now";
+      }
+    });
+    detail.textContent = "";
+    detail.appendChild(go);
+  } else {
+    // The .app bundle is read-only at runtime, so point at the download instead.
+    const link = document.createElement("a");
+    link.href = info.release_url || "#";
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "Download the latest version";
+    detail.textContent = "";
+    detail.appendChild(link);
+    detail.append(
+      " — unzip it and drag the app into Applications, replacing the old one. Your games and settings carry over.",
+    );
   }
 }
 
@@ -2388,6 +2491,31 @@ function updateLanHint() {
     : "";
 }
 
+// The "Send key as" picker only matters once there's a key to send (a local server needs none),
+// so keep it out of the way until the key field has something in it.
+function updateLlmKeyUI() {
+  const hasKey = llmKeyHidden || !!$("set-local-llm-key").value.trim();
+  $("set-llm-key-header-row").hidden = !hasKey;
+}
+
+// Three backends can answer the "why?" chat, so spell out which one the current fields select
+// (the custom URL wins over an API key, matching claude_bridge._byo_backend).
+function updateAiBackendHint() {
+  const url = $("set-local-llm-url").value.trim();
+  const key = anthropicKeyHidden || !!$("set-anthropic-key").value.trim();
+  const el = $("set-ai-backend");
+  if (!el) return;
+  if (url) {
+    el.textContent = key
+      ? "Now using: your own model at the URL above. It takes precedence — clear the URL to use the Claude API key instead."
+      : "Now using: your own model at the URL above.";
+  } else if (key) {
+    el.textContent = "Now using: the Anthropic API with your key (billed per token).";
+  } else {
+    el.textContent = "Now using: your Claude subscription via the `claude` CLI (no extra cost).";
+  }
+}
+
 // Show/hide the slider to match the checkbox and refresh the readout.
 function updateSkillUI() {
   const auto = $("set-skill-auto").checked;
@@ -2439,6 +2567,41 @@ async function openSettings() {
   $("set-stockfish").value = s.stockfish_path || "";
   $("set-local-llm-url").value = s.local_llm_base_url || "";
   $("set-local-llm-model").value = s.local_llm_model || "";
+  $("set-local-llm-key").value = s.local_llm_api_key || "";
+  // Same deal as the Lichess token: a saved key isn't sent to other devices, and a blank field
+  // there keeps it. Locally, blank really means "no key" (a local server needs none).
+  llmKeyHidden = !!data.local_llm_api_key_hidden;
+  $("set-local-llm-key").placeholder = llmKeyHidden
+    ? "saved (hidden on other devices)"
+    : "only for hosted providers (a local server needs none)";
+  const keyHeader = (s.local_llm_api_key_header || "").trim();
+  const keySel = $("set-local-llm-key-header");
+  // A custom header name (set via env or a hand-edited settings.json) isn't one of the presets;
+  // add it as an option so saving from the panel round-trips it instead of silently dropping it.
+  if (keyHeader && !Array.from(keySel.options).some((o) => o.value === keyHeader)) {
+    keySel.add(new Option(`${keyHeader} (custom)`, keyHeader));
+  }
+  keySel.value = keyHeader;
+  updateLlmKeyUI();
+  anthropicKeyHidden = !!data.anthropic_api_key_hidden;
+  $("set-anthropic-key").value = s.anthropic_api_key || "";
+  $("set-anthropic-key").placeholder = anthropicKeyHidden
+    ? "saved (hidden on other devices)"
+    : "sk-ant-…";
+  const modelSel = $("set-anthropic-model");
+  const storedModel = (s.anthropic_model || "").trim() || "claude-opus-5";
+  // A model set by hand (env / settings.json) may not be one of the listed options: keep it rather
+  // than silently switching the user to the default on the next save.
+  if (!Array.from(modelSel.options).some((o) => o.value === storedModel)) {
+    modelSel.add(new Option(`${storedModel} (custom)`, storedModel));
+  }
+  modelSel.value = storedModel;
+  updateAiBackendHint();
+  // About tab: version, where the data lives, and a clean slate for the update check.
+  $("set-version").textContent = `Tintin's AI Chess Analysis v${data.current_version || "?"}`;
+  $("set-data-dir").value = data.data_dir || "";
+  $("set-update-status").textContent = "";
+  $("set-update-detail").textContent = "";
   $("set-ollama-status").textContent = "";
   $("set-ollama-pick-row").hidden = true; // picker only appears after a successful Detect
   $("set-coach-ai-auto").checked = !!s.coach_ai_auto; // auto-generate per game (default off)
@@ -2522,6 +2685,10 @@ async function saveSettings(e) {
     stockfish_path: $("set-stockfish").value.trim(),
     local_llm_base_url: $("set-local-llm-url").value.trim(),
     local_llm_model: $("set-local-llm-model").value.trim(),
+    local_llm_api_key: $("set-local-llm-key").value.trim(),
+    local_llm_api_key_header: $("set-local-llm-key-header").value.trim(),
+    anthropic_api_key: $("set-anthropic-key").value.trim(),
+    anthropic_model: $("set-anthropic-model").value.trim(),
     coach_ai_auto: $("set-coach-ai-auto").checked,
     coach_ai_persist: $("set-coach-ai-persist").checked,
     personalize_history: $("set-personalize").checked,
@@ -4802,6 +4969,10 @@ function init() {
   $("set-lan-access").addEventListener("change", () => updateLanHint());
   $("set-elo").addEventListener("input", updateSkillUI);
   $("set-ollama-detect").addEventListener("click", detectOllama);
+  $("set-local-llm-key").addEventListener("input", updateLlmKeyUI);
+  $("set-local-llm-url").addEventListener("input", updateAiBackendHint);
+  $("set-anthropic-key").addEventListener("input", updateAiBackendHint);
+  $("set-check-update").addEventListener("click", checkUpdateFromSettings);
   $("set-ollama-model-select").addEventListener("change", (e) => {
     $("set-local-llm-model").value = e.target.value; // picking a detected model fills the saved field
   });
