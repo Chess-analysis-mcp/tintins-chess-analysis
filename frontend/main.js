@@ -2466,11 +2466,12 @@ function activateSettingsTab(name) {
     .forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
 }
 
-// One-click Ollama setup: fill in the default URL if blank, ask the backend what models Ollama
-// has pulled, populate the model picker, and auto-select the first one if none is chosen yet.
+// One-click model detection: fill in the default URL if blank, ask the backend what models the
+// local server offers (Ollama-native or OpenAI-compatible), populate the picker, and auto-select
+// the first one if none is chosen yet.
 async function detectOllama() {
   const status = $("set-ollama-status");
-  status.textContent = "Looking for Ollama…";
+  status.textContent = "Looking for models…";
   const url = $("set-local-llm-url").value.trim();
   let data;
   try {
@@ -2481,7 +2482,7 @@ async function detectOllama() {
     return;
   }
   if (!data.ok) {
-    status.textContent = data.error || "No Ollama found.";
+    status.textContent = data.error || "No model server found.";
     return;
   }
   if (!url) $("set-local-llm-url").value = data.base_url; // adopt the URL we found it at
@@ -2495,7 +2496,8 @@ async function detectOllama() {
   }
   if (!data.models.length) {
     $("set-ollama-pick-row").hidden = true;
-    status.textContent = "Ollama is running but has no models. Pull one: ollama pull qwen2.5-coder";
+    status.textContent =
+      "The server is running but lists no models. Pull/add one first (Ollama: ollama pull qwen2.5-coder).";
     return;
   }
   // Show the picker; keep the existing model if it's one Ollama has, else default to the first.

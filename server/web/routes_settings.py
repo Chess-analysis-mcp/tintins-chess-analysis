@@ -75,27 +75,70 @@ def get_phone_access() -> dict:
     return config.phone_access()
 
 
+def _probe_models(resp: httpx.Response) -> list[str] | None:
+    """Parse one model-listing response, or None when this isn't a usable model endpoint.
+
+    Covers the two shapes a local model server uses: Ollama's native `{"models": [{"name": ...}]}`
+    and the OpenAI-compatible `{"data": [{"id": ...}]}` (LM Studio, llama.cpp, LiteLLM). An empty
+    Ollama list is a genuine answer ("running, nothing pulled yet"), so it's accepted; a
+    `data`-shaped list that yields no usable names (a different API's listing) is a miss, so the
+    next endpoint is still probed.
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    models = body.get("models")
+    if isinstance(models, list):
+        return [m["name"] for m in models if isinstance(m, dict) and m.get("name")]
+    data = body.get("data")
+    if isinstance(data, list):
+        names = [
+            m.get("name") or m.get("id")
+            for m in data
+            if isinstance(m, dict) and (m.get("name") or m.get("id"))
+        ]
+        return names or None
+    return None
+
+
 @router.get("/ollama/models")
 def ollama_models(url: str = "") -> dict:
-    """List the models a local Ollama install has pulled, so the Settings panel can offer a picker.
+    """List the models a local model server offers, so the Settings panel can offer a picker.
 
-    Queries Ollama's native `GET /api/tags`. `url` is the optional base URL the user typed; blank
-    falls back to the saved local-LLM URL, then Ollama's default port. Never raises — a server
-    that's down or not Ollama just returns `{ok: false}` with a friendly hint.
+    Works with any local server the local-LLM field accepts, not just Ollama: it probes the
+    Ollama-native `GET /api/tags` first, then the OpenAI-compatible `GET /models` (and `/v1/models`
+    for a bare host). `url` is the optional base URL the user typed; blank falls back to the saved
+    local-LLM URL, then Ollama's default port. Never raises — a server that's down or unknown just
+    returns `{ok: false}` with a friendly hint.
     """
     base = (url or config.LOCAL_LLM_BASE_URL or _OLLAMA_DEFAULT_URL).strip().rstrip("/")
-    try:
-        resp = httpx.get(f"{base}/api/tags", timeout=3.0)
-        resp.raise_for_status()
-        models = [m["name"] for m in resp.json().get("models", []) if m.get("name")]
-    except Exception:
-        return {
-            "ok": False,
-            "base_url": base,
-            "models": [],
-            "error": f"No Ollama found at {base}. Is it installed and running (`ollama serve`)?",
-        }
-    return {"ok": True, "base_url": base, "models": models}
+    # Bare host (Ollama's default) gets all three probes; a base that already ends in /v1
+    # (LM Studio, LiteLLM) is probed at /models, which is its /v1/models.
+    paths = ["/api/tags", "/models"] if base.endswith("/v1") else ["/api/tags", "/models", "/v1/models"]
+    last_error = ""
+    for path in paths:
+        try:
+            resp = httpx.get(f"{base}{path}", timeout=3.0)
+            last_error = f"HTTP {resp.status_code}"
+            if resp.status_code < 200 or resp.status_code >= 300:
+                continue
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            continue
+        models = _probe_models(resp)
+        if models is not None:
+            return {"ok": True, "base_url": base, "models": models}
+        last_error = "a page with no model list"
+    return {
+        "ok": False,
+        "base_url": base,
+        "models": [],
+        "error": (
+            f"No model server found at {base} (last probe: {last_error}). Is it running? "
+            "(Ollama: `ollama serve`; LM Studio / LiteLLM: their web UI / proxy)"
+        ),
+    }
 
 
 @router.post("/settings")
