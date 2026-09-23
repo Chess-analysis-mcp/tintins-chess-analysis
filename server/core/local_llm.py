@@ -114,7 +114,7 @@ def _post(messages: list[dict], *, timeout: int) -> str:
     model = (config.LOCAL_LLM_MODEL or "").strip()
     if not model:
         raise LocalLLMError(
-            "No local AI model is set. Pick a model in Settings (e.g. click “Detect Ollama”)."
+            "No local AI model is set. Pick a model in Settings (e.g. click “Detect models”)."
         )
     url = _completions_url(base)
     payload = {"model": model, "messages": messages, "stream": False}
