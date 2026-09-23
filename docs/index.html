@@ -386,13 +386,16 @@ irm https://claude.ai/install.ps1 | iex</code></pre>
 ollama pull qwen2.5-coder</code></pre>
               <p>
                 In the board, open <strong>&#9881; Settings &rarr; Engine &amp; AI &rarr; Local or custom
-                AI model</strong>, click <strong>Detect Ollama</strong>, pick a model, and
+                AI model</strong>, click <strong>Detect models</strong>, pick a model, and
                 <strong>Save</strong>. That's it.
               </p>
               <p>
-                <strong>With another local server:</strong> under the same setting, fill in the server's
-                <strong>URL</strong> (for example <code>http://localhost:1234/v1</code> for LM Studio) and
-                the <strong>Model</strong> name. Leave the API key empty; a local server does not want one.
+                <strong>With another local server:</strong> the same <strong>Detect models</strong>
+                button also finds LM Studio, llama.cpp and a LiteLLM proxy. If the server is not on
+                Ollama's default port, type its <strong>URL</strong> (for example
+                <code>http://localhost:1234/v1</code> for LM Studio) first, then click Detect. To skip
+                detection, fill in the <strong>URL</strong> and the <strong>Model</strong> name by
+                hand. Leave the API key empty; a local server does not want one.
               </p>
               <p>
                 <strong>With a hosted provider:</strong> fill in its <strong>URL</strong> and

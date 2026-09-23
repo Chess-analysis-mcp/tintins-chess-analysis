@@ -311,10 +311,12 @@ proxy) or is a hosted provider (OpenRouter, Groq, Together, DeepSeek, Mistral, A
 
 Everything lives in **⚙ Settings → Advanced → Local or custom AI model**:
 
-- **Ollama (one click):** pull a model (`ollama pull qwen2.5-coder`), then click **Detect Ollama**,
-  pick a model, and **Save**.
-- **Another local server:** fill in the server **URL** (e.g. `http://localhost:1234/v1` for LM
-  Studio) and the **Model** name. Leave **API key** empty; local servers do not want one.
+- **Any local server (one click):** start it and load a model (Ollama: `ollama pull
+  qwen2.5-coder`), then click **Detect models**, pick a model, and **Save**. Detection understands
+  both listing styles, so Ollama, LM Studio, llama.cpp and a LiteLLM proxy all work. If your server
+  is not on Ollama's default port, type its **URL** first and then click Detect.
+- **By hand:** fill in the server **URL** (e.g. `http://localhost:1234/v1` for LM Studio) and the
+  **Model** name. Leave **API key** empty; local servers do not want one.
 - **A hosted provider:** fill in its **URL** and **Model**, and paste its **API key**. The key is
   sent as `Authorization: Bearer <key>`, which is what almost every provider expects, so no gateway
   in front of it is needed. Azure OpenAI is auto-detected and gets its own `api-key` header instead.

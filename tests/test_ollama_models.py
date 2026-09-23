@@ -172,6 +172,7 @@ def test_all_probes_404_reports_not_found_with_last_error(client):
 
 
 def test_connection_refused_is_reported_not_raised(client):
+    """Nothing listening: report it after ONE probe, since the rest share that host:port."""
     c, calls, canned = client
     canned["http://127.0.0.1:9999/v1/api/tags"] = httpx.ConnectError("connection refused")
     canned["http://127.0.0.1:9999/v1/models"] = httpx.ConnectError("connection refused")
@@ -179,7 +180,28 @@ def test_connection_refused_is_reported_not_raised(client):
     assert res["ok"] is False
     assert res["models"] == []
     assert "connection refused" in res["error"]
-    assert len(calls) == 2
+    # A dead port costs one timeout, not one per path.
+    assert calls == ["http://127.0.0.1:9999/v1/api/tags"]
+
+
+def test_connect_timeout_also_stops_the_search(client):
+    c, calls, canned = client
+    canned["http://10.0.0.9:8000/api/tags"] = httpx.ConnectTimeout("timed out")
+    res = _detect(c, "http://10.0.0.9:8000")
+    assert res["ok"] is False
+    assert "ConnectTimeout" in res["error"]
+    assert calls == ["http://10.0.0.9:8000/api/tags"]
+
+
+def test_read_timeout_keeps_probing_the_other_paths(client):
+    """A live host that stalls on ONE path is not a dead host, so the search continues."""
+    c, calls, canned = client
+    canned["http://127.0.0.1:8000/api/tags"] = httpx.ReadTimeout("slow")
+    canned["http://127.0.0.1:8000/models"] = _Resp(200, OPENAI_MODELS)
+    res = _detect(c, "http://127.0.0.1:8000")
+    assert res["ok"] is True
+    assert res["models"] == ["Qwen/Qwen3.8-27B", "mistral-small"]
+    assert calls == ["http://127.0.0.1:8000/api/tags", "http://127.0.0.1:8000/models"]
 
 
 def test_non_json_success_page_is_skipped(client):

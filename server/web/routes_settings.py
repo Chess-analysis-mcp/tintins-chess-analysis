@@ -24,6 +24,14 @@ router = APIRouter()
 # with one click on a stock install.
 _OLLAMA_DEFAULT_URL = "http://localhost:11434"
 
+# Detection tries several paths on the ONE host, so the per-probe budget is what the user waits.
+# A short connect timeout keeps a wrong host/port cheap; the read budget stays longer because a
+# server that accepted the connection is alive and merely thinking.
+_PROBE_TIMEOUT = httpx.Timeout(3.0, connect=1.5)
+# A connect-level failure is a fact about the host:port, not the path, so the remaining paths
+# cannot do better and the whole search stops (see the loop below).
+_CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout)
+
 
 class SettingsPatch(BaseModel):
     username: str | None = None
@@ -118,7 +126,8 @@ def ollama_models(url: str = "") -> dict:
     Ollama-native `GET /api/tags` first, then the OpenAI-compatible `GET /models` (and `/v1/models`
     for a bare host). `url` is the optional base URL the user typed; blank falls back to the saved
     local-LLM URL, then Ollama's default port. Never raises — a server that's down or unknown just
-    returns `{ok: false}` with a friendly hint.
+    returns `{ok: false}` with a friendly hint, and a host that refuses the connection is reported
+    after the first probe rather than after one timeout per path.
     """
     base = (url or config.LOCAL_LLM_BASE_URL or _OLLAMA_DEFAULT_URL).strip().rstrip("/")
     # Bare host (Ollama's default) gets all three probes; a base that already ends in /v1
@@ -127,10 +136,15 @@ def ollama_models(url: str = "") -> dict:
     last_error = ""
     for path in paths:
         try:
-            resp = httpx.get(f"{base}{path}", timeout=3.0)
+            resp = httpx.get(f"{base}{path}", timeout=_PROBE_TIMEOUT)
             last_error = f"HTTP {resp.status_code}"
             if resp.status_code < 200 or resp.status_code >= 300:
                 continue
+        except _CONNECT_ERRORS as exc:
+            # Nothing is listening here, so the other paths would fail identically. Stop now
+            # rather than spending a fresh timeout per path on a host that is plainly down.
+            last_error = f"{type(exc).__name__}: {exc}"
+            break
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             continue
