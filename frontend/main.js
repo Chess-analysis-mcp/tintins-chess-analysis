@@ -3652,7 +3652,13 @@ async function onPuzzleMove(orig, dest) {
     puzzleDone = true;
     renderPuzzleBoard(false);
     const outcome = puzzleFailed || puzzleHinted ? "solved_with_hints" : "solved_first_try";
-    finishPuzzle(outcome, res.rating, null);
+    // Own-game puzzles: the player's own just-played move is the "line" — the step-through shows
+    // their move from the mistake position (no stored server line exists for them).
+    const revealedLine =
+      puzzleData.source === "your_games"
+        ? { base: puzzleData.solve_fen, ucis: [uci], sans: [res.better_move_san || ""] }
+        : null;
+    finishPuzzle(outcome, res.rating, null, revealedLine);
     puzzleBusy = false;
     return;
   }
@@ -4123,23 +4129,35 @@ function openStormReview(entry) {
 // Fetch a curated puzzle's solution line and set up the step-through nav below the board. Shared by
 // Storm review and the normal Solve trainer. `animate` plays the line forward once (storm review);
 // otherwise it rests at the final position (the Solve board has already played the moves out).
+// `line` ({base, ucis, sans}) supplies the line directly, skipping the fetch — used for own-game
+// mistake puzzles, which have no stored line: the giveup/solve response already carries it.
 // Cancels cleanly (via `solutionGen`) if the user leaves or loads another puzzle mid-fetch.
-async function startSolutionPlayback({ id, yourMove = null, solved = true, animate = false }) {
+async function startSolutionPlayback({ id, yourMove = null, solved = true, animate = false, line = null }) {
   const myGen = ++solutionGen;
   solutionPlay = null;
-  $("pz-review-nav").hidden = true;
-  if (!id) return;
-  let sol;
-  try {
-    sol = await fetch("/api/puzzle/solution?id=" + encodeURIComponent(id)).then((r) => r.json());
-  } catch (_) {
-    return; // no solution available (e.g. a mistake puzzle) -> the card still works, just no playback
+  updateSolutionNav(); // disabled "No solution yet" while the line fetches; hidden in analyze mode
+  let base, ucis, sans;
+  if (line) {
+    base = line.base;
+    ucis = line.ucis || [];
+    sans = line.sans || [];
+  } else {
+    if (!id) return;
+    let sol;
+    try {
+      sol = await fetch("/api/puzzle/solution?id=" + encodeURIComponent(id)).then((r) => r.json());
+    } catch (_) {
+      return; // no solution available (e.g. a mistake puzzle) -> the card still works, just no playback
+    }
+    if (myGen !== solutionGen) return;
+    base = (sol && sol.solve_fen) || null;
+    ucis = (sol && sol.solution_uci) || [];
+    sans = (sol && sol.solution_san) || [];
   }
-  if (myGen !== solutionGen) return;
-  const base = (sol && sol.solve_fen) || null;
-  const ucis = (sol && sol.solution_uci) || [];
-  const sans = (sol && sol.solution_san) || [];
-  if (!base || !ucis.length) return;
+  if (!base || !ucis.length) {
+    updateSolutionNav(); // the line came back empty -> settle on the disabled row
+    return;
+  }
   // Build the board position at each step of the solution, starting from the solve position.
   const fens = [base];
   const lastMoves = [null];
@@ -4198,7 +4216,17 @@ function updateSolutionNav() {
   const nav = $("pz-review-nav");
   const p = solutionPlay;
   if (!p) {
-    nav.hidden = true;
+    if (!puzzleMode) {
+      nav.hidden = true; // the step-through row only exists in puzzle mode
+      return;
+    }
+    // No solution loaded yet (still solving, or an own-game mistake with no forced line):
+    // keep the row visible but inert, so the controls are always in the same place and the
+    // layout doesn't jump when a solution appears.
+    nav.hidden = false;
+    $("pz-review-prev").disabled = true;
+    $("pz-review-next").disabled = true;
+    $("pz-review-label").textContent = "No solution yet";
     return;
   }
   nav.hidden = false;
@@ -4209,12 +4237,12 @@ function updateSolutionNav() {
     p.idx === 0 ? "Start position" : `Move ${p.idx} / ${total}: ${p.sans[p.idx - 1] || ""}`;
 }
 
-// Tear down any active solution playback + hide the step nav (new puzzle, leaving, mode switch).
+// Tear down any active solution playback (new puzzle, leaving, mode switch). The step nav shows
+// itself disabled in puzzle mode and hides in analyze mode — mode-aware via updateSolutionNav.
 function clearSolutionPlayback() {
   ++solutionGen;
   solutionPlay = null;
-  const nav = $("pz-review-nav");
-  if (nav) nav.hidden = true;
+  updateSolutionNav();
 }
 
 // Leave the single-puzzle review and return to the game-over card + review list.
@@ -4407,7 +4435,7 @@ function scheduleAutoAdvance() {
   }, delay);
 }
 
-function finishPuzzle(outcome, ratingSummary, yourMove) {
+function finishPuzzle(outcome, ratingSummary, yourMove, revealedLine) {
   puzzleDone = true;
   $("pz-prompt").hidden = true;
   $("pz-ghosts").hidden = true;
@@ -4470,10 +4498,13 @@ function finishPuzzle(outcome, ratingSummary, yourMove) {
   loadPuzzleStatCard();
 
   // Let the player walk the solution move-by-move with the step-nav below the board. Curated tactics
-  // only — "from your games" puzzles have no forced line to replay (they use "replay in full game").
-  // The board is already at the end of the line, so we rest there and let them scrub backward.
+  // fetch their forced line on demand; own-game mistakes have no stored line, but the response that
+  // finished the puzzle already carries one (the engine's best move on a shown solution, the player's
+  // own move on a solve), so we hand it over directly — same step-through, no server line to fetch.
   if (!isMine) {
     startSolutionPlayback({ id: puzzleData.id, solved, animate: false });
+  } else if (revealedLine) {
+    startSolutionPlayback({ solved, animate: false, line: revealedLine });
   } else {
     clearSolutionPlayback();
   }
@@ -4552,7 +4583,13 @@ async function puzzleShowSolution() {
     if (myGen !== puzzleGen) return;
   }
   puzzleBusy = false;
-  finishPuzzle("failed", null, null);
+  // Own-game puzzles have no stored line on the server, but the giveup response carries the
+  // revealed move — use it so the step-through still works (curated ones fetch their own line).
+  const revealedLine =
+    puzzleData.source === "your_games" && line.length
+      ? { base: puzzleData.solve_fen, ucis: line, sans: (res && res.solution_san) || [] }
+      : null;
+  finishPuzzle("failed", null, null, revealedLine);
 }
 
 async function puzzleExplain() {
