@@ -1395,6 +1395,9 @@ body.puzzle-mode .board-col { overflow: visible; max-height: none; }
 /* Storm review: step-through-the-solution nav, sits directly below the board. Matches the puzzle
    rail's calm "ghost" button idiom so it reads as part of the app, not raw OS controls. */
 .pz-review-nav { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px; max-width: var(--col-width); }
+/* display:flex above would otherwise beat the UA [hidden] rule (like .puzzle-rail), so the
+   solution-step row must opt back in to the hidden attribute — it's only for puzzle review. */
+.pz-review-nav[hidden] { display: none; }
 .pz-review-nav button {
   display: inline-flex; align-items: center; justify-content: center;
   width: 46px; height: 34px; padding: 0;
