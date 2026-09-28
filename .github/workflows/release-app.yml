@@ -21,7 +21,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0   # need the annotated tag object so we can read its message for the notes
 
@@ -36,7 +36,7 @@ jobs:
         run: ditto -c -k --sequesterRsrc --keepParent "Tintin's AI Chess Analysis.app" "Tintins-AI-Chess-Analysis-macos.zip"
 
       - name: Upload as a build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Tintins-AI-Chess-Analysis-macos
           path: Tintins-AI-Chess-Analysis-macos.zip
