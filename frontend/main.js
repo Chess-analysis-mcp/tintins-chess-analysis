@@ -3383,6 +3383,7 @@ async function resumeCurrentPuzzle() {
   puzzleMissRating = null;
   puzzleBusy = false;
   puzzleChatReset();
+  clearSolutionPlayback(); // as applyPuzzle does: settle the step-nav on its inert "No solution yet"
   puzzleShapes = mistakePlayedShape(puzzleData); // grey "you played" arrow for mistake puzzles
   puzzleSolveColor = cur.side_to_move || "white";
   orient = puzzleSolveColor;
@@ -3653,10 +3654,12 @@ async function onPuzzleMove(orig, dest) {
     renderPuzzleBoard(false);
     const outcome = puzzleFailed || puzzleHinted ? "solved_with_hints" : "solved_first_try";
     // Own-game puzzles: the player's own just-played move is the "line" — the step-through shows
-    // their move from the mistake position (no stored server line exists for them).
+    // their move from the mistake position (no stored server line exists for them). Label it with
+    // the move they actually played (`mv.san`), NOT `res.better_move_san`: any move under the
+    // accept threshold solves these, so the engine's best is often a different move entirely.
     const revealedLine =
       puzzleData.source === "your_games"
-        ? { base: puzzleData.solve_fen, ucis: [uci], sans: [res.better_move_san || ""] }
+        ? { base: puzzleData.solve_fen, ucis: [uci], sans: [mv.san] }
         : null;
     finishPuzzle(outcome, res.rating, null, revealedLine);
     puzzleBusy = false;
