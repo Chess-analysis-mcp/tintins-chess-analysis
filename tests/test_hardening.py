@@ -55,6 +55,19 @@ def test_remote_client_may_resend_unchanged_values_and_save_others(data_dir):
     assert settings_mod.effective()["player_elo"] == "1400"
 
 
+def test_settings_save_works_without_stockfish_installed(data_dir, monkeypatch):
+    """The form resends the (missing) engine path with every save; that alone must not 400."""
+    monkeypatch.setattr(config, "STOCKFISH_PATH", "stockfish-not-installed")
+    current = settings_mod.effective()
+    for local in (True, False):
+        res = _client(local).post(
+            "/api/settings", json={"stockfish_path": current["stockfish_path"], "player_elo": "1400"}
+        )
+        assert res.status_code == 200, res.text
+    bad = _client(True).post("/api/settings", json={"stockfish_path": "/nope/stockfish"})
+    assert bad.status_code == 400  # a NEW unusable path is still rejected
+
+
 def test_local_client_can_change_the_ai_server_url(data_dir):
     res = _client(True).post("/api/settings", json={"local_llm_base_url": "http://localhost:1234/v1"})
     assert res.status_code == 200

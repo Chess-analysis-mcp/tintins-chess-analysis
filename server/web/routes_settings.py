@@ -213,8 +213,11 @@ def post_settings(patch: SettingsPatch, request: Request) -> JSONResponse:
 
     # A new Stockfish path is the only setting with a side effect: validate it, then restart the
     # engine pool so the next analysis uses it. An unusable path is rejected before anything changes.
+    # Validate only a CHANGED path: the form resends the current one with every save, and on a
+    # machine with no Stockfish yet that would block saving any other setting.
     new_path = config.clean_path(data.get("stockfish_path"))
-    if new_path and not _stockfish_ok(new_path):
+    path_changed = bool(new_path) and (shutil.which(new_path) or new_path) != config.STOCKFISH_PATH
+    if path_changed and not _stockfish_ok(new_path):
         return JSONResponse(
             {"error": f"Stockfish not found or not executable at '{new_path}'."}, status_code=400
         )
