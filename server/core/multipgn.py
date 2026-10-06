@@ -16,8 +16,31 @@ import re
 
 import chess.pgn
 
-# Split immediately before each line that starts a new game's tag pair section.
-_EVENT_BOUNDARY = re.compile(r"(?m)^(?=\[Event\b)")
+# A tag-pair line (`[White "x"]`). Clock comments like `[%clk 0:03:00]` don't match (no name + quote).
+_TAG_LINE = re.compile(r'^\s*\[[A-Za-z0-9_]+\s+"')
+
+
+def _chunks(text: str) -> list[str]:
+    """Cut the text where a new tag-pair section starts after a game's move text.
+
+    Keyed on the header block rather than on `[Event`, so exports that omit the Event tag (it's
+    optional in practice) still split into one chunk per game instead of collapsing into one.
+    Mirrored by `countGames` in frontend/main.js.
+    """
+    chunks: list[str] = []
+    cur: list[str] = []
+    has_moves = False  # the current chunk already contains move text
+    for line in text.splitlines(keepends=True):
+        is_tag = bool(_TAG_LINE.match(line))
+        if is_tag and has_moves:
+            chunks.append("".join(cur))
+            cur, has_moves = [], False
+        cur.append(line)
+        if line.strip() and not is_tag:
+            has_moves = True
+    if cur:
+        chunks.append("".join(cur))
+    return chunks
 
 
 def split_pgn(text: str) -> list[str]:
@@ -30,7 +53,7 @@ def split_pgn(text: str) -> list[str]:
     if not text or not text.strip():
         return []
     games: list[str] = []
-    for chunk in _EVENT_BOUNDARY.split(text):
+    for chunk in _chunks(text):
         chunk = chunk.strip()
         if not chunk:
             continue

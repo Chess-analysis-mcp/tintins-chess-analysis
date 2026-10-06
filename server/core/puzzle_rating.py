@@ -16,6 +16,7 @@ import json
 import math
 import os
 import random
+import tempfile
 import time
 from datetime import datetime
 from typing import Optional
@@ -168,13 +169,16 @@ def _default_state() -> dict:
 def load_state(data_dir: Optional[str] = None) -> dict:
     """Load the puzzle state, generating + persisting a fresh one (with a user_seed) on first run.
 
-    Best-effort: a missing/corrupt/old-version file yields a fresh default state.
+    Best-effort: a missing/corrupt/old-version file yields a fresh default state. An unreadable
+    file is moved aside (`<name>.bak-<timestamp>`) before the fresh state replaces it, so a rating
+    history is never silently destroyed; a transient read error (e.g. the file briefly locked on
+    Windows) returns a default for this call WITHOUT overwriting the real file.
     """
     path = _state_path(data_dir)
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        if data.get("version") != STATE_VERSION:
+        if not isinstance(data, dict) or data.get("version") != STATE_VERSION:
             raise ValueError("stale state version")
         # Fill any keys a partial/older file is missing.
         base = _default_state()
@@ -182,10 +186,20 @@ def load_state(data_dir: Optional[str] = None) -> dict:
         if not base.get("user_seed"):
             base["user_seed"] = random.randint(1, 2_000_000_000)
         return base
-    except (OSError, ValueError, json.JSONDecodeError):
+    except FileNotFoundError:
         state = _default_state()
         save_state(state, data_dir)
         return state
+    except (ValueError, json.JSONDecodeError):
+        try:
+            os.replace(path, f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+        except OSError:
+            return _default_state()  # couldn't keep a backup: don't overwrite the original
+        state = _default_state()
+        save_state(state, data_dir)
+        return state
+    except OSError:
+        return _default_state()
 
 
 def save_state(state: dict, data_dir: Optional[str] = None) -> None:
@@ -193,10 +207,18 @@ def save_state(state: dict, data_dir: Optional[str] = None) -> None:
     path = _state_path(data_dir)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = f"{path}.tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(state, fh)
-        os.replace(tmp, path)
+        # Unique temp name: two concurrent saves (board + MCP threads) must not share one file.
+        fd, tmp = tempfile.mkstemp(prefix=".puzzle-state-", suffix=".tmp", dir=os.path.dirname(path))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(state, fh)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
     except OSError:  # pragma: no cover - persistence must never break a solve
         pass
 

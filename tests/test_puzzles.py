@@ -153,7 +153,7 @@ def test_weakness_themes_from_puzzle_stats():
 
 def test_weakness_themes_maps_game_motifs(monkeypatch):
     from server.core import history
-    monkeypatch.setattr(history, "get_profile", lambda *a, **k: {
+    monkeypatch.setattr(history, "get_my_profile", lambda *a, **k: {
         "recent": {"games": 20,  # enough analysed games that motif weaknesses are trusted
                    "top_motifs": [{"motif": "missed_fork", "count": 3},
                                   {"motif": "back_rank", "count": 2},
@@ -166,7 +166,7 @@ def test_weakness_themes_maps_game_motifs(monkeypatch):
 def test_weakness_themes_held_back_until_enough_games(monkeypatch):
     """A single early game must not skew the whole stream (the user asked not to be biased so soon)."""
     from server.core import history
-    monkeypatch.setattr(history, "get_profile", lambda *a, **k: {
+    monkeypatch.setattr(history, "get_my_profile", lambda *a, **k: {
         "recent": {"games": 1,  # below _MIN_HISTORY_GAMES -> no motif bias yet
                    "top_motifs": [{"motif": "missed_fork", "count": 3}]}})
     assert puzzles.weakness_themes({}) == []
@@ -174,7 +174,7 @@ def test_weakness_themes_held_back_until_enough_games(monkeypatch):
 
 def test_weakness_themes_held_back_until_enough_puzzle_attempts(monkeypatch):
     from server.core import history
-    monkeypatch.setattr(history, "get_profile", lambda *a, **k: {"recent": {"games": 0}})
+    monkeypatch.setattr(history, "get_my_profile", lambda *a, **k: {"recent": {"games": 0}})
     # One weak theme, but too few total attempts for the puzzle-stat signal to kick in.
     state = {"by_theme": {"fork": {"seen": 4, "solved": 0}}}
     assert puzzles.weakness_themes(state) == []
@@ -205,7 +205,7 @@ def test_is_trainable_theme():
 
 def test_weakness_bias_ignores_metadata_tags(monkeypatch):
     from server.core import history
-    monkeypatch.setattr(history, "get_profile", lambda *a, **k: {"recent": {"games": 0}})
+    monkeypatch.setattr(history, "get_my_profile", lambda *a, **k: {"recent": {"games": 0}})
     # Plenty of attempts, but the only weak "theme" is a metadata tag -> no bias.
     state = {"by_theme": {"master": {"seen": 20, "solved": 0}}}
     assert puzzles.weakness_themes(state) == []

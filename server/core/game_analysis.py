@@ -18,7 +18,7 @@ import chess
 import chess.pgn
 
 from server import config
-from server.core import engine
+from server.core import engine, history
 from server.core.evaluation import (
     aggregate_accuracy,
     classify,
@@ -91,8 +91,13 @@ def resolve_player(headers: dict[str, str], player: str) -> str:
     p = (player or "auto").lower()
     if p in ("white", "black"):
         return p
-    # auto: match any of my handles (CHESS_USERNAME + CHESS_ALIASES) against the PGN headers.
+    # auto: match any of my handles (CHESS_USERNAME + CHESS_ALIASES, plus handles learned from
+    # uploads in identities.json) against the PGN headers.
     mine = {config.USERNAME.lower().strip()} | {a for _, a in config.USERNAME_ALIASES}
+    try:
+        mine |= history.my_handles()
+    except Exception:  # noqa: BLE001 - identity lookup must never break side detection
+        pass
     mine.discard("")
     if headers.get("White", "").lower().strip() in mine:
         return "white"

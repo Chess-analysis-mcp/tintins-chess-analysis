@@ -173,7 +173,7 @@ def weakness_themes(state: dict) -> list[str]:
     # motifs mean something (not just whatever the single most-recent game happened to contain).
     try:
         from . import history
-        profile = history.get_profile() or {}
+        profile = history.get_my_profile() or {}
         recent = profile.get("recent") or {}
         if int(recent.get("games", 0) or 0) >= _MIN_HISTORY_GAMES:
             for entry in recent.get("top_motifs") or []:

@@ -12,6 +12,11 @@ from server.core import puzzle_mistakes as pm
 
 FEN = "8/8/8/8/8/8/8/8 w - - 0 1"
 
+# The real identity helpers, captured before the autouse stub replaces them, for the tests that
+# exercise actual "whose games count" resolution against a temp history file.
+_REAL_MY_PLAYER_ID = pm.history.my_player_id
+_REAL_IDENTITY_CONFIGURED = pm.history.identity_configured
+
 
 def _m(ply, uci, win_drop, best_uci=None, cls="mistake", color="white", motifs=None):
     # Distinct default best move per mistake, so the (game_id, best_uci) dedup treats them as the
@@ -32,6 +37,7 @@ def _rec(game_id, side, mistakes, thresholds=(5, 10, 15)):
 def _stub_identity(monkeypatch):
     monkeypatch.setattr(pm.history, "my_player_id", lambda *a, **k: "me")
     monkeypatch.setattr(pm.history, "_is_recurring", lambda *a, **k: False)
+    monkeypatch.setattr(pm.history, "identity_configured", lambda *a, **k: False)
 
 
 # --- skill-relative ordering --------------------------------------------------------------------
@@ -227,3 +233,43 @@ def test_mistake_move_rejects_a_slip_with_refutation(monkeypatch):
     body = json.loads(rp._mistake_move(prog, "g2g4").body)
     assert not body["correct"] and body["can_retry"]
     assert body["refutation_uci"] == ["h1h7"]
+
+
+# --- whose games count (issue #14) --------------------------------------------------------------
+
+def _write_history(tmp_path, recs):
+    (tmp_path / "history").mkdir()
+    with open(tmp_path / "history" / "games.jsonl", "w", encoding="utf-8") as fh:
+        for r in recs:
+            fh.write(json.dumps({**r, "analyzed_at": "2026-01-01T00:00:00"}) + "\n")
+
+
+def test_no_identity_configured_uses_all_history(monkeypatch, tmp_path):
+    # No username set -> my_player_id() is "me" and nothing is stored under "me". The records keyed
+    # by the raw handle must still become puzzles, not an empty "From your games".
+    monkeypatch.setattr(pm.history, "my_player_id", _REAL_MY_PLAYER_ID)
+    monkeypatch.setattr(pm.history, "identity_configured", _REAL_IDENTITY_CONFIGURED)
+    monkeypatch.setattr(pm.history.config, "USERNAME", "")
+    monkeypatch.setattr(pm.history.config, "USERNAME_ALIASES", [])
+    _write_history(tmp_path, [{**_rec("g1", "white", [_m(3, "a2a3", 30)]),
+                               "player_id": "DJH_24", "player_name": "DJH_24",
+                               "platform": "chesscom"}])
+    cands = pm._candidate_mistakes(str(tmp_path))
+    assert [c["game_id"] for c in cands] == ["g1"]
+
+
+def test_identity_configured_filters_to_my_handles(monkeypatch, tmp_path):
+    # With a handle set, only games that resolve to the user count, including ones stored under the
+    # raw handle before it was configured; an opponent-side review is excluded.
+    monkeypatch.setattr(pm.history, "my_player_id", _REAL_MY_PLAYER_ID)
+    monkeypatch.setattr(pm.history, "identity_configured", _REAL_IDENTITY_CONFIGURED)
+    monkeypatch.setattr(pm.history.config, "USERNAME", "DJH_24")
+    monkeypatch.setattr(pm.history.config, "USERNAME_ALIASES", [])
+    _write_history(tmp_path, [
+        {**_rec("g1", "white", [_m(3, "a2a3", 30)]),
+         "player_id": "DJH_24", "player_name": "DJH_24", "platform": "chesscom"},
+        {**_rec("g2", "black", [_m(4, "a7a6", 30)]),
+         "player_id": "someone_else", "player_name": "someone_else", "platform": "chesscom"},
+    ])
+    cands = pm._candidate_mistakes(str(tmp_path))
+    assert [c["game_id"] for c in cands] == ["g1"]

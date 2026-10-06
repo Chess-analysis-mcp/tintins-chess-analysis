@@ -24,6 +24,18 @@ router = APIRouter()
 # Cached internet-reachability probe (see /connectivity). A miss means "offline", which gates the
 # closable banner warning that the Lichess/tablebase/Claude network features won't work. Kept cheap:
 # one short HEAD per TTL window, best-effort (any failure -> offline), never raised to the page.
+# Upper bounds for client-chosen search effort. The board asks for depth <= 22 and multipv 3; an
+# unbounded value (a typo, or another device on the network) would pin an engine for minutes and
+# stall every other analysis queued behind it.
+_MAX_DEPTH = 24
+_MAX_MULTIPV = 5
+
+
+def _search_args(body: "BestMovesBody") -> tuple[int, int]:
+    depth = min(max(1, body.depth or config.DEFAULT_DEPTH), _MAX_DEPTH)
+    return depth, min(max(1, body.multipv), _MAX_MULTIPV)
+
+
 _CONN_CACHE: dict[str, float | bool] = {}
 _CONN_TTL = 30.0  # seconds
 
@@ -185,8 +197,8 @@ def best_moves(body: BestMovesBody) -> JSONResponse:
     except ValueError as exc:
         return JSONResponse({"error": f"Invalid FEN: {exc}"}, status_code=400)
 
-    depth = body.depth or config.DEFAULT_DEPTH
-    info = lines.engine_line(body.fen, depth=depth, multipv=max(1, body.multipv))
+    depth, multipv = _search_args(body)
+    info = lines.engine_line(body.fen, depth=depth, multipv=multipv)
     src = info.get("lines") or [
         {
             "line_uci": info["line_uci"],
@@ -224,8 +236,8 @@ def threats(body: BestMovesBody) -> JSONResponse:
         return JSONResponse({"moves": []})
     board.push(chess.Move.null())
 
-    depth = body.depth or config.DEFAULT_DEPTH
-    info = lines.engine_line(board.fen(), depth=depth, multipv=max(1, body.multipv))
+    depth, multipv = _search_args(body)
+    info = lines.engine_line(board.fen(), depth=depth, multipv=multipv)
     src = info.get("lines") or [
         {
             "line_uci": info["line_uci"],

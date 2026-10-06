@@ -163,6 +163,16 @@ def ollama_models(url: str = "") -> dict:
     }
 
 
+def _norm_local_only(key: str, value) -> str:
+    """Comparable form of a LOCAL_ONLY_KEYS value, so a resent unchanged field isn't a "change"."""
+    if key == "stockfish_path":
+        path = config.clean_path(value)
+        return (shutil.which(path) or path) if path else ""
+    if key == "web_host":
+        return config.normalize_web_host(value) or str(value or "").strip()
+    return str(value or "").strip()
+
+
 @router.post("/settings")
 def post_settings(patch: SettingsPatch, request: Request) -> JSONResponse:
     """Persist + apply a settings patch. Returns the new effective settings (or a 400 on bad input)."""
@@ -175,6 +185,21 @@ def post_settings(patch: SettingsPatch, request: Request) -> JSONResponse:
         for secret in settings_mod.SECRET_KEYS:
             if data.get(secret) == "":
                 del data[secret]
+
+    # Settings that route data/credentials or choose what runs here can only change from this
+    # computer. Resending the current value (the form posts every field) is fine.
+    if not local_client:
+        current = settings_mod.effective()
+        changed = [
+            k for k in settings_mod.LOCAL_ONLY_KEYS
+            if k in data and _norm_local_only(k, data[k]) != _norm_local_only(k, current.get(k))
+        ]
+        if changed:
+            return JSONResponse(
+                {"error": "These settings can only be changed on the computer running the app: "
+                 + ", ".join(changed)},
+                status_code=403,
+            )
 
     # A host the server can't bind would stop the app from starting next launch: reject it now.
     if "web_host" in data:
@@ -189,14 +214,14 @@ def post_settings(patch: SettingsPatch, request: Request) -> JSONResponse:
     # A new Stockfish path is the only setting with a side effect: validate it, then restart the
     # engine pool so the next analysis uses it. An unusable path is rejected before anything changes.
     new_path = config.clean_path(data.get("stockfish_path"))
-    restart_engine = bool(new_path) and (shutil.which(new_path) or new_path) != config.STOCKFISH_PATH
     if new_path and not _stockfish_ok(new_path):
         return JSONResponse(
             {"error": f"Stockfish not found or not executable at '{new_path}'."}, status_code=400
         )
 
+    old_engine = config.STOCKFISH_PATH
     eff = settings_mod.update(data)
-    if restart_engine:
+    if config.STOCKFISH_PATH != old_engine:  # a new path, or cleared back to auto-detect
         try:
             engine.restart()
         except Exception:  # pragma: no cover - defensive; next analysis would surface a real error
@@ -211,7 +236,7 @@ def post_settings(patch: SettingsPatch, request: Request) -> JSONResponse:
 
 
 @router.post("/fix-stockfish-arch")
-def post_fix_stockfish_arch() -> JSONResponse:
+def post_fix_stockfish_arch(request: Request) -> JSONResponse:
     """Swap an Intel-under-Rosetta Stockfish for the native arm64 build (Apple Silicon only).
 
     Downloads the official arm64 static engine to the managed path (forcing the arch + a fresh
@@ -222,6 +247,11 @@ def post_fix_stockfish_arch() -> JSONResponse:
     import subprocess
     import sys
 
+    if not is_local_client(request):  # downloads + runs a new engine binary on this machine
+        return JSONResponse(
+            {"ok": False, "error": "Only the computer running the app can replace the engine."},
+            status_code=403,
+        )
     report = config.stockfish_arch_report()
     if not report.get("can_fix"):
         return JSONResponse(

@@ -71,7 +71,8 @@ def _candidate_mistakes(data_dir: Optional[str] = None) -> list[dict]:
     `thresholds`), filtered to those with the data a puzzle needs (a position + a played move).
     """
     try:
-        records = history.load_records(player_id=history.my_player_id(data_dir), data_dir=data_dir)
+        # By the CURRENT identity, not the frozen player_id (whole history if no handle is set).
+        records = history.my_records(data_dir)
     except Exception:  # noqa: BLE001 - a bad history file must not break puzzle mode
         return []
 
@@ -193,8 +194,12 @@ def next_mistake_puzzle(state: dict, data_dir: Optional[str] = None) -> Optional
     swings = sorted(c["win_drop"] for c in candidates)
     target = _percentile(swings, _target_percentile(skill))
 
+    # Each `_is_recurring` check rebuilds the profile from the whole history, so ask once per
+    # distinct motif (a handful) rather than once per candidate (hundreds).
+    recurring_by_motif: dict[str, bool] = {}
+
     def sort_key(c: dict) -> tuple:
-        recurring = _recurring(c["motifs"], data_dir)
+        recurring = _recurring(c["motifs"], data_dir, recurring_by_motif)
         return (round(abs(c["win_drop"] - target), 1), 0 if recurring else 1, -c["win_drop"])
 
     candidates.sort(key=sort_key)
@@ -209,10 +214,18 @@ def next_mistake_puzzle(state: dict, data_dir: Optional[str] = None) -> Optional
     return chosen
 
 
-def _recurring(motifs: list[str], data_dir: Optional[str]) -> bool:
+def _recurring(
+    motifs: list[str], data_dir: Optional[str], memo: Optional[dict[str, bool]] = None
+) -> bool:
     """Does this mistake carry a motif the player repeats (per the coaching profile)?"""
+    memo = {} if memo is None else memo
     try:
-        return any(history._is_recurring(mo, data_dir) for mo in (motifs or []))
+        for mo in motifs or []:
+            if mo not in memo:
+                memo[mo] = history._is_recurring(mo, data_dir)
+            if memo[mo]:
+                return True
+        return False
     except Exception:  # noqa: BLE001
         return False
 

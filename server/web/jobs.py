@@ -103,14 +103,30 @@ def start(pgn: str, player: str = "auto") -> dict:
             total_games=1, done_games=0, current_game=1,
         )
         if cached is not None:
-            # Already analysed (and so already in history) — show it right away.
+            # Already analysed — show it right away.
             session_mod.set_session(cached)
             _state.update(status="ready", done_games=1)
-            return dict(_state)
+            result = dict(_state)
+    if cached is not None:
+        _record_if_missing(cached)
+        return result
     threading.Thread(
         target=_run, args=(pgn, player, token), name="chess-analyze", daemon=True
     ).start()
     return status()
+
+
+def _record_if_missing(sess) -> None:
+    """Record a cache-hit game that history lacks (history wiped or disabled when it was analysed,
+    so the cache outlived it). Otherwise it never reappears in "My games", and Chess.com sync, which
+    dedupes against history, re-finds it as "new" and re-opens it on every launch."""
+    if not config.HISTORY_ENABLED:
+        return
+    try:
+        if not history.has_record(sess):
+            history.record_game(sess)
+    except Exception:  # pragma: no cover - history is best-effort
+        pass
 
 
 def _run_batch(
@@ -158,12 +174,12 @@ def _run_batch(
             if not first_set:
                 session_mod.set_session(sess)  # show the first analysed game on the board
                 first_set = True
-        # A cache hit means the game is already in history (it was recorded on its first
-        # analysis); re-recording it here would append a duplicate line to games.jsonl on every
-        # re-sync/re-upload. Readers dedupe, so counts stay correct either way — this just keeps
-        # the append-only log from bloating. Matches the single-game `start()` path, which also
-        # skips recording on a cache hit.
-        if config.HISTORY_ENABLED and not was_cached:
+        # A cache hit is normally already in history (recorded on its first analysis); re-recording
+        # it would append a duplicate line to games.jsonl on every re-sync/re-upload, so only record
+        # it if history lacks it. Matches the single-game `start()` path.
+        if was_cached:
+            _record_if_missing(sess)
+        elif config.HISTORY_ENABLED:
             try:
                 history.record_game(sess)
             except Exception:  # pragma: no cover - history is best-effort
@@ -174,7 +190,10 @@ def _run_batch(
 
     with _lock:
         if token == _state["token"]:
-            _state.update(status="ready")
+            if first_set:
+                _state.update(status="ready")
+            else:  # every game failed: "ready" would show whatever game was open before
+                _state.update(status="error", error=_state.get("error") or "No game could be analysed.")
 
 
 def start_batch(

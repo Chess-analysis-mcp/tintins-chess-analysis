@@ -7,11 +7,12 @@ on the next start. Both are best-effort and never raise to the page.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server.core import updates
+from server.web.local_client import is_local_client
 
 router = APIRouter()
 
@@ -40,13 +41,18 @@ class ApplyUpdateBody(BaseModel):
 
 
 @router.post("/apply-update")
-def post_apply_update(body: ApplyUpdateBody | None = None) -> JSONResponse:
+def post_apply_update(request: Request, body: ApplyUpdateBody | None = None) -> JSONResponse:
     """Apply a one-click update (git + zip channels). The read-only `.app` can't self-update -> 409.
 
     Default: write a sentinel the launcher consumes on the next start; the user just reopens the
     app. With `{"now": true}`: update this checkout immediately (see `updates.apply_now`), for
     installs that were not started by one of our launchers.
     """
+    if not is_local_client(request):  # rewrites this install's files; never from another device
+        return JSONResponse(
+            {"ok": False, "error": "Updates can only be applied on the computer running the app."},
+            status_code=403,
+        )
     if not updates.can_self_update():
         return JSONResponse(
             {"ok": False, "error": "This install can't self-update; download the latest from Releases."},

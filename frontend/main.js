@@ -2769,7 +2769,17 @@ function setMode(mode) {
 }
 
 // Count games in a PGN by its [Event headers (>=1: a header-less PGN is still one game).
-const countGames = (pgn) => Math.max(1, (pgn.match(/^\s*\[Event\b/gm) || []).length);
+// One game per tag-pair section that follows move text (mirrors multipgn._chunks on the server), so
+// exports without an [Event] tag still count every game.
+const countGames = (pgn) => {
+  let n = 0, hasMoves = true;
+  for (const line of pgn.split(/\r?\n/)) {
+    const isTag = /^\s*\[[A-Za-z0-9_]+\s+"/.test(line);
+    if (isTag && hasMoves) { n++; hasMoves = false; }
+    else if (line.trim() && !isTag) hasMoves = true;
+  }
+  return Math.max(1, n);
+};
 
 function updatePasteHint() {
   if (historyMode !== "paste") return;

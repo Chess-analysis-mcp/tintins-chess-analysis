@@ -336,9 +336,9 @@ def _material_outcome(delta: int | None) -> str | None:
 
 
 def _profile_facts() -> str | None:
-    """Compact coaching profile for the current session's player, or None (no history/off)."""
+    """Compact coaching profile for the user (whichever side is being reviewed), or None."""
     try:
-        return history.format_profile_for_prompt(history.get_profile())
+        return history.format_profile_for_prompt(history.get_my_profile())
     except Exception:
         return None
 

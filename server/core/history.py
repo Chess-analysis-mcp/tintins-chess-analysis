@@ -128,11 +128,12 @@ def resolve_identity(
     # 2. CHESS_USERNAME + CHESS_ALIASES from the env (the .mcp.json setup path): every listed
     #    handle folds into CHESS_USERNAME as the canonical player_id.
     if name_lc and config.USERNAME:
-        if name_lc == config.USERNAME.lower():
-            return config.USERNAME, platform, name
+        canonical = config.USERNAME.strip().lower()  # lowercase, matching my_player_id()
+        if name_lc == canonical:
+            return canonical, platform, name
         for a_plat, a_name in config.USERNAME_ALIASES:
             if a_name == name_lc and (a_plat is None or _norm_platform(a_plat) == platform):
-                return config.USERNAME, platform, name
+                return canonical, platform, name
 
     # 3. Unmapped: key by the raw handle so the game is still recorded (never merged blindly).
     fallback = name_lc or (config.USERNAME or "").lower() or "me"
@@ -141,27 +142,68 @@ def resolve_identity(
 
 def _display_name(player_id: str, data_dir: Optional[str] = None) -> str:
     info = load_identities(data_dir).get(player_id) or {}
-    return info.get("display_name") or player_id
+    if info.get("display_name"):
+        return info["display_name"]
+    # Ids are stored lowercase; show the configured user's handle with its real capitalisation.
+    if config.USERNAME and player_id == config.USERNAME.strip().lower():
+        return config.USERNAME.strip()
+    return player_id
+
+
+# Key that ensure_self_alias files uploaded handles under when no username is configured yet.
+# Games stored under it are always the user's, even after a username is set later.
+_LEGACY_SELF_ID = "me"
+
+
+def _me_matcher(data_dir: Optional[str] = None):
+    """Build `(handle_is_me(handle, platform), record_is_me(record))` for the CURRENT identity.
+
+    Loads identities.json once, so filtering a whole history doesn't re-read it per record. All
+    comparisons are case-insensitive: older records stored the configured handle with its original
+    capitalisation while `my_player_id()` is lowercase.
+    """
+    me = my_player_id(data_dir)
+    ids = load_identities(data_dir)
+    user_lc = (config.USERNAME or "").strip().lower()
+    cfg_aliases = list(config.USERNAME_ALIASES)
+    id_aliases = []
+    for key in {me, _LEGACY_SELF_ID}:
+        for alias in (ids.get(key) or {}).get("aliases", []):
+            name = str(alias.get("name", "")).strip().lower()
+            if name:
+                id_aliases.append((name, alias.get("platform")))
+    my_ids = {me.lower(), _LEGACY_SELF_ID}
+
+    def handle_is_me(handle: str, platform: Optional[str]) -> bool:
+        handle_lc = (handle or "").strip().lower()
+        if not handle_lc:
+            return False
+        if user_lc and handle_lc == user_lc:
+            return True
+        plat = _norm_platform(platform) if platform else None
+        for a_plat, a_name in cfg_aliases:
+            if a_name == handle_lc and (a_plat is None or _norm_platform(a_plat) == plat):
+                return True
+        for a_name, a_plat in id_aliases:
+            if a_name == handle_lc and (
+                a_plat is None or plat is None or _norm_platform(str(a_plat)) == plat
+            ):
+                return True
+        return False
+
+    def record_is_me(record: dict) -> bool:
+        if str(record.get("player_id") or "").strip().lower() in my_ids:
+            return True
+        return handle_is_me(
+            record.get("player_name") or record.get("player_id") or "", record.get("platform")
+        )
+
+    return handle_is_me, record_is_me
 
 
 def _resolves_to_me(handle: str, platform: Optional[str], data_dir: Optional[str]) -> bool:
     """True if `handle` already resolves to the canonical "me" (env or identities.json)."""
-    handle_lc = (handle or "").strip().lower()
-    if not handle_lc:
-        return False
-    if config.USERNAME and handle_lc == config.USERNAME.lower():
-        return True
-    plat = _norm_platform(platform) if platform else None
-    for a_plat, a_name in config.USERNAME_ALIASES:
-        if a_name == handle_lc and (a_plat is None or _norm_platform(a_plat) == plat):
-            return True
-    me = my_player_id(data_dir)
-    for alias in (load_identities(data_dir).get(me) or {}).get("aliases", []):
-        if str(alias.get("name", "")).strip().lower() == handle_lc:
-            a_plat = alias.get("platform")
-            if a_plat is None or plat is None or _norm_platform(str(a_plat)) == plat:
-                return True
-    return False
+    return _me_matcher(data_dir)[0](handle, platform)
 
 
 def ensure_self_alias(
@@ -529,7 +571,7 @@ def _dominant_motif(mistakes: list) -> Optional[str]:
 def _is_recurring(motif: str, data_dir: Optional[str]) -> bool:
     """True if `motif` is a repeated theme in the player's recent profile (best-effort)."""
     try:
-        profile = get_profile(my_player_id(data_dir), data_dir)
+        profile = get_my_profile(data_dir)
         for entry in (profile.get("recent") or {}).get("top_motifs", []):
             if entry.get("motif") == motif and entry.get("count", 0) >= 2:
                 return True
@@ -763,8 +805,15 @@ def load_records(
         return []
     records = list(latest.values())
     if player_id is not None:
-        records = [r for r in records if r.get("player_id") == player_id]
+        pid_lc = player_id.strip().lower()
+        records = [r for r in records if str(r.get("player_id") or "").strip().lower() == pid_lc]
     return records
+
+
+def has_record(sess: ReviewSession, data_dir: Optional[str] = None) -> bool:
+    """Is this game+side already in history? (A cached analysis can outlive its history line.)"""
+    key = (_game_id(sess), sess.player)
+    return any((r.get("game_id"), r.get("reviewed_side")) == key for r in load_records(data_dir=data_dir))
 
 
 def list_players(data_dir: Optional[str] = None) -> list[str]:
@@ -787,6 +836,57 @@ def my_player_id(data_dir: Optional[str] = None) -> str:
     return handle_lc or "me"
 
 
+def identity_configured(data_dir: Optional[str] = None) -> bool:
+    """True once the app knows at least one of the user's handles (Settings/env or identities.json).
+
+    Without one, `my_player_id()` falls back to "me" and no stored record can be recognised as the
+    user's, so callers that filter to "my games" should use the whole (single-user) history instead.
+    """
+    if config.USERNAME or config.USERNAME_ALIASES:
+        return True
+    ids = load_identities(data_dir)
+    return any((ids.get(k) or {}).get("aliases") for k in {my_player_id(data_dir), _LEGACY_SELF_ID})
+
+
+def is_my_record(record: dict, data_dir: Optional[str] = None) -> bool:
+    """Whether this game is the user's, judged at READ time against the CURRENT identity config.
+
+    A record keyed by a raw handle (e.g. a chess.com game recorded before that handle was added in
+    Settings) still counts once the handle resolves to "me", as do games an upload filed under "me"
+    before any username was set.
+    """
+    return _me_matcher(data_dir)[1](record)
+
+
+def my_records(data_dir: Optional[str] = None) -> list[dict]:
+    """The user's games: those resolving to "me", or the whole history if no handle is configured.
+
+    Without any configured handle nothing can be recognised as the user's, and a single-user
+    install only holds games the user chose to review, so everything counts (issue #14).
+    """
+    records = load_records(data_dir=data_dir)
+    if not identity_configured(data_dir):
+        return records
+    record_is_me = _me_matcher(data_dir)[1]
+    return [r for r in records if record_is_me(r)]
+
+
+def is_my_player_id(player_id: str, data_dir: Optional[str] = None) -> bool:
+    """True if `player_id` denotes the configured user (so their profile spans all their ids)."""
+    return _me_matcher(data_dir)[1]({"player_id": player_id})
+
+
+def my_handles(data_dir: Optional[str] = None) -> set[str]:
+    """Every handle known to be the user's (lowercase): Settings/env plus identities.json aliases."""
+    handles = {(config.USERNAME or "").strip().lower()} | {a for _, a in config.USERNAME_ALIASES}
+    ids = load_identities(data_dir)
+    for key in {my_player_id(data_dir), _LEGACY_SELF_ID}:
+        for alias in (ids.get(key) or {}).get("aliases", []):
+            handles.add(str(alias.get("name", "")).strip().lower())
+    handles.discard("")
+    return handles
+
+
 def history_rows(player_id: Optional[str] = None, data_dir: Optional[str] = None) -> list[dict]:
     """Compact, newest-first list of analysed games for the web history panel.
 
@@ -802,7 +902,7 @@ def history_rows(player_id: Optional[str] = None, data_dir: Optional[str] = None
     # "Is this me?" is computed at READ time against the CURRENT identity config, not from the
     # record's frozen player_id — so a game keyed by a raw handle (e.g. a chess.com game recorded
     # before that handle was folded into "me") still tints once the handle is added in Settings.
-    me = my_player_id(data_dir)
+    record_is_me = _me_matcher(data_dir)[1]
     rows = []
     for r in records:
         pgn = r.get("pgn")
@@ -810,14 +910,7 @@ def history_rows(player_id: Optional[str] = None, data_dir: Optional[str] = None
             {
                 "game_id": r.get("game_id"),
                 "player_id": r.get("player_id"),  # lets the panel tint games that are "you"
-                "is_me": (
-                    r.get("player_id") == me
-                    or _resolves_to_me(
-                        r.get("player_name") or r.get("player_id") or "",
-                        r.get("platform"),
-                        data_dir,
-                    )
-                ),
+                "is_me": record_is_me(r),
                 "reviewed_side": r.get("reviewed_side"),
                 "white": r.get("white"),
                 "black": r.get("black"),
@@ -853,18 +946,9 @@ def insights(days: Optional[int] = None, data_dir: Optional[str] = None) -> dict
     frontend can render them directly.
     """
     me = my_player_id(data_dir)
-    records = load_records(data_dir=data_dir)
     # With an identity configured, insights are about "you". Without one (e.g. a paste-only user
     # who never set a username), aggregate everything — same philosophy as the "My games" list.
-    if (config.USERNAME or "").strip():
-        records = [
-            r
-            for r in records
-            if r.get("player_id") == me
-            or _resolves_to_me(
-                r.get("player_name") or r.get("player_id") or "", r.get("platform"), data_dir
-            )
-        ]
+    records = my_records(data_dir)
     if days and days > 0:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
         records = [r for r in records if _record_day(r) >= cutoff]
@@ -959,8 +1043,11 @@ def build_profile(player_id: str, data_dir: Optional[str] = None) -> dict:
     <=0 = all) and `PROFILE_LIFETIME` (None = all history, positive N = last N, 0 = omit the
     lifetime view so the profile is a pure sliding window). Both recompute from the full history.
     """
+    # The user's own profile spans every id their games were stored under (raw handles, "me" from
+    # uploads, other capitalisations); anyone else's is just their exact id.
+    mine = is_my_player_id(player_id, data_dir)
     records = sorted(
-        load_records(player_id=player_id, data_dir=data_dir),
+        my_records(data_dir) if mine else load_records(player_id=player_id, data_dir=data_dir),
         key=lambda r: r.get("analyzed_at", ""),
     )
     profile: dict = {
@@ -1012,6 +1099,11 @@ def record_game(sess: ReviewSession, data_dir: Optional[str] = None) -> dict:
     append_record(record, data_dir)
     write_profile(record["player_id"], data_dir)
     return record
+
+
+def get_my_profile(data_dir: Optional[str] = None) -> dict:
+    """The configured user's coaching profile, independent of which game is open."""
+    return build_profile(my_player_id(data_dir), data_dir)
 
 
 def get_profile(player_id: Optional[str] = None, data_dir: Optional[str] = None) -> dict:

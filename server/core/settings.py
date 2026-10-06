@@ -59,6 +59,19 @@ SECRET_KEYS = (
 )
 
 
+# Settings only this computer may change. Each one decides where data or credentials go or what
+# runs on this machine: a new AI-server URL would receive the saved API key with the next chat
+# (defeating the redaction above), and the Stockfish path picks a binary this machine executes.
+# Another device on the network may still save these unchanged (the Settings form sends every
+# field), but a different value is refused. See `server/web/routes_settings.py`.
+LOCAL_ONLY_KEYS = (
+    "stockfish_path",
+    "local_llm_base_url",
+    "local_llm_api_key_header",
+    "web_host",
+)
+
+
 # Owner read+write. The write bit matters on Windows: os.chmod there maps a mode without S_IWRITE
 # onto the read-only attribute, which would make the *next* save fail.
 FILE_MODE = 0o600
@@ -136,8 +149,8 @@ def apply(settings: dict) -> None:
         config.PLAYER_ELO = config._parse_elo(str(settings["player_elo"]))
     if "stockfish_path" in settings:
         sp = config.clean_path(settings["stockfish_path"])
-        if sp:
-            config.STOCKFISH_PATH = shutil.which(sp) or sp
+        # Blank = "find it for me": back to auto-detection, same as a launch with no setting.
+        config.STOCKFISH_PATH = (shutil.which(sp) or sp) if sp else config._resolve_stockfish()
     if "coach_ai_auto" in settings:
         config.COACH_AI_AUTO = bool(settings["coach_ai_auto"])
     if "coach_ai_persist" in settings:

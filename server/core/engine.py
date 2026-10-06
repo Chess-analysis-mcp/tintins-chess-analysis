@@ -19,6 +19,11 @@ from server import config
 from server.core.evaluation import win_percent_from_score
 
 
+# The eval cache lives for the whole (up to 24h) server session and gains an entry per position,
+# depth and multipv the board explores, so bound it. Oldest entries go first (dicts keep order).
+_CACHE_MAX = 50_000
+
+
 @dataclass
 class EngineLine:
     """One principal variation from the engine, side-to-move relative."""
@@ -128,6 +133,9 @@ class _EnginePool:
             finally:
                 self._pool.put(eng)
             self._cache[key] = result
+            if len(self._cache) > _CACHE_MAX:
+                for old_key in list(self._cache)[: _CACHE_MAX // 10]:
+                    self._cache.pop(old_key, None)
             return result
 
         raise RuntimeError(f"Stockfish engine failed: {last_exc}") from last_exc
