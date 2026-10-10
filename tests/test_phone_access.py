@@ -57,7 +57,9 @@ def test_phone_access_endpoint(net):
     net.setattr(config, "WEB_HOST", "0.0.0.0")
     net.setattr(config, "WEB_BOUND_HOST", "0.0.0.0")
     body = TestClient(app_module.create_app()).get("/api/phone-access").json()
-    assert body["active"] is True and body["url"] == "http://192.168.1.20:8765"
+    assert body["active"] is True and body["address"] == "http://192.168.1.20:8765"
+    # This computer gets the pairing link the QR code encodes; see tests/test_pairing.py.
+    assert body["url"].startswith("http://192.168.1.20:8765/?pair=")
 
 
 @pytest.mark.parametrize("q", [

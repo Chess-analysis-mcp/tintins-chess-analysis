@@ -14,6 +14,7 @@ from starlette.types import Scope
 from server import config
 from server.core import app_liveness
 from server.core import lifecycle
+from server.web import pairing
 from server.web.routes_board import router as board_router
 from server.web.routes_chat import router as chat_router
 from server.web.routes_history import router as history_router
@@ -117,6 +118,8 @@ def create_app() -> FastAPI:
     app_liveness.start()
 
     guard_active = _guard_is_active()
+    # Listening beyond loopback: the Host/Origin allowlist can't apply, so other devices must pair.
+    pairing_active = pairing.required()
 
     @app.middleware("http")
     async def _guard_and_mark_activity(request: Request, call_next):
@@ -134,6 +137,10 @@ def create_app() -> FastAPI:
                         return PlainTextResponse("Forbidden: opaque origin.", status_code=403)
                 elif not _is_local_host(_authority_host(origin)):
                     return PlainTextResponse("Forbidden: cross-origin request.", status_code=403)
+        if pairing_active:
+            blocked = pairing.check(request)
+            if blocked is not None:
+                return blocked
         # Any board interaction keeps the session alive (resets the idle watchdog).
         lifecycle.touch()
         return await call_next(request)
