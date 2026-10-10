@@ -1,0 +1,16 @@
+# SHA-256 of the pinned Stockfish release assets (tag: sf_18), sha256sum format.
+# Trust-on-first-use pins: computed from the official release when this file was generated, so they
+# detect any LATER tampering/substitution of the download, not a compromise that predates the pin.
+# Read by scripts/download_stockfish.py and the launcher in scripts/build_app.sh.
+# Regenerate after bumping the tag:  python scripts/update_stockfish_checksums.py sf_NN
+4d77c4aa3ad9bd1ea8111f2ac5a4620fe7ebf998d6893bf828d49ccd579c8cb0  stockfish-macos-m1-apple-silicon.tar
+41d30e0860ad924a6ceb422c3a36eba43bbe5ae87d3310840da50e71c53f35d9  stockfish-macos-x86-64-avx2.tar
+a2f022af95890bdd1091b11cc7ff2f7f284c7612dca66bf4b9f4c5bd74af99c4  stockfish-macos-x86-64-sse41-popcnt.tar
+e7d7a2bca13915419d41ac6cb8cedb123dd2ba1c39a22c574df7a2aa3f526592  stockfish-macos-x86-64.tar
+536c0c2c0cf06450df0bfb5e876ef0d3119950703a8f143627f990c7b5417964  stockfish-ubuntu-x86-64-avx2.tar
+dea5016a6d9ab705e5697b093d882fca4677d84d8828f470ee33e76de33cf962  stockfish-ubuntu-x86-64-sse41-popcnt.tar
+5c6f38b02a4da5f3ffe763f27da6c3e743eebefd92b50cb3661623b96696adff  stockfish-ubuntu-x86-64.tar
+7bc5880c11a58b2fdc4fcd606bf5cb593230026eb501a5a8865dc79fda5ea5fd  stockfish-windows-armv8.zip
+6f6c272ebd6ea594377715235c8a7326f75940ef4f4f856f45106028fe6ae900  stockfish-windows-x86-64-avx2.zip
+f25830a4567e2bac843d029d3113e6e34ba0cd2f95b9c0bb49afc871fe722a10  stockfish-windows-x86-64-sse41-popcnt.zip
+40cc975817e7eee270b03f354810d20956df565420d320f6dd37d454dc81a139  stockfish-windows-x86-64.zip

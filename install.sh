@@ -39,7 +39,18 @@ if command -v uv >/dev/null 2>&1; then
 else
   progress 8 "Installing the package manager (uv)…"
   info "Installing uv (manages Python + dependencies for this project)…"
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+  # Pinned uv installer, verified before it runs (instead of piping the floating "latest" script to
+  # sh). The installer itself then fetches that uv release and checks the binary's own checksum.
+  # To bump: change both values (hash = sha256 of https://astral.sh/uv/<ver>/install.sh).
+  UV_VERSION="0.12.20"
+  UV_INSTALLER_SHA256="9d229407e2263bde4dcab27eca4aa0886fda54dbcd3da81c8e54d17bbe3fd7bc"
+  UV_TMP="$(mktemp)"
+  curl -LsSf -o "$UV_TMP" "https://astral.sh/uv/$UV_VERSION/install.sh"
+  if command -v sha256sum >/dev/null 2>&1; then UV_GOT="$(sha256sum "$UV_TMP" | cut -d' ' -f1)"; else UV_GOT="$(shasum -a 256 "$UV_TMP" | cut -d' ' -f1)"; fi
+  if [ "$UV_GOT" != "$UV_INSTALLER_SHA256" ]; then
+    rm -f "$UV_TMP"; warn "uv installer checksum mismatch — refusing to run it."; exit 1
+  fi
+  sh "$UV_TMP"; rm -f "$UV_TMP"
   # uv installs to ~/.local/bin (or ~/.cargo/bin); make it visible for the rest of this run.
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
   command -v uv >/dev/null 2>&1 || { warn "uv installed but not on PATH — open a new terminal and re-run ./install.sh"; exit 1; }

@@ -198,7 +198,7 @@ progress() {
 # the build for this CPU and falling back to a more compatible one if it won't run. Returns non-zero
 # on failure. curl-downloaded binaries aren't quarantined, so they run without a Gatekeeper prompt.
 download_stockfish() {
-  local dest="$1" arch tag tmp asset member
+  local dest="$1" arch tag tmp asset member expected
   arch="$(uname -m)"
   # A GUI-launched .app can run translated under Rosetta 2 on Apple Silicon, where `uname -m` lies
   # "x86_64" and we'd fetch the slow Intel build. Trust the hardware capability instead.
@@ -217,7 +217,12 @@ download_stockfish() {
     member="stockfish/$asset"
     tmp="$(mktemp -d)"
     echo "Fetching $asset ($tag)…"
+    # Verify the download against the pinned SHA-256 (scripts/stockfish_sha256.txt) BEFORE extracting
+    # it; a missing pin or a mismatch skips this asset (fails closed).
+    expected="$(awk -v f="$asset.tar" '$2 == f { print $1 }' "$REPO/scripts/stockfish_sha256.txt" 2>/dev/null)"
     if curl -fsSL -o "$tmp/sf.tar" "https://github.com/official-stockfish/Stockfish/releases/download/$tag/$asset.tar" \
+       && [ -n "$expected" ] \
+       && [ "$(shasum -a 256 "$tmp/sf.tar" | awk '{print $1}')" = "$expected" ] \
        && tar -xf "$tmp/sf.tar" -C "$tmp" "$member" 2>/dev/null \
        && mv -f "$tmp/$member" "$dest" 2>/dev/null; then
       chmod +x "$dest"; rm -rf "$tmp"
@@ -264,11 +269,18 @@ progress 5 "Preparing setup…"
 if ! command -v uv >/dev/null 2>&1; then
   progress 8 "Installing the package manager (uv)…"
   echo "Installing uv…"
-  curl -LsSf https://astral.sh/uv/install.sh | sh \
-    || die "Could not install 'uv'. Check your internet connection and open the app again."
+  # Pinned uv installer, verified before it runs (see install.sh). Bump version + hash together.
+  UV_VERSION="0.12.20"
+  UV_INSTALLER_SHA256="9d229407e2263bde4dcab27eca4aa0886fda54dbcd3da81c8e54d17bbe3fd7bc"
+  UV_TMP="$(mktemp)"
+  { curl -LsSf -o "$UV_TMP" "https://astral.sh/uv/$UV_VERSION/install.sh" \
+    && [ "$(shasum -a 256 "$UV_TMP" | awk '{print $1}')" = "$UV_INSTALLER_SHA256" ] \
+    && sh "$UV_TMP"; } \
+    || { rm -f "$UV_TMP"; die "Could not install 'uv' (download failed or checksum mismatch). Check your internet connection and open the app again."; }
+  rm -f "$UV_TMP"
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
-command -v uv >/dev/null 2>&1 || die "'uv' was installed but isn't on PATH. Open a Terminal, run: curl -LsSf https://astral.sh/uv/install.sh | sh"
+command -v uv >/dev/null 2>&1 || die "'uv' was installed but isn't on PATH. Open a Terminal, run: curl -LsSf https://astral.sh/uv/0.12.20/install.sh | sh"
 progress 20 "Package manager ready"
 
 # 2) Stockfish — the chess engine (not a pip package). Prefer a system install / Homebrew; on a
