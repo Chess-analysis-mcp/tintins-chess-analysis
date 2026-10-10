@@ -213,3 +213,17 @@ def test_non_json_success_page_is_skipped(client):
     assert res["ok"] is True
     assert res["models"] == ["Qwen/Qwen3.8-27B", "mistral-small"]
     assert len(calls) == 3
+
+
+# --- Local-only (SSRF guard) ---------------------------------------------------------------------
+
+
+def test_other_devices_cannot_probe_urls(client):
+    """A phone on the network must not make the server fetch a URL of its choosing."""
+    _, calls, canned = client
+    canned["http://10.0.0.5:8080/api/tags"] = _Resp(200, OLLAMA_TAGS)
+    phone = TestClient(app_module.create_app(), client=("192.168.1.50", 50000))
+    resp = phone.get("/api/ollama/models", params={"url": "http://10.0.0.5:8080"})
+    assert resp.status_code == 403
+    assert resp.json()["ok"] is False
+    assert calls == []  # nothing was fetched on the caller's behalf
