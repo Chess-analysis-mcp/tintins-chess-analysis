@@ -22,7 +22,7 @@ jobs:
       # uv builds the env from pyproject/uv.lock and fetches a compatible Python — no Stockfish or
       # `claude` CLI needed: the suite is all fast unit/mock tests (network and engine are mocked).
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Run the test suite
         run: uv run --extra dev pytest
