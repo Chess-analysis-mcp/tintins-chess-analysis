@@ -1,11 +1,27 @@
 # Keeps the SHA-pinned GitHub Actions and the Python dependencies (uv.lock) current via reviewable PRs.
+# One grouped PR per ecosystem per month, minor and patch releases only. Major versions can break
+# things, so those are upgraded by hand (e.g. `uv lock --upgrade-package <name>`) when we choose to.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: uv
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      python-dependencies:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
