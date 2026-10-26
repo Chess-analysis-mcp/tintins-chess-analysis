@@ -145,7 +145,7 @@ def ollama_models(request: Request, url: str = "") -> dict | JSONResponse:
             {"ok": False, "error": "Model detection can only be run on the computer running the app."},
             status_code=403,
         )
-    base =(url or config.LOCAL_LLM_BASE_URL or _OLLAMA_DEFAULT_URL).strip().rstrip("/")
+    base = (url or config.LOCAL_LLM_BASE_URL or _OLLAMA_DEFAULT_URL).strip().rstrip("/")
     # Bare host (Ollama's default) gets all three probes; a base that already ends in /v1
     # (LM Studio, LiteLLM) is probed at /models, which is its /v1/models.
     paths = ["/api/tags", "/models"] if base.endswith("/v1") else ["/api/tags", "/models", "/v1/models"]
