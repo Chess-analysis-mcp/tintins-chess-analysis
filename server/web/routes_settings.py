@@ -118,8 +118,8 @@ def _probe_models(resp: httpx.Response) -> list[str] | None:
     return None
 
 
-@router.get("/ollama/models")
-def ollama_models(url: str = "") -> dict:
+@router.get("/ollama/models", response_model=None)
+def ollama_models(request: Request, url: str = "") -> dict | JSONResponse:
     """List the models a local model server offers, so the Settings panel can offer a picker.
 
     Works with any local server the local-LLM field accepts, not just Ollama: it probes the
@@ -128,8 +128,16 @@ def ollama_models(url: str = "") -> dict:
     local-LLM URL, then Ollama's default port. Never raises — a server that's down or unknown just
     returns `{ok: false}` with a friendly hint, and a host that refuses the connection is reported
     after the first probe rather than after one timeout per path.
+
+    Local-only: the server fetches a caller-chosen URL, so a device on the network could otherwise
+    use it to probe hosts that only this computer can reach (SSRF).
     """
-    base = (url or config.LOCAL_LLM_BASE_URL or _OLLAMA_DEFAULT_URL).strip().rstrip("/")
+    if not is_local_client(request):
+        return JSONResponse(
+            {"ok": False, "error": "Model detection can only be run on the computer running the app."},
+            status_code=403,
+        )
+    base =(url or config.LOCAL_LLM_BASE_URL or _OLLAMA_DEFAULT_URL).strip().rstrip("/")
     # Bare host (Ollama's default) gets all three probes; a base that already ends in /v1
     # (LM Studio, LiteLLM) is probed at /models, which is its /v1/models.
     paths = ["/api/tags", "/models"] if base.endswith("/v1") else ["/api/tags", "/models", "/v1/models"]
