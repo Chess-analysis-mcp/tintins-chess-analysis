@@ -39,7 +39,20 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
 } else {
     Progress 8 "Installing the package manager (uv)..."
     Info "Installing uv (manages Python + dependencies for this project)..."
-    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+    # Pinned uv installer, verified before it runs (instead of `irm .../install.ps1 | iex`).
+    # To bump: change both values (hash = sha256 of https://astral.sh/uv/<ver>/install.ps1).
+    $UvVersion = "0.12.20"
+    $UvInstallerSha256 = "7bd4af2878060e1dfda3b864cbbdaee1280dca166422084361a4478670278e20"
+    $UvTmp = Join-Path ([System.IO.Path]::GetTempPath()) "uv-install-$UvVersion.ps1"
+    Invoke-WebRequest -UseBasicParsing -Uri "https://astral.sh/uv/$UvVersion/install.ps1" -OutFile $UvTmp
+    $UvGot = (Get-FileHash -Algorithm SHA256 -Path $UvTmp).Hash.ToLower()
+    if ($UvGot -ne $UvInstallerSha256) {
+        Remove-Item -Force $UvTmp -ErrorAction SilentlyContinue
+        Warn "uv installer checksum mismatch - refusing to run it."
+        exit 1
+    }
+    powershell -ExecutionPolicy ByPass -File $UvTmp
+    Remove-Item -Force $UvTmp -ErrorAction SilentlyContinue
     $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
         Warn "uv installed but not on PATH - open a new terminal and re-run install.ps1"

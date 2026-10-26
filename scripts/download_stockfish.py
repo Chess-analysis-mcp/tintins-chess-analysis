@@ -16,6 +16,7 @@ engine already exists); on failure it prints a hint to stderr and exits 1.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -32,6 +33,48 @@ from server import config  # noqa: E402
 # Pin the Stockfish release this app is tested against (kept in sync with build_app.sh's `sf_18`).
 TAG = "sf_18"
 _BASE = f"https://github.com/official-stockfish/Stockfish/releases/download/{TAG}"
+
+# SHA-256 pins for every asset of TAG (sha256sum format), shared with scripts/build_app.sh. A
+# download whose hash isn't listed or doesn't match is rejected before anything is extracted or run.
+# Regenerate with scripts/update_stockfish_checksums.py when TAG changes.
+_CHECKSUMS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stockfish_sha256.txt")
+
+
+def _load_checksums(path: str = _CHECKSUMS_FILE) -> dict[str, str]:
+    """{asset filename: lowercase sha256 hex} from the pinned checksum file."""
+    out: dict[str, str] = {}
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            digest, _, name = line.partition("  ")
+            if digest and name:
+                out[name.strip().lstrip("*")] = digest.lower()
+    return out
+
+
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_checksum(archive: str, filename: str, checksums: dict[str, str] | None = None) -> None:
+    """Raise ValueError unless `archive` matches the pinned SHA-256 for `filename` (fails closed)."""
+    if checksums is None:
+        checksums = _load_checksums()
+    expected = checksums.get(filename)
+    if not expected:
+        raise ValueError(f"no pinned checksum for {filename}; refusing to use the download")
+    actual = _sha256_file(archive)
+    if actual != expected:
+        raise ValueError(
+            f"checksum mismatch for {filename} (expected {expected}, got {actual}); "
+            "refusing to use the download"
+        )
 
 
 def _candidates(force_arch: str | None = None) -> list[str]:
@@ -230,6 +273,7 @@ def main() -> int:
             archive = os.path.join(tmp, "sf" + ext)
             sys.stderr.write(f"Downloading {asset}{ext} ({TAG})...\n")
             _download(url, archive)
+            _verify_checksum(archive, f"{asset}{ext}")
             if not _extract_binary(archive, asset, dest):
                 sys.stderr.write(f"  {asset}: engine binary not found in the archive — skipping.\n")
                 continue
