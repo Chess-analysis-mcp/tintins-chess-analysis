@@ -444,9 +444,10 @@ toggles. Saving applies immediately, to both the standalone app and the Claude C
 share one `settings.json`).
 
 To use the board from a **phone or tablet**, turn on *Settings → Engine & AI → Allow other devices on
-my network to connect* and restart the app; the Settings panel then shows the address to open (e.g.
-`http://192.168.1.20:8765`) on any device on the same Wi-Fi. Only do this on a network you trust:
-anyone on it can open the board and use your AI coach.
+my network to connect* and restart the app, then press **📱 Phone** and scan the QR code with the
+device (on the same Wi-Fi). The code carries a private pairing key that is held in memory only, so
+other devices on the network can't use the board without it, and you re-scan after each restart. The
+connection is plain HTTP, so still only do this on a network you trust.
 
 Everything is also settable via environment variables (`settings.json` wins where both are set). The
 handful worth knowing:

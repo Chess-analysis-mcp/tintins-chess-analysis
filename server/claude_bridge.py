@@ -444,7 +444,8 @@ _APP_HELP = (
     "level (review sensitivity), AI-coach / personalisation toggles, and an auto-sync of new "
     "Chess.com games on launch.\n"
     "- 📱 Phone (top bar, next to ⚙ Settings): use this board on a phone or tablet on the same "
-    "Wi-Fi. It shows a QR code to scan with the phone's camera plus the address to type. It needs "
+    "Wi-Fi. It shows a QR code to scan with the phone's camera; scanning pairs the phone (the address alone "
+    "is refused, and restarting the app means scanning again). It needs "
     "network access: ⚙ Settings → Engine & AI → \"Allow other devices on my network to connect\" "
     "(or the Turn on button in the 📱 Phone panel), then restart the app. Only turn it on on a "
     "network you trust (e.g. home Wi-Fi). On the phone the board uses a phone layout with a bottom "
@@ -510,8 +511,10 @@ def _phone_access_facts() -> str:
         if url:
             return (
                 "PHONE ACCESS RIGHT NOW: ON. On a phone or tablet connected to the same Wi-Fi as this "
-                f"computer, open {url} (or press 📱 Phone and scan the QR code). When the user asks how "
-                "to use it on their phone, give them this exact address, and mention that this "
+                f"computer, press 📱 Phone and scan the QR code (the board is at {url}, but another "
+                "device must scan the code to pair first; typing the address alone is refused, and "
+                "restarting the app means scanning again). When the user asks how "
+                "to use it on their phone, tell them to scan the QR code and mention that this "
                 "computer has to stay on with the app running (not asleep or closed) or the phone "
                 "can't reach the board."
             )

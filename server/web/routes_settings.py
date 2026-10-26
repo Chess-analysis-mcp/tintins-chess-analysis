@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from server import config
 from server.core import engine
 from server.core import settings as settings_mod
+from server.web import pairing
 from server.web.local_client import is_local_client
 
 router = APIRouter()
@@ -86,9 +87,16 @@ def get_settings(request: Request) -> dict:
 
 
 @router.get("/phone-access")
-def get_phone_access() -> dict:
-    """For the 📱 Phone popover: can a phone on this Wi-Fi open the board right now, and where."""
-    return config.phone_access()
+def get_phone_access(request: Request) -> dict:
+    """For the 📱 Phone popover: can a phone on this Wi-Fi open the board right now, and where.
+
+    `address` is the bare board address. `url` is the pairing link (address + key) the QR code
+    encodes; the key is only ever handed to this computer, never to another device."""
+    st = config.phone_access()
+    st["address"] = st["url"]
+    if st["active"] and st["url"] and is_local_client(request):
+        st["url"] = pairing.with_token(st["url"])
+    return st
 
 
 def _probe_models(resp: httpx.Response) -> list[str] | None:

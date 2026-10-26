@@ -2487,7 +2487,7 @@ function updateChesscomSyncUI() {
 function updateLanHint() {
   const host = settingsLanIp || "<this computer's LAN IP>";
   $("set-lan-connect").textContent = $("set-lan-access").checked
-    ? `Once restarted, on a phone or tablet on the same Wi-Fi open http://${host}:${settingsWebPort} (or scan the QR code under 📱 Phone at the top).`
+    ? `Once restarted, on a phone or tablet on the same Wi-Fi scan the QR code under 📱 Phone at the top (the board is at http://${host}:${settingsWebPort}, but other devices must scan the code to pair first).`
     : "";
 }
 
@@ -4695,7 +4695,7 @@ const PHONE_HELP_HTML =
   `<li><b>Same Wi-Fi.</b> The phone has to be on the same Wi-Fi as this computer. Mobile data (4G/5G) won't work, so turn Wi-Fi on on the phone.</li>` +
   `<li><b>Guest or public Wi-Fi.</b> Guest, hotel, school and many office networks block devices from reaching each other. Use your main home network.</li>` +
   `<li><b>Firewall.</b> The first time, Windows (or a Mac with its firewall on) asks whether to allow incoming connections: choose Allow. On Windows, if you missed it: Windows Security, then Firewall &amp; network protection, then Allow an app through firewall.</li>` +
-  `<li><b>The address changed.</b> After a router or computer restart the address can change. Open 📱 Phone again and scan the new code.</li>` +
+  `<li><b>The address changed.</b> After a router or computer restart the address can change, and restarting the app changes the pairing key. Open 📱 Phone again and scan the new code.</li>` +
   `<li><b>VPN.</b> A VPN on this computer can show the wrong address or block local connections. Pause it, then open 📱 Phone again.</li>` +
   `<li><b>Keep the app running.</b> The phone connects to this computer, so leave the app open and don't let the computer sleep.</li>` +
   `<li><b>"Not secure" in the browser</b> is expected: the board comes straight from your own computer over your Wi-Fi, without https.</li>` +
@@ -4773,8 +4773,10 @@ async function renderPhonePop(st) {
     } catch (_) {} // no QR: the address below still works
     pop.innerHTML =
       title +
-      `<div class="pp-row">${qr}<div>Scan the code with your phone's camera, or type this address in its browser:</div></div>` +
-      `<div class="pp-url">${escapeHtml(st.url)}</div>` +
+      `<div class="pp-row">${qr}<div>Scan the code with your phone's camera. It pairs the phone with this computer; typing just the address won't work.</div></div>` +
+      `<div class="pp-url">${escapeHtml(st.address || st.url)}</div>` +
+      `<div class="pp-note">The code contains a private pairing key, so don't share a screenshot of it. ` +
+      `Restarting the app changes the key; scan the new code to reconnect.</div>` +
       `<div class="pp-keep">💻 Keep this computer on and the app running while you use your phone. ` +
       `If the computer sleeps, shuts down, or the app is closed, the phone can't reach the board.</div>` +
       `<div class="pp-note">Your phone must be on the same Wi-Fi as this computer.` +

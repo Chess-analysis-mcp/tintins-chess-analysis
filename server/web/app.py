@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import mimetypes
+import socket
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from starlette.types import Scope
 from server import config
 from server.core import app_liveness
 from server.core import lifecycle
+from server.web import pairing
 from server.web.routes_board import router as board_router
 from server.web.routes_chat import router as chat_router
 from server.web.routes_history import router as history_router
@@ -74,6 +76,40 @@ def _guard_is_active() -> bool:
     return _is_local_host(_authority_host(host))
 
 
+def _is_own_host(host: str) -> bool:
+    """Is `host` a name for THIS computer: loopback, its LAN address, its bind address or hostname?
+
+    With network access on, the loopback-only allowlist above can't apply, but DNS rebinding still
+    works against a browser on this computer: its requests come from 127.0.0.1 (so they skip
+    pairing) while carrying the attacker's hostname. Accepting only this computer's own names keeps
+    that blocked without turning away the phone, which uses the LAN address from the QR code.
+    """
+    if _is_local_host(host):
+        return True
+    if host == config.lan_ip():
+        return True
+    bound = (config.WEB_HOST or "").strip().lower()
+    if bound and host == _authority_host(bound):
+        return True
+    name = socket.gethostname().lower()
+    return host in (name, name.removesuffix(".local") + ".local")
+
+
+def _network_guard(request: Request) -> PlainTextResponse | None:
+    """Host/Origin checks for a network bind (see `_is_own_host`). None = let it through."""
+    host = request.headers.get("host", "")
+    if host and not _is_own_host(_authority_host(host)):
+        return PlainTextResponse("Forbidden: unknown Host header.", status_code=403)
+    origin = request.headers.get("origin")
+    if origin is not None:
+        if origin.lower() == "null":
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                return PlainTextResponse("Forbidden: opaque origin.", status_code=403)
+        elif not _is_own_host(_authority_host(origin)):
+            return PlainTextResponse("Forbidden: cross-origin request.", status_code=403)
+    return None
+
+
 class _NoCacheStaticFiles(StaticFiles):
     """Serve the no-build frontend with `Cache-Control: no-cache` so browsers always REVALIDATE.
 
@@ -117,6 +153,8 @@ def create_app() -> FastAPI:
     app_liveness.start()
 
     guard_active = _guard_is_active()
+    # Listening beyond loopback: the Host/Origin allowlist can't apply, so other devices must pair.
+    pairing_active = pairing.required()
 
     @app.middleware("http")
     async def _guard_and_mark_activity(request: Request, call_next):
@@ -134,6 +172,10 @@ def create_app() -> FastAPI:
                         return PlainTextResponse("Forbidden: opaque origin.", status_code=403)
                 elif not _is_local_host(_authority_host(origin)):
                     return PlainTextResponse("Forbidden: cross-origin request.", status_code=403)
+        if pairing_active:
+            blocked = _network_guard(request) or pairing.check(request)
+            if blocked is not None:
+                return blocked
         # Any board interaction keeps the session alive (resets the idle watchdog).
         lifecycle.touch()
         return await call_next(request)
