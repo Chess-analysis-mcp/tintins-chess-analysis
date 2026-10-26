@@ -66,12 +66,11 @@ def _fake_run(captured):
 
 
 def _denied(cmd):
-    assert "--disallowedTools" in cmd
-    denied = cmd[cmd.index("--disallowedTools") + 1].split(",")
-    for tool in ("Bash", "Edit", "Write", "WebFetch", "WebSearch", "Task"):
-        assert tool in denied
-    # never deny (or shadow) the chess MCP tools
-    assert not any(t.startswith("mcp__") for t in denied)
+    # every built-in tool removed (an empty allowlist, not a deny list that new tools slip past)
+    assert "--tools" in cmd and cmd[cmd.index("--tools") + 1] == ""
+    # the user's other MCP servers (claude.ai Gmail/Drive connectors, plugins) are not loaded
+    assert "--strict-mcp-config" in cmd
+    assert "--disallowedTools" not in cmd
 
 
 @pytest.fixture
@@ -97,6 +96,32 @@ def test_chat_call_denies_builtin_tools_but_keeps_chess_allowlist(monkeypatch, n
     cmd = captured[0]
     _denied(cmd)
     assert "--allowedTools" in cmd and "mcp__chess__get_engine_line" in cmd[cmd.index("--allowedTools") + 1]
+    # the chess server is still passed explicitly, so strict mode keeps it
+    assert "--mcp-config" in cmd and cmd[cmd.index("--mcp-config") + 1] == str(cb._MCP_CONFIG)
+
+
+def test_puzzle_and_coach_calls_load_no_mcp_servers(monkeypatch, no_byo):
+    captured = []
+    monkeypatch.setattr(cb.subprocess, "run", _fake_run(captured))
+    monkeypatch.setattr(cb, "_profile_facts", lambda: None)
+    monkeypatch.setattr(cb, "_game_facts", lambda s: "facts")
+    cb._run_puzzle_coach("hello", 5)
+    cb.coach_summary_ai(object())
+    for cmd in captured:
+        assert "--mcp-config" not in cmd
+
+
+def test_long_opening_names_are_not_cut_off(monkeypatch):
+    name = "Queen's Pawn Game: Accelerated London System, Steinitz Countergambit, Morris Countergambit Accepted"
+    sess = SimpleNamespace(
+        player="white", accuracy_white=90, accuracy_black=80, speed="blitz", result="1-0",
+        headers={"White": "me", "Black": "you"}, all_moves=[], mistakes=[], moves=[],
+    )
+    monkeypatch.setattr(cb.session_mod, "resolve_opening", lambda s: name)
+    monkeypatch.setattr(cb, "_strengths", lambda s: [])
+    monkeypatch.setattr(cb, "_sacrifices", lambda s, limit=2: [])
+    monkeypatch.setattr(cb, "_outcome_facts", lambda s: None)
+    assert name in cb._game_facts(sess)
 
 
 def test_coach_summary_call_denies_builtin_tools(monkeypatch, no_byo):
