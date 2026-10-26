@@ -4,7 +4,7 @@ Bound to loopback, only this computer can reach the board. Bound to the network,
 could otherwise call the API (spend the user's Claude quota, read game history). So when the server
 listens beyond loopback, every request from ANOTHER device must carry a secret that only the person at
 this computer can hand over: it is shown as a QR code / link in the 📱 Phone popover (the token is only
-ever returned to this computer). Scanning it sets an HttpOnly, SameSite=Strict cookie on the phone.
+ever returned to this computer). Scanning it sets an HttpOnly, SameSite=Lax cookie on the phone.
 
 The token lives in memory only and is regenerated on every launch, so a restart un-pairs phones (they
 re-scan) and there's no secret on disk. Requests from this computer never need it.
@@ -78,7 +78,7 @@ def _origin_matches_host(request: Request) -> bool:
     """For state-changing requests from another device: Origin, if sent, must be the board itself."""
     origin = request.headers.get("origin")
     if origin is None:
-        return True  # non-browser client, or an old browser; SameSite=Strict covers the cookie side
+        return True  # non-browser client, or an old browser; SameSite=Lax keeps the cookie off cross-site POSTs
     if "://" not in origin:  # "null" and other opaque values
         return False
     host = request.headers.get("host", "").strip().lower()
@@ -98,7 +98,10 @@ def check(request: Request) -> Response | None:
             return _unpaired(request)
         # Valid: remember it in a cookie and drop the key from the address bar (history, referrers).
         resp = RedirectResponse("/", status_code=303)
-        resp.set_cookie(COOKIE_NAME, _token, httponly=True, samesite="strict", path="/")
+        # Lax, not Strict: a Strict cookie is withheld from this same redirect when the link was
+        # opened from another app or site, so the phone would land on the "pair" page. Lax still
+        # withholds it from cross-site POSTs, and other sites are refused by the Origin checks.
+        resp.set_cookie(COOKIE_NAME, _token, httponly=True, samesite="lax", path="/")
         return resp
     if not _matches(request.cookies.get(COOKIE_NAME)):
         return _unpaired(request)

@@ -52,7 +52,7 @@ def test_valid_key_sets_cookie_and_redirects_without_the_key(lan):
     r = _phone().get("/?pair=test-key")
     assert r.status_code == 303 and r.headers["location"] == "/"
     cookie = r.headers["set-cookie"].lower()
-    assert "chess_pair=test-key" in cookie and "httponly" in cookie and "samesite=strict" in cookie
+    assert "chess_pair=test-key" in cookie and "httponly" in cookie and "samesite=lax" in cookie
 
 
 def test_paired_device_can_use_the_board(lan):
@@ -89,6 +89,40 @@ def test_this_computer_never_needs_the_key(lan):
     c = _computer()
     assert c.get("/api/app-config").status_code == 200
     assert c.post("/api/chat-reset").status_code == 200
+
+
+def _rebound(base_url="http://evil.example:8765"):
+    """A browser on this computer after DNS rebinding: loopback client, attacker's hostname."""
+    return TestClient(
+        app_module.create_app(), client=("127.0.0.1", 50001), base_url=base_url, follow_redirects=False
+    )
+
+
+def test_rebound_request_from_this_computer_is_refused(lan):
+    c = _rebound()
+    assert c.get("/api/settings").status_code == 403
+    assert c.get("/api/phone-access").status_code == 403
+    assert c.post("/api/chat-reset").status_code == 403
+
+
+def test_cross_site_post_from_this_computer_is_refused(lan):
+    c = _computer()
+    assert c.post("/api/chat-reset", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert c.post("/api/chat-reset", headers={"Origin": "null"}).status_code == 403
+
+
+def test_this_computer_can_use_any_of_its_own_names(lan):
+    lan.setattr(app_module.socket, "gethostname", lambda: "My-Mac.local")
+    for base in ("http://127.0.0.1:8765", "http://localhost:8765", f"http://{BOARD}", "http://my-mac.local:8765"):
+        c = _rebound(base)
+        assert c.get("/api/app-config").status_code == 200, base
+        assert c.post("/api/chat-reset", headers={"Origin": base}).status_code == 200, base
+
+
+def test_phone_with_unknown_host_is_refused_even_when_paired(lan):
+    c = _paired()
+    c.base_url = "http://evil.example:8765"
+    assert c.get("/api/app-config").status_code == 403
 
 
 def test_loopback_only_board_does_not_require_pairing(monkeypatch):
