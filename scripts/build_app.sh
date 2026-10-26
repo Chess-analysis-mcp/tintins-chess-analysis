@@ -169,6 +169,17 @@ mkdir -p "$SUPPORT" "$DATA_DIR"
 exec >>"$LOG" 2>&1
 echo "=== launch $(date) ==="
 
+# A GUI-launched .app can run translated under Rosetta 2 on Apple Silicon. Everything we start then
+# runs as Intel too: an Intel uv build (older or already installed) picks an x86_64 Python, and deps
+# without an Intel-Mac wheel (cryptography 49) get compiled from source, which needs Xcode tools.
+# Re-exec this launcher natively so the whole install runs arm64.
+if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ] && [ -z "${CHESS_NATIVE_REEXEC:-}" ] \
+   && arch -arm64 /usr/bin/true 2>/dev/null; then
+  echo "Running under Rosetta 2; re-launching natively (arm64)."
+  export CHESS_NATIVE_REEXEC=1
+  exec arch -arm64 /bin/bash "$0" "$@"
+fi
+
 # GUI launches get a bare PATH (no Homebrew, no ~/.local/bin). Add the usual spots so uv, brew,
 # stockfish and claude are found.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -316,6 +327,15 @@ fi
 
 # 3) Build the Python environment in the writable support dir (NOT inside the bundle).
 export UV_PROJECT_ENVIRONMENT="$ENV_DIR"
+# On Apple Silicon, pin a native arm64 Python even if uv itself is an Intel build (installed by an
+# earlier Rosetta launch), and drop an env a previous Rosetta run built with an Intel Python.
+if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+  export UV_PYTHON="cpython-3.13-macos-aarch64"
+  if [ -e "$ENV_DIR/bin/python" ] && ! file -bL "$ENV_DIR/bin/python" | grep -q arm64; then
+    echo "Removing an Intel (x86_64) Python env left by a Rosetta launch: $ENV_DIR"
+    rm -rf "$ENV_DIR"
+  fi
+fi
 progress 45 "Downloading Python & dependencies (largest step)…"
 echo "Syncing Python environment into $ENV_DIR …"
 # --no-install-project: install only the locked DEPENDENCIES, not the project package itself.

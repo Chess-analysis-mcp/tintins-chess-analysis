@@ -12,6 +12,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Running under Rosetta 2 on Apple Silicon? Re-exec natively so uv, Python and every dependency are
+# arm64 (an Intel Python can't get a prebuilt cryptography 49 wheel and would need Xcode tools).
+if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ] && [ -z "${CHESS_NATIVE_REEXEC:-}" ] \
+   && arch -arm64 /usr/bin/true 2>/dev/null; then
+  export CHESS_NATIVE_REEXEC=1
+  exec arch -arm64 /bin/bash "$0" "$@"
+fi
+
 HOST="${CHESS_WEB_HOST:-127.0.0.1}"
 PORT="${CHESS_WEB_PORT:-8765}"
 URL="http://${HOST}:${PORT}"
@@ -81,6 +89,11 @@ free_port() {
 # Make a uv installed in the usual spots visible without a fresh login shell.
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
+# On Apple Silicon, keep uv on a native arm64 Python even if uv itself is an Intel build.
+if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+  export UV_PYTHON="${UV_PYTHON:-cpython-3.13-macos-aarch64}"
+fi
+
 # Already running?
 if curl -fsS "${URL}/api/app-config" >/dev/null 2>&1; then
   if [ -d ".git" ]; then
@@ -139,6 +152,13 @@ if [ -z "$RELAUNCHED" ] && [ -f ".update-requested" ]; then
   # Replace this (possibly now-stale) process with a fresh run of the updated script. The splash is
   # already open and the sentinel is gone, so the relaunch starts cleanly and won't re-update.
   [ -n "$RELAUNCH" ] && exec "$0" --updated
+fi
+
+# An Intel .venv on Apple Silicon (built by an earlier Rosetta run) gets rebuilt natively below.
+# Safe to drop here: nothing is running from it (a live server was reused or stopped above).
+if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] && [ -e ".venv/bin/python" ] \
+   && ! file -bL ".venv/bin/python" | grep -q arm64; then
+  rm -rf .venv
 fi
 
 # First-run install: no uv, or the project env hasn't been built yet.

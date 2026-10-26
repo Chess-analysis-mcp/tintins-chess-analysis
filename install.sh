@@ -11,6 +11,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Running under Rosetta 2 on Apple Silicon (e.g. an Intel-mode Terminal)? Re-exec natively, or the
+# an Intel uv build (older or already installed) picks an x86_64 Python, and deps without an
+# Intel-Mac wheel get compiled from source, which needs Xcode command line tools.
+if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ] && [ -z "${CHESS_NATIVE_REEXEC:-}" ] \
+   && arch -arm64 /usr/bin/true 2>/dev/null; then
+  echo "Running under Rosetta 2; re-launching natively (arm64)."
+  export CHESS_NATIVE_REEXEC=1
+  exec arch -arm64 /bin/bash "$0" "$@"
+fi
+
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 ok()   { printf '\033[32m✓\033[0m %s\n' "$1"; }
 info() { printf '\033[34m›\033[0m %s\n' "$1"; }
@@ -61,6 +71,15 @@ fi
 # Built before Stockfish so the download fallback below can run via `uv run python`.
 progress 25 "Downloading Python & dependencies (largest step)…"
 info "Setting up the Python environment with uv (first run downloads Python + deps)…"
+# On Apple Silicon, pin a native arm64 Python even if uv itself is an Intel build (installed from a
+# Rosetta shell), and drop a .venv an earlier Rosetta run built with an Intel Python.
+if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+  export UV_PYTHON="${UV_PYTHON:-cpython-3.13-macos-aarch64}"
+  if [ -e ".venv/bin/python" ] && ! file -bL ".venv/bin/python" | grep -q arm64; then
+    info "Removing an Intel (x86_64) .venv left by a Rosetta run…"
+    rm -rf .venv
+  fi
+fi
 uv sync
 ok "Environment ready"
 progress 70 "Environment ready"
