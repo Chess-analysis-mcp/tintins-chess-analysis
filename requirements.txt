@@ -9,7 +9,7 @@
 # against are noted in comments.
 
 python-chess>=1.999        # verified: 1.999 (imports as `chess`)
-mcp[cli]>=1.27             # verified: 1.27.2  — only needed for the MCP server / Claude Code
+mcp[cli]>=1.27,<2          # verified: 1.27.2  — only needed for the MCP server / Claude Code
 fastapi>=0.137             # verified: 0.137.1
 uvicorn>=0.49              # verified: 0.49.0
 pydantic>=2.0              # verified: 2.13.4
