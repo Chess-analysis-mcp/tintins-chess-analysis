@@ -30,7 +30,8 @@ It has **two modes**, side by side in the same board:
 > (`claude login`). Prefer your own model? You can instead point the AI coach at a **local model**
 > (Ollama, LM Studio, …) or **any OpenAI-compatible provider** (with its API key), and use no Claude
 > account at all; see
-> [Run the AI on your own model](#run-the-ai-on-your-own-model-instead-of-claude). Either way, the
+> [Run the AI on your own model](#run-the-ai-on-your-own-model-instead-of-claude). Have a ChatGPT
+> plan instead? [Use your ChatGPT subscription](#use-your-chatgpt-subscription-codex-cli). Either way, the
 > engine review itself (mistake list, eval bar, win graph, arrows) works without any of it.
 
 > **New here? Pick your goal:**
@@ -329,6 +330,25 @@ directory, and is never sent to other devices that open the board over your netw
 Quality depends on the model you point at, and the Stockfish analysis stays local either way. The
 terminal MCP workflow still uses Claude; this covers the in-browser chat and coach summary.
 
+### Use your ChatGPT subscription (Codex CLI)
+
+Have a ChatGPT Plus or Pro plan? The chat, AI coach and puzzle coach can run on it through OpenAI's
+[Codex CLI](https://developers.openai.com/codex/cli), at no extra cost and with no `claude` CLI.
+One-time setup:
+
+1. Install the Codex CLI (`npm install -g @openai/codex`, or see the link above).
+2. Run `codex login` in a terminal and choose **Sign in with ChatGPT**.
+3. In **⚙ Settings → Engine & AI**, tick **Use my ChatGPT subscription** and **Save**. The line
+   under it tells you whether Codex was found and is signed in. Leave **Model** blank to use
+   Codex's default, or type one your plan offers.
+
+Each answer shares your plan's Codex usage limits, and every call carries some Codex overhead
+(roughly 15k mostly-cached input tokens), so a short answer takes about 5 to 15 seconds. Codex is
+started with its shell and other tools switched off, read-only, from an empty folder and without
+your own Codex plugins or MCP servers, so a chess question can never make it run anything or change
+anything on your computer. Works on macOS, Windows and Linux.
+A custom model URL takes precedence over this option, and this option over a Claude API key.
+
 ### Use an Anthropic API key instead of a Claude subscription
 
 Also in **⚙ Settings → Engine & AI**, under **Claude API key**. Paste a key from
@@ -339,7 +359,8 @@ shown); Opus 5 is the default.
 This **bills your Anthropic account per token**, so it is not the cheap path: if you have a Claude
 subscription, the default `claude` CLI already covers the AI at no extra cost. The key is worth it
 only if you would rather pay per use than hold a subscription. A settings line always tells you
-which backend is active, and a custom model URL takes precedence over the key if you set both.
+which backend is active, and a custom model URL or the ChatGPT option takes precedence over the
+key if you set both.
 
 Both this key and the custom-model key are stored on the computer running the app, in a
 `settings.json` that is written owner-only, and neither is ever sent to a phone or any other device
@@ -458,6 +479,7 @@ handful worth knowing:
 | `CHESS_USERNAME` / `CHESS_ALIASES` | Your handle(s), for side-detection and merging history across accounts. |
 | `CHESS_LOCAL_LLM_BASE_URL` / `CHESS_LOCAL_LLM_MODEL` | Run the AI on [your own model](#run-the-ai-on-your-own-model-instead-of-claude) instead of Claude. |
 | `CHESS_LOCAL_LLM_API_KEY` / `CHESS_LOCAL_LLM_API_KEY_HEADER` | API key for a hosted provider, and (rarely needed) which header to send it in. |
+| `CHESS_CODEX=1` / `CHESS_CODEX_MODEL` | Run the AI on [your ChatGPT subscription](#use-your-chatgpt-subscription-codex-cli) through the Codex CLI. |
 | `CHESS_ANTHROPIC_API_KEY` / `CHESS_ANTHROPIC_MODEL` | Run the AI on the Anthropic API with your own key (billed per token) instead of a Claude subscription. |
 | `CHESS_UPDATE_CHECK=0` | Don't check for new releases. |
 | `CHESS_HISTORY=0` / `CHESS_PUZZLES=0` | Turn off game history, or the puzzle trainer. |

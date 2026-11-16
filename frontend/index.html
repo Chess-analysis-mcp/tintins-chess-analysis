@@ -259,7 +259,7 @@
              sits lower, between the Moves list and Mistakes. -->
         <div class="coach-ai-wrap">
           <button id="coach-ai-btn" class="coach-ai-btn" hidden
-            title="Have Snowie write a fuller coaching summary of this game (uses your Claude subscription)">
+            title="Have Snowie write a fuller coaching summary of this game (uses the AI chosen in Settings)">
             ✨ Generate AI coach (Snowie) summary
           </button>
           <div id="coach-ai" class="coach-ai" hidden></div>
@@ -280,7 +280,7 @@
         <div class="chat-panel">
           <h2>Ask your AI coach (Snowie)</h2>
           <p class="muted chat-hint">
-            Ask Snowie about the current board position (uses your Claude subscription).
+            Ask Snowie about the current board position (uses the AI chosen in Settings).
           </p>
           <div id="chat-messages" class="chat-messages"></div>
           <form id="chat-form" class="chat-form">
@@ -452,7 +452,7 @@
           <label class="set-field set-check">
             <span class="set-check-row">
               <input id="set-coach-ai-auto" type="checkbox" />
-              <span class="set-label">Auto-generate AI coach (Snowie) summary <span class="set-opt">(uses your Claude subscription)</span></span>
+              <span class="set-label">Auto-generate AI coach (Snowie) summary <span class="set-opt">(uses the AI chosen in Settings)</span></span>
             </span>
             <span class="set-hint">Auto-write the fuller summary for every game, instead of pressing the
               button under the board. The quick side-panel summary always shows.</span>
@@ -552,89 +552,131 @@
 
         <!-- Engine & AI: local paths / local model. -->
         <div class="set-panel" data-panel="system">
-          <label class="set-field set-check">
-            <span class="set-check-row">
+          <div class="set-field">
+            <label class="set-check-row set-check">
               <input id="set-lan-access" type="checkbox" />
               <span class="set-label">Allow other devices on my network to connect</span>
-            </span>
-            <span id="set-lan-hint" class="set-hint">Off (default): the board only answers requests
-              from this computer (binds to 127.0.0.1). On: binds to 0.0.0.0 so phones, tablets and other
-              computers on your network can open the board too. Anyone on your network could then
-              reach it (and use your AI coach), and it also turns off the local-only request guard, so
-              only enable this on a network you trust. <b>If this computer has a public IP (e.g. port
-              forwarding, a cloud VM, or a direct internet connection) this exposes the board to the
-              entire internet</b>, not just your network. Requires restarting the app to take effect.
+            </label>
+            <span id="set-lan-hint" class="set-hint">Lets phones and tablets on your Wi-Fi open the
+              board. Only turn on for a network you trust; takes effect after a restart.
               <span id="set-lan-connect"></span></span>
-          </label>
+            <details class="set-more">
+              <summary>More info</summary>
+              <p class="set-hint">Off (default), the board only answers this computer (it binds to
+                127.0.0.1). On, it binds to 0.0.0.0, so anyone on your network could reach it and use
+                your AI coach, and the local-only request guard is turned off. <b>If this computer has
+                a public IP (port forwarding, a cloud VM, a direct internet connection), this exposes
+                the board to the whole internet</b>, not just your network.</p>
+            </details>
+          </div>
 
           <label class="set-field">
             <span class="set-label">Stockfish path</span>
             <input id="set-stockfish" type="text" autocomplete="off" />
             <span id="set-sf-status" class="set-hint"></span>
           </label>
-          <div class="set-field">
-            <span class="set-label">Local or custom AI model <span class="set-opt">(optional — use your own model instead of Claude)</span></span>
-            <span class="set-hint">Run the “why?” chat + AI coach on your own model instead
-              of your Claude subscription — <b>no <code>claude</code> CLI or login needed</b>. Connects
-              directly to anything with an OpenAI-compatible API: a local server (Ollama, LM Studio,
-              llama.cpp, a LiteLLM proxy) or a <b>hosted provider</b> (OpenRouter, Groq, Together,
-              Azure OpenAI, …) — for a hosted one, paste its <b>API key</b> below. <b>For a local
-              server</b> (Ollama, LM Studio, llama.cpp, LiteLLM, …) just click <b>Detect models</b>.
-              For anything else, fill in the URL (and model) by hand. Leave the URL blank to use
-              Claude.</span>
-            <div class="set-llm-row">
-              <button type="button" id="set-ollama-detect" class="linklike">Detect models</button>
-              <span id="set-ollama-status" class="set-hint"></span>
-            </div>
-            <label class="set-sub">
-              <span class="set-sub-label">URL</span>
-              <input id="set-local-llm-url" type="text" autocomplete="off" placeholder="http://localhost:11434" />
-            </label>
-            <label class="set-sub" id="set-ollama-pick-row" hidden>
-              <span class="set-sub-label">Detected</span>
-              <select id="set-ollama-model-select"></select>
-            </label>
-            <label class="set-sub">
-              <span class="set-sub-label">Model</span>
-              <input id="set-local-llm-model" type="text" autocomplete="off" placeholder="e.g. qwen2.5-coder" />
-            </label>
-            <label class="set-sub">
-              <span class="set-sub-label">API key</span>
-              <input id="set-local-llm-key" type="password" autocomplete="off"
-                placeholder="only for hosted providers (a local server needs none)" />
-            </label>
-            <label class="set-sub" id="set-llm-key-header-row" hidden>
-              <span class="set-sub-label">Send as</span>
-              <select id="set-local-llm-key-header">
-                <option value="">Automatic (Bearer, or api-key for Azure)</option>
-                <option value="bearer">Authorization: Bearer</option>
-                <option value="api-key">api-key (Azure OpenAI)</option>
-              </select>
-            </label>
-          </div>
 
           <div class="set-field">
-            <span class="set-label">Claude API key <span class="set-opt">(optional — pay per token instead of using a subscription)</span></span>
-            <span class="set-hint">By default the AI coach runs on the <code>claude</code> CLI with
-              your <b>Claude subscription</b>, at no extra cost. If you'd rather use an
-              <b>Anthropic API key</b> (from <code>console.anthropic.com</code>), paste it here and
-              no CLI or login is needed. <b>This bills your Anthropic account per token</b>, so only
-              do it if you actually want that; a subscription is cheaper for normal use. The key is
-              stored on this computer only, and is never sent to devices that open the board over
-              your network.</span>
-            <label class="set-sub">
-              <span class="set-sub-label">API key</span>
-              <input id="set-anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…" />
-            </label>
-            <label class="set-sub">
-              <span class="set-sub-label">Model</span>
-              <select id="set-anthropic-model">
-                <option value="claude-opus-5">Claude Opus 5 — most capable ($5 / $25 per 1M tokens)</option>
-                <option value="claude-sonnet-5">Claude Sonnet 5 — balanced ($2 / $10)</option>
-                <option value="claude-haiku-4-5">Claude Haiku 4.5 — cheapest ($1 / $5)</option>
-              </select>
-            </label>
+            <span class="set-label">AI coach</span>
             <span id="set-ai-backend" class="set-hint"></span>
+            <span class="set-hint">The default is your Claude subscription. Optionally pick another:</span>
+
+            <details class="set-ai-opt" id="set-ai-opt-local">
+              <summary><span class="set-ai-name">Local or custom model</span>
+                <span class="set-opt">Ollama, LM Studio, OpenRouter…</span>
+                <span class="set-ai-on" hidden>On</span></summary>
+              <div class="set-ai-body">
+                <div class="set-llm-row">
+                  <button type="button" id="set-ollama-detect" class="linklike">Detect models</button>
+                  <span id="set-ollama-status" class="set-hint"></span>
+                </div>
+                <label class="set-sub">
+                  <span class="set-sub-label">URL</span>
+                  <input id="set-local-llm-url" type="text" autocomplete="off" placeholder="http://localhost:11434" />
+                </label>
+                <label class="set-sub" id="set-ollama-pick-row" hidden>
+                  <span class="set-sub-label">Detected</span>
+                  <select id="set-ollama-model-select"></select>
+                </label>
+                <label class="set-sub">
+                  <span class="set-sub-label">Model</span>
+                  <input id="set-local-llm-model" type="text" autocomplete="off" placeholder="e.g. qwen2.5-coder" />
+                </label>
+                <label class="set-sub">
+                  <span class="set-sub-label">API key</span>
+                  <input id="set-local-llm-key" type="password" autocomplete="off"
+                    placeholder="only for hosted providers (a local server needs none)" />
+                </label>
+                <label class="set-sub" id="set-llm-key-header-row" hidden>
+                  <span class="set-sub-label">Send as</span>
+                  <select id="set-local-llm-key-header">
+                    <option value="">Automatic (Bearer, or api-key for Azure)</option>
+                    <option value="bearer">Authorization: Bearer</option>
+                    <option value="api-key">api-key (Azure OpenAI)</option>
+                  </select>
+                </label>
+                <details class="set-more">
+                  <summary>More info</summary>
+                  <p class="set-hint">Runs the chat and coach on your own model, with no
+                    <code>claude</code> CLI or login. For a <b>local server</b> (Ollama, LM Studio,
+                    llama.cpp, a LiteLLM proxy) start it and click <b>Detect models</b>. For a
+                    <b>hosted provider</b> (OpenRouter, Groq, Together, Azure OpenAI, …) fill in its URL
+                    and model and paste its API key. Clear the URL to stop using it.</p>
+                </details>
+              </div>
+            </details>
+
+            <details class="set-ai-opt" id="set-ai-opt-codex">
+              <summary><span class="set-ai-name">ChatGPT subscription</span>
+                <span class="set-opt">Plus or Pro, via Codex</span>
+                <span class="set-ai-on" hidden>On</span></summary>
+              <div class="set-ai-body">
+                <label class="set-check-row set-check">
+                  <input id="set-codex-enabled" type="checkbox" />
+                  <span>Use my ChatGPT subscription</span>
+                </label>
+                <label class="set-sub">
+                  <span class="set-sub-label">Model</span>
+                  <input id="set-codex-model" type="text" autocomplete="off" placeholder="blank = Codex's default" />
+                </label>
+                <span id="set-codex-status" class="set-hint"></span>
+                <details class="set-more">
+                  <summary>More info</summary>
+                  <p class="set-hint">No extra cost: it shares your plan's Codex usage limits. One-time
+                    setup: install the Codex CLI (<code>npm install -g @openai/codex</code>), run
+                    <code>codex login</code> in a terminal and choose <b>Sign in with ChatGPT</b>.
+                    Codex runs with its tools switched off, so it can't run or change anything on
+                    this computer.</p>
+                </details>
+              </div>
+            </details>
+
+            <details class="set-ai-opt" id="set-ai-opt-anthropic">
+              <summary><span class="set-ai-name">Claude API key</span>
+                <span class="set-opt">billed per token</span>
+                <span class="set-ai-on" hidden>On</span></summary>
+              <div class="set-ai-body">
+                <label class="set-sub">
+                  <span class="set-sub-label">API key</span>
+                  <input id="set-anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…" />
+                </label>
+                <label class="set-sub">
+                  <span class="set-sub-label">Model</span>
+                  <select id="set-anthropic-model">
+                    <option value="claude-opus-5">Claude Opus 5 — most capable ($5 / $25 per 1M tokens)</option>
+                    <option value="claude-sonnet-5">Claude Sonnet 5 — balanced ($2 / $10)</option>
+                    <option value="claude-haiku-4-5">Claude Haiku 4.5 — cheapest ($1 / $5)</option>
+                  </select>
+                </label>
+                <details class="set-more">
+                  <summary>More info</summary>
+                  <p class="set-hint">Uses a key from <code>console.anthropic.com</code>, with no CLI
+                    or login. <b>This bills your Anthropic account per token</b>, so a subscription is
+                    cheaper for normal use. The key stays on this computer and is never sent to
+                    devices that open the board over your network.</p>
+                </details>
+              </div>
+            </details>
           </div>
         </div>
 

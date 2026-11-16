@@ -43,6 +43,8 @@ KEYS = (
     "local_llm_api_key_header",
     "anthropic_api_key",
     "anthropic_model",
+    "codex_enabled",
+    "codex_model",
     "web_host",
 )
 
@@ -68,6 +70,7 @@ LOCAL_ONLY_KEYS = (
     "stockfish_path",
     "local_llm_base_url",
     "local_llm_api_key_header",
+    "codex_enabled",  # starts the Codex CLI on this machine, on the owner's ChatGPT plan
     "web_host",
 )
 
@@ -175,6 +178,10 @@ def apply(settings: dict) -> None:
         config.ANTHROPIC_API_KEY = (settings["anthropic_api_key"] or "").strip()
     if "anthropic_model" in settings:
         config.ANTHROPIC_MODEL = (settings["anthropic_model"] or "").strip()
+    if "codex_enabled" in settings:
+        config.CODEX_ENABLED = bool(settings["codex_enabled"])
+    if "codex_model" in settings:
+        config.CODEX_MODEL = (settings["codex_model"] or "").strip()
     if "web_host" in settings:
         # The server is already bound by the time a live save happens, so this only takes effect
         # on the next launch (apply_saved() reads it before uvicorn binds); still applied live so
@@ -223,6 +230,8 @@ def effective() -> dict:
         "local_llm_api_key_header": config.LOCAL_LLM_API_KEY_HEADER or "",
         "anthropic_api_key": config.ANTHROPIC_API_KEY or "",
         "anthropic_model": config.ANTHROPIC_MODEL or "",
+        "codex_enabled": config.CODEX_ENABLED,
+        "codex_model": config.CODEX_MODEL or "",
         "web_host": config.WEB_HOST or "127.0.0.1",
     }
 

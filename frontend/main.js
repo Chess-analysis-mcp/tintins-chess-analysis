@@ -102,6 +102,8 @@ let settingsWebPort = 8765; // last-known port, for the LAN-access hint text
 let llmKeyHidden = false;
 // Same for the Anthropic API key: saved on the host, blanked for anyone on the network.
 let anthropicKeyHidden = false;
+// {installed, logged_in} for the Codex CLI, from GET /api/settings (null until Settings opens).
+let codexStatus = null;
 let settingsLanIp = null; // this computer's LAN address (from /api/settings), for the same hint
 
 // --- puzzle mode ---------------------------------------------------------
@@ -1154,7 +1156,7 @@ function setCoachAI(state, text) {
     el.innerHTML =
       `<span class="coach-ai-tag">AI coach (Snowie)` +
       `<button id="coach-ai-refresh" class="coach-ai-refresh" type="button" ` +
-      `title="Regenerate this summary (uses your Claude subscription)" aria-label="Regenerate summary">⟳</button>` +
+      `title="Regenerate this summary (uses the AI chosen in Settings)" aria-label="Regenerate summary">⟳</button>` +
       `</span>${renderMarkdown(text)}`;
     const rb = $("coach-ai-refresh");
     if (rb) rb.addEventListener("click", () => fetchCoachAI(true));
@@ -2498,22 +2500,56 @@ function updateLlmKeyUI() {
   $("set-llm-key-header-row").hidden = !hasKey;
 }
 
-// Three backends can answer the "why?" chat, so spell out which one the current fields select
-// (the custom URL wins over an API key, matching claude_bridge._byo_backend).
+// Under the ChatGPT checkbox: say whether the Codex CLI is ready, or what setup step is missing.
+function updateCodexStatus() {
+  const el = $("set-codex-status");
+  if (!el) return;
+  const s = codexStatus;
+  if (!s) {
+    el.textContent = "";
+  } else if (!s.installed) {
+    el.textContent = "Codex CLI not found on this computer. Install it first: npm install -g @openai/codex";
+  } else if (!s.logged_in) {
+    el.textContent = "Codex CLI found but not signed in with ChatGPT. Run `codex login` in a terminal, then reopen Settings.";
+  } else {
+    el.textContent = "Codex CLI found and signed in with ChatGPT.";
+  }
+  // Only flag a missing step as a problem once the user actually wants to use it.
+  el.classList.toggle("set-warn", !!s && $("set-codex-enabled").checked && !(s.installed && s.logged_in));
+}
+
+// Several backends can answer the "why?" chat, so spell out which one the current fields select.
+// Precedence matches claude_bridge._byo_backend: custom URL > ChatGPT (Codex) > API key > claude.
 function updateAiBackendHint() {
   const url = $("set-local-llm-url").value.trim();
+  const codex = $("set-codex-enabled").checked;
   const key = anthropicKeyHidden || !!$("set-anthropic-key").value.trim();
   const el = $("set-ai-backend");
   if (!el) return;
-  if (url) {
-    el.textContent = key
-      ? "Now using: your own model at the URL above. It takes precedence — clear the URL to use the Claude API key instead."
-      : "Now using: your own model at the URL above.";
-  } else if (key) {
-    el.textContent = "Now using: the Anthropic API with your key (billed per token).";
-  } else {
-    el.textContent = "Now using: your Claude subscription via the `claude` CLI (no extra cost).";
+  // "On" badge on each collapsed option the current fields enable.
+  const on = { local: !!url, codex, anthropic: key };
+  for (const [name, isOn] of Object.entries(on)) {
+    const badge = document.querySelector(`#set-ai-opt-${name} .set-ai-on`);
+    if (badge) badge.hidden = !isOn;
   }
+  // Precedence: custom model > ChatGPT > API key, so name the one that's live and any it overrides.
+  let name, note = "";
+  if (url) {
+    name = "your own model";
+    if (codex || key) note = " (it overrides the other option you set)";
+  } else if (codex) {
+    name = "your ChatGPT subscription";
+    if (key) note = " (it overrides the Claude API key)";
+  } else if (key) {
+    name = "the Claude API with your key";
+    note = " (billed per token)";
+  } else {
+    name = "your Claude subscription";
+    note = " (no extra cost)";
+  }
+  const b = document.createElement("b");
+  b.textContent = name;
+  el.replaceChildren("Now using: ", b, note);
 }
 
 // Show/hide the slider to match the checkbox and refresh the readout.
@@ -2596,7 +2632,15 @@ async function openSettings() {
     modelSel.add(new Option(`${storedModel} (custom)`, storedModel));
   }
   modelSel.value = storedModel;
+  $("set-codex-enabled").checked = !!s.codex_enabled;
+  $("set-codex-model").value = s.codex_model || "";
+  codexStatus = data.codex || null;
+  updateCodexStatus();
   updateAiBackendHint();
+  // Open the options already in use, and leave the rest collapsed.
+  $("set-ai-opt-local").open = !!$("set-local-llm-url").value.trim();
+  $("set-ai-opt-codex").open = $("set-codex-enabled").checked;
+  $("set-ai-opt-anthropic").open = anthropicKeyHidden || !!$("set-anthropic-key").value.trim();
   // About tab: version, where the data lives, and a clean slate for the update check.
   $("set-version").textContent = `Tintin's AI Chess Analysis v${data.current_version || "?"}`;
   $("set-data-dir").value = data.data_dir || "";
@@ -2689,6 +2733,8 @@ async function saveSettings(e) {
     local_llm_api_key_header: $("set-local-llm-key-header").value.trim(),
     anthropic_api_key: $("set-anthropic-key").value.trim(),
     anthropic_model: $("set-anthropic-model").value.trim(),
+    codex_enabled: $("set-codex-enabled").checked,
+    codex_model: $("set-codex-model").value.trim(),
     coach_ai_auto: $("set-coach-ai-auto").checked,
     coach_ai_persist: $("set-coach-ai-persist").checked,
     personalize_history: $("set-personalize").checked,
@@ -5024,6 +5070,10 @@ function init() {
   $("set-local-llm-key").addEventListener("input", updateLlmKeyUI);
   $("set-local-llm-url").addEventListener("input", updateAiBackendHint);
   $("set-anthropic-key").addEventListener("input", updateAiBackendHint);
+  $("set-codex-enabled").addEventListener("change", () => {
+    updateCodexStatus();
+    updateAiBackendHint();
+  });
   $("set-check-update").addEventListener("click", checkUpdateFromSettings);
   $("set-ollama-model-select").addEventListener("change", (e) => {
     $("set-local-llm-model").value = e.target.value; // picking a detected model fills the saved field
