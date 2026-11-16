@@ -129,7 +129,9 @@ def test_find_binary_falls_back_to_common_locations(monkeypatch, tmp_path):
 def test_common_locations_per_platform(monkeypatch, platform):
     monkeypatch.setattr(codex_cli.sys, "platform", platform)
     monkeypatch.setenv("APPDATA", r"C:\Users\me\AppData\Roaming")
-    paths = codex_cli._common_locations()
+    # Normalise separators: faking the platform doesn't change os.path, so on a Windows runner the
+    # simulated macOS/Linux paths are joined with backslashes.
+    paths = [p.replace("\\", "/") for p in codex_cli._common_locations()]
     assert paths
     if platform == "win32":
         assert any(p.endswith("codex.cmd") for p in paths)  # npm's Windows wrapper
