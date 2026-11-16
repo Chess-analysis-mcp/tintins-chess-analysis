@@ -25,6 +25,7 @@ from server import config
 from server.core import history
 from server.core import lines
 from server.core import anthropic_api
+from server.core import codex_cli
 from server.core import local_llm
 from server.core import session as session_mod
 from server.core.evaluation import time_control_clock
@@ -33,10 +34,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _MCP_CONFIG = _REPO_ROOT / ".mcp.json"
 _ALLOWED_TOOLS = "mcp__chess__get_engine_line,mcp__chess__analyze_game"
 
-# The two "bring your own model" backends. Both expose the same tiny interface (`is_enabled`,
-# `complete`, `chat`, `DEFAULT_TIMEOUT`) so every call site below is one branch, and both raise
-# their own error type, which we surface as ChatError.
-_BYO_ERRORS = (local_llm.LocalLLMError, anthropic_api.AnthropicError)
+# The "bring your own model" backends. All expose the same tiny interface (`is_enabled`,
+# `complete`, `chat`, `DEFAULT_TIMEOUT`) so every call site below is one branch, and each raises
+# its own error type, which we surface as ChatError.
+_BYO_ERRORS = (local_llm.LocalLLMError, codex_cli.CodexError, anthropic_api.AnthropicError)
 
 # How many candidate moves to pre-compute, and how close (in win%-points) an alternative
 # must be to the best move to count as "also good" — so Claude can offer the more human,
@@ -102,15 +103,38 @@ def _is_login_response(data: dict, answer: str) -> bool:
 def _byo_backend():
     """The user-configured AI backend module, or None to use the default headless `claude -p`.
 
-    Precedence when both are set: the local/custom model URL wins over a saved Anthropic API key,
-    because the URL is the more deliberate choice (and running someone's own server costs nothing,
-    while the key bills per token). Documented in Settings.
+    Precedence when several are set: a local/custom model URL, then the ChatGPT subscription (Codex
+    CLI), then a saved Anthropic API key. The URL is the most deliberate choice, and both it and the
+    ChatGPT plan cost nothing extra, while the key bills per token. Documented in Settings.
     """
     if local_llm.is_enabled():
         return local_llm
+    if codex_cli.is_enabled():
+        return codex_cli
     if anthropic_api.is_enabled():
         return anthropic_api
     return None
+
+
+# Which backend issued each chat session id. The board keeps one id per game, so after the user
+# switches AI backend in Settings the next question would otherwise hand, say, a Codex thread id to
+# `claude --resume` ("No conversation found"). An id another backend issued is dropped, so that
+# question starts a fresh conversation; an id we've never seen (e.g. from before a restart) is still
+# passed through, so `claude -p` keeps resuming across restarts.
+_CLAUDE_OWNER = "claude"
+_SESSION_OWNERS: dict[str, str] = {}
+
+
+def _session_for(owner: str, session_id: str | None) -> str | None:
+    """`session_id` unless a different backend issued it."""
+    if session_id and _SESSION_OWNERS.get(session_id, owner) != owner:
+        return None
+    return session_id
+
+
+def _remember_session(owner: str, session_id: str | None) -> None:
+    if session_id:
+        _SESSION_OWNERS[session_id] = owner
 
 
 def _child_env() -> dict:
@@ -1179,13 +1203,13 @@ def explain_puzzle(
 
     Returns `{answer, session_id}` — the `session_id` (the `claude -p` conversation) lets the
     frontend thread a follow-up chat onto the explanation. `None` when there's no threadable session
-    (e.g. the local-LLM path).
+    (e.g. the own-backend paths).
 
     Two prompt variants by `outcome` ("solved_first_try"/"solved_with_hints" vs "failed"). When the
     player's tried moves are known they're engine-grounded in the facts and the coach is told to
     address them by name. A `source="your_games"` mistake puzzle instead uses the game-analysis
     framing (`_mistake_facts`/`_mistake_role`). Reuses the same plumbing as `coach_summary_ai` (no
-    MCP tools — the facts carry everything): the local-LLM path, the `claude -p` subprocess, and
+    MCP tools — the facts carry everything): the own-backend path, the `claude -p` subprocess, and
     `_friendly_error`. Raises ChatError.
     """
     if puzzle.get("source") == "your_games":
@@ -1329,7 +1353,7 @@ def _run_puzzle_coach(prompt: str, timeout: int) -> tuple[str, str | None]:
     """Shared LLM plumbing for the puzzle coach: local LLM else `claude -p`. Raises ChatError.
 
     Returns `(answer, session_id)`; `session_id` is the `claude -p` conversation id (None on the
-    local-LLM path) so a follow-up chat can `--resume` the explanation.
+    own-backend paths) so a follow-up chat can `--resume` the explanation.
     """
     backend = _byo_backend()
     if backend is not None:
@@ -1342,7 +1366,8 @@ def _run_puzzle_coach(prompt: str, timeout: int) -> tuple[str, str | None]:
     if not claude:
         raise ChatError(
             "The `claude` CLI isn't on PATH, so the AI puzzle coach is unavailable. Install the "
-            "Claude CLI (or set your own model / Claude API key in Settings) to get explanations."
+            "Claude CLI (or set up your own model, ChatGPT or a Claude API key in Settings) to get "
+            "explanations."
         )
     cmd = [claude, "-p", prompt, "--output-format", "json", *_tool_lockdown_args()]
     env = _child_env()
@@ -1369,7 +1394,7 @@ def _run_puzzle_coach(prompt: str, timeout: int) -> tuple[str, str | None]:
 def coach_summary_ai(sess, *, timeout: int = 120) -> str:
     """A richer, Claude-WRITTEN end-of-game coaching summary, grounded in pre-computed facts.
 
-    Opt-in (spends the user's Claude subscription, or runs on the configured local LLM). No MCP
+    Opt-in (spends the user's Claude subscription, or runs on the configured own backend). No MCP
     tools / engine calls — the prompt already carries every fact needed, so the model only has to
     phrase the coaching well. Raises ChatError.
     """
@@ -1417,7 +1442,7 @@ def coach_summary_ai(sess, *, timeout: int = 120) -> str:
     prompt_parts.append("This game's facts:\n" + _untrusted_block("game facts", _game_facts(sess)))
     prompt = "\n\n".join(prompt_parts)
 
-    # Own model or own API key: write the summary over direct HTTP, no `claude` CLI.
+    # A configured own backend (custom model, ChatGPT via Codex, or API key): no `claude` CLI.
     backend = _byo_backend()
     if backend is not None:
         try:
@@ -1429,8 +1454,8 @@ def coach_summary_ai(sess, *, timeout: int = 120) -> str:
     if not claude:
         raise ChatError(
             "The `claude` CLI isn't on PATH, so the AI coach summary is unavailable. The free "
-            "summary above still works; install the Claude CLI (or set your own model / Claude "
-            "API key in Settings) for the AI version."
+            "summary above still works; install the Claude CLI (or set up your own model, ChatGPT "
+            "or a Claude API key in Settings) for the AI version."
         )
     cmd = [claude, "-p", prompt, "--output-format", "json", *_tool_lockdown_args()]
 
@@ -1491,20 +1516,26 @@ def ask(
         speed_context,
     )
 
-    # Own model or own API key: answer over direct HTTP, no `claude` CLI. The prompt already embeds
-    # every engine fact, so no tools are needed (and local models are unreliable at tool-calling).
+    # A configured own backend (custom model, ChatGPT via Codex, or API key): no `claude` CLI. The
+    # prompt already embeds every engine fact, so no tools are needed (and local models are
+    # unreliable at tool-calling).
     backend = _byo_backend()
+    owner = backend.__name__ if backend is not None else _CLAUDE_OWNER
+    session_id = _session_for(owner, session_id)
     if backend is not None:
         try:
-            return backend.chat(prompt, session_id=session_id)
+            res = backend.chat(prompt, session_id=session_id)
         except _BYO_ERRORS as exc:
             raise ChatError(str(exc))
+        _remember_session(owner, res.get("session_id"))
+        return res
 
     claude = shutil.which("claude")
     if not claude:
         raise ChatError(
             "The `claude` CLI isn't on PATH, so in-browser chat is unavailable. Use the Claude "
-            "Code terminal to ask 'why?' instead, or set your own model / Claude API key in Settings."
+            "Code terminal to ask 'why?' instead, or set up your own model, ChatGPT or a Claude API "
+            "key in Settings."
         )
 
     cmd = [
@@ -1543,4 +1574,5 @@ def ask(
     if data.get("is_error") or data.get("subtype") not in (None, "success"):
         raise ChatError(_friendly_error(answer or proc.stdout))
 
+    _remember_session(owner, data.get("session_id"))
     return {"answer": answer, "session_id": data.get("session_id")}

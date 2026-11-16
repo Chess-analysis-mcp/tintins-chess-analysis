@@ -604,6 +604,12 @@ LOCAL_LLM_API_KEY_HEADER: str = os.environ.get("CHESS_LOCAL_LLM_API_KEY_HEADER",
 ANTHROPIC_API_KEY: str = os.environ.get("CHESS_ANTHROPIC_API_KEY", "").strip()
 ANTHROPIC_MODEL: str = os.environ.get("CHESS_ANTHROPIC_MODEL", "").strip()
 
+# "Use my ChatGPT subscription": the chat/coach through the headless Codex CLI (`codex exec`,
+# see server.core.codex_cli), signed in with the user's ChatGPT plan. Opt-in; CODEX_MODEL blank
+# means Codex's own default model.
+CODEX_ENABLED: bool = os.environ.get("CHESS_CODEX", "0") == "1"
+CODEX_MODEL: str = os.environ.get("CHESS_CODEX_MODEL", "").strip()
+
 # --- Puzzle mode (server.core.puzzles / puzzle_rating) ------------------------------------------
 # A tactical-trainer built on the same substrate (board, engine, claude_bridge, DATA_DIR). Puzzles
 # ship as small compressed JSONL: a committed offline baseline (server/data/puzzles/baseline.jsonl.gz,

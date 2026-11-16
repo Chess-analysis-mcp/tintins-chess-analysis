@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from server import config
+from server.core import codex_cli
 from server.core import engine
 from server.core import settings as settings_mod
 from server.web import pairing
@@ -57,6 +58,8 @@ class SettingsPatch(BaseModel):
     local_llm_api_key_header: str | None = None
     anthropic_api_key: str | None = None
     anthropic_model: str | None = None
+    codex_enabled: bool | None = None
+    codex_model: str | None = None
     web_host: str | None = None
 
 
@@ -83,6 +86,8 @@ def get_settings(request: Request) -> dict:
         "lichess_token_hidden": "lichess_token" in hidden,
         "local_llm_api_key_hidden": "local_llm_api_key" in hidden,
         "anthropic_api_key_hidden": "anthropic_api_key" in hidden,
+        # {installed, logged_in} for the ChatGPT (Codex CLI) field's status line.
+        "codex": codex_cli.login_status(),
     }
 
 

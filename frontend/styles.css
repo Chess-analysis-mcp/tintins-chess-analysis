@@ -891,6 +891,35 @@ body.history-hidden .history-col { display: none; }
 }
 .set-field input:focus, .set-field select:focus { outline: none; border-color: var(--accent); }
 .set-hint { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+.set-hint.set-warn { color: var(--mistake); } /* a setup step still missing for an option that's on */
+p.set-hint { margin: 6px 0 0; }
+/* The longer explanations live in a collapsed "More info", so the panel stays short. */
+.set-more summary {
+  cursor: pointer; list-style: none; user-select: none;
+  font-size: 11.5px; color: var(--muted); width: fit-content;
+}
+.set-more summary::-webkit-details-marker { display: none; }
+.set-more summary::before { content: "▸ "; }
+.set-more[open] summary::before { content: "▾ "; }
+.set-more summary:hover { color: var(--text); }
+/* Each optional AI backend: one collapsible row (name, one-liner, "On" badge), fields inside. */
+.set-ai-opt { border: 1px solid #3a372c; border-radius: 8px; }
+.set-ai-opt > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: baseline; gap: 8px; padding: 8px 10px;
+}
+.set-ai-opt > summary::-webkit-details-marker { display: none; }
+.set-ai-opt > summary::before { content: "▸"; color: var(--muted); font-size: 11px; }
+.set-ai-opt[open] > summary::before { content: "▾"; }
+.set-ai-opt > summary .set-opt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-ai-name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.set-ai-on {
+  font-size: 10.5px; font-weight: 700; color: #fff; background: var(--accent);
+  border-radius: 999px; padding: 1px 7px; align-self: center;
+}
+.set-ai-on[hidden] { display: none; }
+.set-ai-body { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px; }
+.set-ai-body .set-check-row { font-size: 13px; }
 .set-field[hidden] { display: none; } /* beat .set-field's display:flex when toggled off */
 .set-field input[type="range"] {
   padding: 0; border: none; background: none; accent-color: var(--accent); cursor: pointer;

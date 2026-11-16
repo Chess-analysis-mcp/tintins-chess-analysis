@@ -18,7 +18,6 @@ from pydantic import BaseModel
 from server import config
 from server import claude_bridge
 from server.core import lines
-from server.core import local_llm
 from server.core import puzzle_flow
 from server.core import puzzle_mistakes
 from server.core import puzzle_rating
@@ -42,7 +41,8 @@ def _has_engine() -> bool:
 
 
 def _has_llm() -> bool:
-    return bool(local_llm.is_enabled() or shutil.which("claude"))
+    # Any configured own backend (custom model, ChatGPT via Codex, API key) or the `claude` CLI.
+    return bool(claude_bridge._byo_backend() is not None or shutil.which("claude"))
 
 
 def _disabled() -> JSONResponse:
